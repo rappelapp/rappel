@@ -64,7 +64,7 @@ pub(super) fn mode(path: &Path) -> u32 {
 
 pub(super) fn insert_sample(conn: &Connection) {
     conn.execute_batch(&format!(
-        "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('{DECK}', 'Maths', 1, 1);
          INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
              VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1);
          INSERT INTO review_events VALUES ('{EVENT}', '{CARD}', 2, 'pass', 1500);
@@ -605,10 +605,10 @@ fn schema_rejects_bad_values() {
             "INSERT INTO review_events VALUES ('01920000-0000-7000-8000-000000000009', '{CARD}', 5, 'pass', -1)"
         ),
         // Id not a lowercase 36-character UUID.
-        "INSERT INTO decks VALUES ('short', 'x', 1, 1)".to_owned(),
-        "INSERT INTO decks VALUES ('01920000-0000-7000-8000-00000000000A', 'x', 1, 1)".to_owned(),
+        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('short', 'x', 1, 1)".to_owned(),
+        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('01920000-0000-7000-8000-00000000000A', 'x', 1, 1)".to_owned(),
         // STRICT: text in an integer column.
-        "INSERT INTO decks VALUES ('01920000-0000-7000-8000-00000000000b', 'x', 'now', 1)"
+        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('01920000-0000-7000-8000-00000000000b', 'x', 'now', 1)"
             .to_owned(),
         // Unknown card.
         "INSERT INTO review_events VALUES ('01920000-0000-7000-8000-000000000009', '01920000-0000-7000-8000-0000000000ff', 5, 'pass', 0)".to_owned(),
@@ -653,7 +653,7 @@ fn migration_0002_rebuilds_the_schedule_cache_from_the_log() {
         let v1 = e.open_with(DAY0, &MIGRATIONS[..1]).unwrap();
         v1.conn
             .execute_batch(&format!(
-                "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+                "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('{DECK}', 'Maths', 1, 1);
                  INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
                      VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1),
                             ('{CARD2}', '{DECK}', 'new card', 'back', 1, 1);
@@ -716,6 +716,83 @@ fn failed_schedule_rebuild_rolls_back_the_migration() {
     assert_eq!(tables(&conn), ["t"], "u was rolled back");
 }
 
+/// A database written by schema v2 (a deck, two cards, one reviewed)
+/// upgrades to v3: everything is live, rows, log and cache are unchanged,
+/// and the new operations work on it.
+#[test]
+fn migration_0003_keeps_everything_live_and_unchanged() {
+    let e = env();
+    let (events, state) = {
+        let v2 = e.open_with(DAY0, &MIGRATIONS[..2]).unwrap();
+        v2.conn
+            .execute_batch(&format!(
+                "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+                 INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+                     VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1),
+                            ('{CARD2}', '{DECK}', 'new card', 'back', 1, 1);"
+            ))
+            .unwrap();
+        insert_events(&v2.conn, CARD, 0, &REVIEWS);
+        let mut v2 = v2;
+        v2.rebuild_schedule_cache(&Scheduler::default()).unwrap();
+        (
+            v2.review_events(CARD).unwrap(),
+            v2.card_state(CARD).unwrap(),
+        )
+    };
+
+    let mut store = e.open_with(DAY0 + 4 * DAY_MS, &MIGRATIONS[..3]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 3);
+    let live: i64 = store
+        .conn
+        .query_row(
+            "SELECT (SELECT count(*) FROM decks WHERE deleted_at IS NULL)
+                  + (SELECT count(*) FROM cards WHERE deleted_at IS NULL)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(live, 3);
+    assert_eq!(store.review_events(CARD).unwrap(), events);
+    assert_eq!(store.card_state(CARD).unwrap(), state);
+    assert_eq!(store.card_state(CARD2).unwrap(), CardState::New);
+
+    let decks = store.list_decks(DAY0 + 400 * DAY_MS).unwrap();
+    assert_eq!(decks.len(), 1);
+    assert_eq!((decks[0].new_count, decks[0].due_count), (1, 1));
+    assert!(matches!(
+        store.create_deck("Maths"),
+        Err(Error::DuplicateDeckName(_))
+    ));
+    // New events sort after the ones written before the upgrade.
+    let e = store
+        .record_review(CARD, crate::domain::Grade::Pass, std::time::Duration::ZERO)
+        .unwrap();
+    assert_eq!(store.review_events(CARD).unwrap().last(), Some(&e));
+}
+
+/// Two live decks with the same name cannot exist in a v2 database written
+/// by Cards (it had no way to create decks), but if they do, migration
+/// 0003 fails and rolls back, leaving the database at v2.
+#[test]
+fn migration_0003_with_duplicate_deck_names_rolls_back() {
+    let e = env();
+    {
+        let v2 = e.open_with(DAY0, &MIGRATIONS[..2]).unwrap();
+        v2.conn
+            .execute_batch(&format!(
+                "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+                 INSERT INTO decks VALUES ('{CARD}', 'Maths', 1, 1);"
+            ))
+            .unwrap();
+    }
+    let err = e.open_with(DAY0, &MIGRATIONS[..3]).unwrap_err();
+    assert!(matches!(err, Error::Migration { version: 3, .. }), "{err}");
+    let store = e.open_with(DAY0, &MIGRATIONS[..2]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(count(&store.conn, "decks"), 2);
+}
+
 #[test]
 fn rebuild_schedule_cache_matches_rebuild_state_and_is_idempotent() {
     let e = env();
@@ -723,7 +800,7 @@ fn rebuild_schedule_cache_matches_rebuild_state_and_is_idempotent() {
     store
         .conn
         .execute_batch(&format!(
-            "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+            "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('{DECK}', 'Maths', 1, 1);
              INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
                  VALUES ('{CARD}', '{DECK}', 'a', 'b', 1, 1),
                         ('{CARD2}', '{DECK}', 'c', 'd', 1, 1);"

@@ -28,6 +28,10 @@ rusqlite = { version = "0.40", default-features = false, features = ["bundled", 
 # Scheduling (cards-core): the reference FSRS implementation (ADR 0006).
 fsrs = "6.6"
 
+# Ids (cards-core): random bits for UUIDv7 (ADR 0008). Already in the tree
+# through fsrs -> rand.
+getrandom = "0.4"
+
 # Test-only: temporary directories for filesystem tests.
 tempfile = "3"
 # Test-only: property-based tests (scheduler replay).

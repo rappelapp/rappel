@@ -136,6 +136,47 @@ pub struct Schedule {
     pub lapses: u32,
 }
 
+/// A deck of cards. Deleted decks are never returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deck {
+    /// Deck id (`UUIDv7` string).
+    pub id: String,
+    /// The name, trimmed, unique among decks that are not deleted.
+    pub name: String,
+    /// When the deck was created, UTC milliseconds.
+    pub created_at: i64,
+    /// When the deck was last renamed (or created), UTC milliseconds.
+    pub updated_at: i64,
+}
+
+/// A deck with the number of its cards that are new and due.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeckSummary {
+    /// The deck.
+    pub deck: Deck,
+    /// Cards never reviewed.
+    pub new_count: u32,
+    /// Reviewed cards due at the time asked about.
+    pub due_count: u32,
+}
+
+/// A card. Deleted cards are never returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Card {
+    /// Card id (`UUIDv7` string).
+    pub id: String,
+    /// The deck it belongs to.
+    pub deck_id: String,
+    /// Front (question), Markdown. Untrusted content.
+    pub front_md: String,
+    /// Back (answer), Markdown. Untrusted content.
+    pub back_md: String,
+    /// When the card was created, UTC milliseconds.
+    pub created_at: i64,
+    /// When the card was last edited (or created), UTC milliseconds.
+    pub updated_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

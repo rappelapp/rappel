@@ -1,7 +1,7 @@
 //! Reading review events and the `card_schedule` cache, and rebuilding the
 //! cache from the review log.
 
-use rusqlite::{OptionalExtension, Row, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::Store;
 use crate::domain::{CardState, Grade, ReviewEvent, Schedule};
@@ -30,39 +30,7 @@ impl Store {
     /// SQLite errors, or [`Error::InvalidColumn`] for an invalid phase or
     /// count.
     pub fn card_state(&self, card_id: &str) -> Result<CardState> {
-        let row = self
-            .conn
-            .query_row(
-                "SELECT phase, due_at, stability, difficulty, last_review_at, reps, lapses
-                 FROM card_schedule WHERE card_id = ?1",
-                [card_id],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, i64>(1)?,
-                        r.get::<_, f64>(2)?,
-                        r.get::<_, f64>(3)?,
-                        r.get::<_, i64>(4)?,
-                        r.get::<_, i64>(5)?,
-                        r.get::<_, i64>(6)?,
-                    ))
-                },
-            )
-            .optional()?;
-        let Some((phase, due_at, stability, difficulty, last_review_at, reps, lapses)) = row else {
-            return Ok(CardState::New);
-        };
-        Ok(CardState::Scheduled(Schedule {
-            phase: phase
-                .parse()
-                .map_err(|_| invalid("card_schedule.phase", &phase))?,
-            stability: to_f32(stability),
-            difficulty: to_f32(difficulty),
-            due_at,
-            last_review_at,
-            reps: u32::try_from(reps).map_err(|_| invalid("card_schedule.reps", &reps))?,
-            lapses: u32::try_from(lapses).map_err(|_| invalid("card_schedule.lapses", &lapses))?,
-        }))
+        read_card_state(&self.conn, card_id)
     }
 
     /// Rebuilds the whole `card_schedule` cache from `review_events` with
@@ -86,23 +54,9 @@ pub(super) fn write_schedule_cache(tx: &Transaction<'_>, scheduler: &Scheduler) 
     tx.execute("DELETE FROM card_schedule", [])?;
     let mut cards = 0;
     {
-        let mut insert = tx.prepare(
-            "INSERT INTO card_schedule
-                 (card_id, phase, due_at, stability, difficulty, last_review_at, reps, lapses)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        )?;
         let mut write = |card_id: &str, events: &[ReviewEvent]| -> Result<()> {
             if let CardState::Scheduled(s) = scheduler.rebuild_state(card_id, events)? {
-                insert.execute(params![
-                    card_id,
-                    s.phase.as_str(),
-                    s.due_at,
-                    f64::from(s.stability),
-                    f64::from(s.difficulty),
-                    s.last_review_at,
-                    s.reps,
-                    s.lapses,
-                ])?;
+                upsert_schedule(tx, card_id, &s)?;
                 cards += 1;
             }
             Ok(())
@@ -131,8 +85,83 @@ pub(super) fn write_schedule_cache(tx: &Transaction<'_>, scheduler: &Scheduler) 
     Ok(cards)
 }
 
+/// The cached state of `card_id` (see [`Store::card_state`]).
+pub(super) fn read_card_state(conn: &Connection, card_id: &str) -> Result<CardState> {
+    let row = conn
+        .query_row(
+            "SELECT phase, due_at, stability, difficulty, last_review_at, reps, lapses
+             FROM card_schedule WHERE card_id = ?1",
+            [card_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, f64>(2)?,
+                    r.get::<_, f64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, i64>(6)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((phase, due_at, stability, difficulty, last_review_at, reps, lapses)) = row else {
+        return Ok(CardState::New);
+    };
+    Ok(CardState::Scheduled(Schedule {
+        phase: phase
+            .parse()
+            .map_err(|_| invalid("card_schedule.phase", &phase))?,
+        stability: to_f32(stability),
+        difficulty: to_f32(difficulty),
+        due_at,
+        last_review_at,
+        reps: u32::try_from(reps).map_err(|_| invalid("card_schedule.reps", &reps))?,
+        lapses: u32::try_from(lapses).map_err(|_| invalid("card_schedule.lapses", &lapses))?,
+    }))
+}
+
+/// Writes `schedule` as the `card_schedule` row of `card_id`, replacing
+/// any row it had. Used by the rebuild and by recording a review, so both
+/// write the cache the same way.
+pub(super) fn upsert_schedule(conn: &Connection, card_id: &str, schedule: &Schedule) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "INSERT INTO card_schedule
+             (card_id, phase, due_at, stability, difficulty, last_review_at, reps, lapses)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT (card_id) DO UPDATE SET
+             phase = excluded.phase, due_at = excluded.due_at,
+             stability = excluded.stability, difficulty = excluded.difficulty,
+             last_review_at = excluded.last_review_at,
+             reps = excluded.reps, lapses = excluded.lapses",
+    )?;
+    stmt.execute(params![
+        card_id,
+        schedule.phase.as_str(),
+        schedule.due_at,
+        f64::from(schedule.stability),
+        f64::from(schedule.difficulty),
+        schedule.last_review_at,
+        schedule.reps,
+        schedule.lapses,
+    ])?;
+    Ok(())
+}
+
+/// Makes the `card_schedule` row of `card_id` hold `state`: no row for
+/// [`CardState::New`], else [`upsert_schedule`].
+pub(super) fn write_card_state(conn: &Connection, card_id: &str, state: &CardState) -> Result<()> {
+    match state {
+        CardState::New => {
+            conn.execute("DELETE FROM card_schedule WHERE card_id = ?1", [card_id])?;
+            Ok(())
+        }
+        CardState::Scheduled(s) => upsert_schedule(conn, card_id, s),
+    }
+}
+
 /// A `review_events` row before its grade is parsed.
-struct RawEvent {
+pub(super) struct RawEvent {
     id: String,
     card_id: String,
     reviewed_at: i64,
@@ -140,7 +169,7 @@ struct RawEvent {
     duration_ms: i64,
 }
 
-fn raw_event(r: &Row<'_>) -> rusqlite::Result<RawEvent> {
+pub(super) fn raw_event(r: &Row<'_>) -> rusqlite::Result<RawEvent> {
     Ok(RawEvent {
         id: r.get(0)?,
         card_id: r.get(1)?,
@@ -151,7 +180,7 @@ fn raw_event(r: &Row<'_>) -> rusqlite::Result<RawEvent> {
 }
 
 impl RawEvent {
-    fn into_event(self) -> Result<ReviewEvent> {
+    pub(super) fn into_event(self) -> Result<ReviewEvent> {
         let grade: Grade = self
             .grade
             .parse()
@@ -166,7 +195,7 @@ impl RawEvent {
     }
 }
 
-fn invalid(column: &'static str, value: &dyn std::fmt::Display) -> Error {
+pub(super) fn invalid(column: &'static str, value: &dyn std::fmt::Display) -> Error {
     Error::InvalidColumn {
         column,
         value: value.to_string(),

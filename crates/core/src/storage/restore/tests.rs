@@ -68,7 +68,7 @@ impl Env {
 
 fn add_deck(conn: &Connection) {
     conn.execute_batch(&format!(
-        "INSERT INTO decks VALUES ('{DECK2}', 'Physics', 2, 2);"
+        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('{DECK2}', 'Physics', 2, 2);"
     ))
     .unwrap();
 }
@@ -420,7 +420,7 @@ fn diverged_v1(e: &Env) -> PathBuf {
     let v1 = Store::open_with(&e.db(), &e.backups(), DAY0, &MIGRATIONS[..1]).unwrap();
     v1.conn
         .execute_batch(&format!(
-            "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+            "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('{DECK}', 'Maths', 1, 1);
              INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
                  VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1),
                         ('{CARD2}', '{DECK}', 'new card', 'back', 1, 1);
@@ -433,10 +433,11 @@ fn diverged_v1(e: &Env) -> PathBuf {
     backup
 }
 
-/// A backup from schema v1 is migrated to v2 before it is installed: the
-/// review log is kept and the schedule cache is rebuilt from it.
+/// A backup from schema v1 is migrated to the current version before it is
+/// installed: the review log is kept and the schedule cache is rebuilt
+/// from it.
 #[test]
-fn v1_backup_is_restored_and_migrated_to_v2() {
+fn v1_backup_is_restored_and_migrated_to_the_current_version() {
     let e = Env::new();
     let backup = diverged_v1(&e);
     let backup_bytes = fs::read(&backup).unwrap();
@@ -444,7 +445,10 @@ fn v1_backup_is_restored_and_migrated_to_v2() {
     let restored = e.restore(&backup).unwrap();
 
     let store = &restored.store;
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        crate::storage::migrations::latest(MIGRATIONS)
+    );
     assert_eq!(deck_names(&store.conn), ["Maths"]);
     assert_eq!(count(&store.conn, "cards"), 2);
     assert_eq!(count(&store.conn, "review_events"), 4);
@@ -462,22 +466,25 @@ fn v1_backup_is_restored_and_migrated_to_v2() {
 
 /// A backup at the current schema version is installed as it is.
 #[test]
-fn v2_backup_is_restored() {
+fn current_version_backup_is_restored() {
     let e = Env::new();
     let (mut store, backup) = e.diverged();
     insert_events(&store.conn, CARD, 0, &REVIEWS);
     store.rebuild_schedule_cache(&Scheduler::default()).unwrap();
-    let backup_v2 = create_backup(&store.conn, &e.backups(), DAY0 + 1).unwrap();
+    let backup_current = create_backup(&store.conn, &e.backups(), DAY0 + 1).unwrap();
     let expected = store.card_state(CARD).unwrap();
     assert!(matches!(expected, CardState::Scheduled(_)));
     drop(store);
     fs::remove_file(backup).unwrap();
     let backups_before = list_backups(&e.data).unwrap().len();
 
-    let restored = e.restore(&backup_v2).unwrap();
+    let restored = e.restore(&backup_current).unwrap();
 
     let store = &restored.store;
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        crate::storage::migrations::latest(MIGRATIONS)
+    );
     assert_eq!(deck_names(&store.conn), ["Maths", "Physics"]);
     assert_eq!(count(&store.conn, "review_events"), 5);
     assert_eq!(store.card_state(CARD).unwrap(), expected);

@@ -38,6 +38,15 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
   - `restore_backup`: validates the backup (integrity, version, exact schema: object names and their columns) before changing anything. An older backup (e.g. schema v1) is migrated on that scratch copy first, so a failed migration refuses the restore with nothing changed. Moves the current database with its `-wal`/`-shm`/`-journal` aside to `cards.sqlite3.replaced-<timestamp>` instead of deleting it. Installs the backup atomically and opens it. Works when the current database is damaged.
   - `Store::open` refuses to start an empty database when the database file is missing but its `-wal`/`-journal`, or an interrupted restore's copy, is still there.
 - README: "Recovering your data".
+- Deck, card and review operations in `cards-core` (ADR 0008), no UI yet:
+  - `UUIDv7` id generator whose ids strictly increase, within a millisecond, with a clock that goes backwards, and across restarts.
+  - Decks: `create_deck`, `rename_deck`, `list_decks` with new / due-now counts, `delete_deck`. Names are trimmed and unique among live decks (`DuplicateDeckName`); a deleted deck's name can be reused.
+  - Cards: `add_card`, `edit_card`, `card`, `list_cards`, `delete_card`.
+  - Migration 0003: soft delete (`deleted_at` on decks and cards). Deleted items are hidden from every query and keep their review history. Deleting a deck soft-deletes its cards with the same `deleted_at`, so a later undo can restore exactly that batch.
+  - `record_review`: the event (dated `max(now, last review)`) and the schedule cache update in one transaction.
+  - `due_cards(deck, now)` and `new_cards(deck, limit)`.
+  - Property test: after random reviews, clock jumps and restarts, the schedule cache equals a full rebuild from the log.
+- Dependency: `getrandom` in `cards-core` (random bits for ids; already in the tree through `fsrs`).
 
 ### Changed
 - SPEC §3: ids are TEXT UUIDv7, `cards.seq` is the FTS5 rowid, and card deletion will be a soft delete.

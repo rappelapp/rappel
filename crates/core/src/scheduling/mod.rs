@@ -18,7 +18,8 @@
 //! for times: it refuses a review earlier than the card's last one. Code
 //! that records reviews must store `reviewed_at = max(now, last_review_at)`
 //! (a clock can go backwards) and use a `UUIDv7` generator that is
-//! monotonic within a millisecond.
+//! monotonic within a millisecond and across restarts (ADR 0008:
+//! `storage::record_review` observes the log's largest id first).
 
 mod fuzz;
 

@@ -50,6 +50,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("0002_card_schedule_phase.sql"),
         rebuild_schedule: true,
     },
+    Migration {
+        version: 3,
+        name: "soft delete",
+        sql: include_str!("0003_soft_delete.sql"),
+        rebuild_schedule: false,
+    },
 ];
 
 /// The schema version a database has after all of `migrations`.
@@ -146,6 +152,7 @@ mod tests {
         const PINNED: &[(u32, u64)] = &[
             (1, 2_537_882_282_965_863_491),
             (2, 11_540_844_169_458_386_709),
+            (3, 12_700_174_011_840_410_413),
         ];
         assert_eq!(
             MIGRATIONS.len(),

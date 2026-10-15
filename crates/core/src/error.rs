@@ -202,6 +202,34 @@ pub enum Error {
     /// its place; restoring a backup again finishes the job.
     #[error("a restore was interrupted before it finished ({} is waiting to be installed)", .0.display())]
     InterruptedRestore(PathBuf),
+
+    /// The operating system gave no random bytes for a new id.
+    #[error("cannot generate an id: no randomness available: {0}")]
+    Random(#[source] getrandom::Error),
+
+    /// Every `UUIDv7` up to the year 10889 has been issued.
+    #[error("no more ids can be generated")]
+    IdsExhausted,
+
+    /// A deck name that is empty or only whitespace.
+    #[error("a deck name cannot be empty")]
+    EmptyDeckName,
+
+    /// Another deck that is not deleted already has this name.
+    #[error("a deck named {0:?} already exists")]
+    DuplicateDeckName(String),
+
+    /// A card front that is empty or only whitespace.
+    #[error("the front of a card cannot be empty")]
+    EmptyCardFront,
+
+    /// No deck with this id, or it was deleted.
+    #[error("deck {0} does not exist")]
+    DeckNotFound(String),
+
+    /// No card with this id, or it was deleted.
+    #[error("card {0} does not exist")]
+    CardNotFound(String),
 }
 
 /// `Result` with [`Error`] as the error type.

@@ -3,8 +3,11 @@
 //! See ADR 0005 for the decisions behind this module.
 
 mod backup;
+mod cards;
+mod decks;
 mod migrations;
 mod restore;
+mod review;
 mod schedule;
 
 use std::fs::{self, OpenOptions, Permissions};
@@ -15,6 +18,8 @@ use rusqlite::{Connection, ErrorCode, OpenFlags};
 
 use crate::data_dir::ensure_data_dir;
 use crate::error::{Error, Result};
+use crate::id::IdGen;
+use crate::scheduling::Scheduler;
 use crate::time::now_ms;
 pub use backup::{BackupInfo, list_backups};
 use backup::{KEEP_BACKUPS, check_rows, create_backup, has_backup_for_day, prune_backups};
@@ -33,6 +38,11 @@ const FILE_MODE: u32 = 0o600;
 #[derive(Debug)]
 pub struct Store {
     conn: Connection,
+    /// Issues the ids of new decks, cards and review events.
+    ids: IdGen,
+    /// Schedules recorded reviews. Default retention until settings exist;
+    /// then the stored desired retention must be used here (ADR 0006).
+    scheduler: Scheduler,
 }
 
 impl Store {
@@ -139,7 +149,25 @@ impl Store {
         }
 
         migrate(&mut conn, migrations, current)?;
-        Ok(Self { conn })
+        Ok(Self::from_connection(conn))
+    }
+
+    /// A store around an open, migrated connection.
+    fn from_connection(conn: Connection) -> Self {
+        Self {
+            conn,
+            ids: IdGen::new(),
+            scheduler: Scheduler::default(),
+        }
+    }
+
+    /// A migrated in-memory store, for tests of the store's operations.
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> Self {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        migrate(&mut conn, MIGRATIONS, 0).unwrap();
+        Self::from_connection(conn)
     }
 
     /// The schema version of the open database.
@@ -151,6 +179,26 @@ impl Store {
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))?;
         Ok(v)
+    }
+}
+
+/// Raises `ids` above the largest id in `column` (`decks.id`, `cards.id`
+/// or `review_events.id`). Called, inside the write's transaction, before
+/// every new id: a previous run (or another process) may have issued ids
+/// above what this generator has seen, and after `x` it may have issued
+/// `x + 1`, which a fresh generator would issue again.
+///
+/// # Errors
+/// SQLite errors, or [`Error::InvalidColumn`] if that id is not a UUID
+/// (the schema's `CHECK` only enforces length and case). The write is then
+/// refused rather than risk an id that sorts out of order.
+fn observe_max_id(conn: &Connection, ids: &mut IdGen, column: &'static str) -> Result<()> {
+    let (table, id) = column.split_once('.').unwrap_or((column, "id"));
+    let max: Option<String> =
+        conn.query_row(&format!("SELECT max({id}) FROM {table}"), [], |r| r.get(0))?;
+    match max {
+        Some(value) if !ids.observe(&value) => Err(Error::InvalidColumn { column, value }),
+        _ => Ok(()),
     }
 }
 
