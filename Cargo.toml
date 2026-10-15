@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# gtk4 0.11 / libadwaita 0.9 / gio 0.22 require Rust 1.92.
+rust-version = "1.92"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/rsmirke/cards"
+publish = false
+
+[workspace.dependencies]
+cards-core = { path = "crates/core" }
+
+# UI (app crate only; never in cards-core).
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
+glib-build-tools = "0.22"
+
+# Logging.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unused_must_use = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Tests may unwrap/expect (see clippy.toml). Elsewhere, `expect()` is only for
+# template children and invariants, with an `#[allow]` and a comment saying why.
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+[profile.release]
+lto = "thin"

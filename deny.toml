@@ -1,0 +1,54 @@
+# cargo-deny configuration. Run with `cargo deny check` (part of scripts/check.sh).
+# Cards is GPL-3.0-or-later: every dependency licence must be compatible with it.
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on any vulnerability, unmaintained or unsound advisory in the RustSec DB.
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# The allow-list is a policy, not an inventory: entries no crate uses yet are fine.
+unused-allowed-license = "allow"
+# Only licences that can be combined into a GPL-3.0-or-later program.
+# Add to this list only after checking GPL-3.0 compatibility (FSF list).
+allow = [
+    "GPL-3.0-or-later",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-or-later",
+    "MPL-2.0",
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "0BSD",
+]
+
+[licenses.private]
+# Our own crates are `publish = false`; their licence is checked by the list above.
+ignore = false
+
+[bans]
+# Duplicate versions are reported but allowed (common in the gtk-rs tree).
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies inside this workspace have no version requirement.
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

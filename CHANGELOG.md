@@ -1,0 +1,15 @@
+# Changelog
+
+All notable changes to this project are documented here.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and the project aims to follow [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+- Project skeleton: Cargo workspace with `cards-core` and `cards` crates, shared lints (`unsafe_code` forbidden), rustfmt, clippy and cargo-deny configuration.
+- Minimal libadwaita window ("Cards", empty status page) built from a Blueprint template.
+- Quality gate `scripts/check.sh`, pre-commit hook refusing commits on `main`, hook installer.
+- Docs skeleton: README, ARCHITECTURE, this changelog, ADR 0001.
+- `reviewer` Claude Code agent for independent slice review.
+- ADR 0002: GTK/libadwaita minimum versions and the Blueprint build pipeline.

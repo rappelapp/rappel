@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/rsmirke/Cards">
+    <!-- Compiled from data/window.blp by build.rs into $OUT_DIR/ui. -->
+    <file preprocess="xml-stripblanks">window.ui</file>
+  </gresource>
+</gresources>

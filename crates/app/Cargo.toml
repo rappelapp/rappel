@@ -1,0 +1,22 @@
+[package]
+name = "cards"
+description = "Cards: a native GNOME flashcard app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+cards-core.workspace = true
+gtk.workspace = true
+adw.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[build-dependencies]
+glib-build-tools.workspace = true
+
+[lints]
+workspace = true

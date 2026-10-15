@@ -1,0 +1,21 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $CardsWindow: Adw.ApplicationWindow {
+  title: _("Cards");
+  default-width: 640;
+  default-height: 560;
+  width-request: 360;
+  height-request: 294;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Adw.StatusPage {
+      icon-name: "accessories-dictionary-symbolic";
+      title: _("Cards");
+      description: _("Nothing here yet");
+    };
+  };
+}
