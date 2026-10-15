@@ -17,7 +17,15 @@ Dependency direction: `cards` → `cards-core`, never the reverse. `cards-core` 
 
 - `src/lib.rs`: the app name and ID constants and `is_valid_app_id`; re-exports `Error` and `Result`.
 - `src/error.rs`: the crate-wide `Error` enum (`thiserror`) and `Result` alias.
-- `src/data_dir.rs`: `resolve_data_dir` (pure; takes a `DataDirEnv` and a `BuildProfile`) and `ensure_data_dir` (creates the directory with mode `0700`). Debug builds refuse the release directory. See ADR 0004.
+- `src/data_dir.rs`: `resolve_data_dir` (pure; takes a `DataDirEnv` and a `BuildProfile`) and `ensure_data_dir` (creates a directory with mode `0700`). Debug builds refuse the release directory. See ADR 0004.
+- `src/time.rs`: `now_ms` (UTC milliseconds) and `utc_parts` (calendar fields from milliseconds).
+- `src/storage/`: SQLite storage (ADR 0005).
+  - `mod.rs`: `Store::open(data_dir)` opens `<data_dir>/cards.sqlite3`. It checks integrity, sets WAL/FK, backs up and migrates.
+  - `migrations/`: `MIGRATIONS` (numbered `NNNN_*.sql` files embedded with `include_str!`) and `migrate`. Merged migrations are hash-pinned by a test.
+  - `backup.rs`: online-backup copies into `<data_dir>/backups/` (keeps 14).
+  - `tests.rs`: store-level tests.
+
+  The schema is in `migrations/0001_initial.sql`.
 
 ### `cards` today
 

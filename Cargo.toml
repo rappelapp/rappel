@@ -22,6 +22,9 @@ glib-build-tools = "0.22"
 # Errors (cards-core).
 thiserror = "2"
 
+# Storage (cards-core). Bundled SQLite: same version everywhere, FTS5 included.
+rusqlite = { version = "0.40", default-features = false, features = ["bundled", "backup"] }
+
 # Test-only: temporary directories for filesystem tests.
 tempfile = "3"
 

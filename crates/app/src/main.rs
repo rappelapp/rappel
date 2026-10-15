@@ -90,7 +90,7 @@ fn prepare_data_dir() -> Result<PathBuf, String> {
                 cards_core::Error::DebugUsesReleaseDir { .. } => {
                     "Debug build refused to use the release data folder".to_owned()
                 }
-                cards_core::Error::CreateDataDir { path, .. }
+                cards_core::Error::CreateDir { path, .. }
                 | cards_core::Error::NotADirectory(path) => {
                     format!("Could not create the data folder {}", path.display())
                 }
@@ -98,6 +98,9 @@ fn prepare_data_dir() -> Result<PathBuf, String> {
                     "CARDS_DATA_DIR must be an absolute path".to_owned()
                 }
                 cards_core::Error::NoHomeDir => "Could not find the data folder".to_owned(),
+                // Storage errors cannot come from resolving or creating the
+                // directory; this arm only keeps the match exhaustive.
+                _ => "Could not use the data folder".to_owned(),
             })
         }
     }

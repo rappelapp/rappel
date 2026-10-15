@@ -4,6 +4,8 @@
 
 pub mod data_dir;
 mod error;
+pub mod storage;
+pub mod time;
 
 pub use error::{Error, Result};
 

@@ -1,0 +1,134 @@
+//! Numbered schema migrations.
+//!
+//! The schema version is `PRAGMA user_version`. Migration N moves a database
+//! from version N-1 to N. **Never edit a migration that has been merged**;
+//! add a new one. `tests::migrations_are_unchanged` pins every migration's
+//! SQL so an edit cannot slip through unnoticed.
+//!
+//! Migrations run with `foreign_keys=ON`, which cannot be changed inside a
+//! transaction. A migration that rebuilds a table (SQLite's "12-step
+//! ALTER") would therefore cascade or be blocked by `DROP TABLE`: dropping
+//! `cards` would delete `card_schedule` rows, and `review_events` would
+//! refuse. Such a migration needs foreign keys switched off around its
+//! transaction first; add that to the framework when the first one is
+//! written, together with a test.
+
+use rusqlite::{Connection, TransactionBehavior};
+
+use crate::error::{Error, Result};
+
+/// One schema migration.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Migration {
+    /// The `user_version` after this migration. Contiguous from 1.
+    pub version: u32,
+    /// Short description, for logs.
+    pub name: &'static str,
+    /// The SQL to run. Must not contain `BEGIN`/`COMMIT`: it runs inside a
+    /// transaction. SQL that ends the transaction is detected and reported
+    /// as [`Error::MigrationEndedTransaction`], but whatever it committed
+    /// before that point stays committed.
+    pub sql: &'static str,
+}
+
+/// All migrations, in order.
+pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    name: "initial",
+    sql: include_str!("0001_initial.sql"),
+}];
+
+/// The schema version a database has after all of `migrations`.
+pub(crate) fn latest(migrations: &[Migration]) -> u32 {
+    migrations.last().map_or(0, |m| m.version)
+}
+
+/// Applies every migration newer than `current`, each in its own
+/// transaction that also sets `user_version` and checks foreign keys. On the
+/// first failure that migration is rolled back and the error returned; the
+/// database stays at the last migration that succeeded.
+pub(crate) fn migrate(conn: &mut Connection, migrations: &[Migration], current: u32) -> Result<()> {
+    for m in migrations.iter().filter(|m| m.version > current) {
+        tracing::info!(version = m.version, name = m.name, "applying migration");
+        let as_migration_err = |source| Error::Migration {
+            version: m.version,
+            source,
+        };
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(as_migration_err)?;
+        tx.execute_batch(m.sql).map_err(as_migration_err)?;
+        if tx.is_autocommit() {
+            // The SQL ended the transaction itself (COMMIT/END/ROLLBACK).
+            // Whatever it committed cannot be undone here, but the version
+            // is not bumped, so the migration is not recorded as done.
+            return Err(Error::MigrationEndedTransaction { version: m.version });
+        }
+        tx.pragma_update(None, "user_version", m.version)
+            .map_err(as_migration_err)?;
+        let violations = tx
+            .prepare("PRAGMA foreign_key_check")
+            .and_then(|mut stmt| stmt.exists([]))
+            .map_err(as_migration_err)?;
+        if violations {
+            // Dropping `tx` rolls back.
+            return Err(Error::ForeignKeyViolation { version: m.version });
+        }
+        tx.commit().map_err(as_migration_err)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_are_contiguous_from_one() {
+        for (i, m) in MIGRATIONS.iter().enumerate() {
+            assert_eq!(m.version as usize, i + 1, "migration {}", m.name);
+        }
+    }
+
+    #[test]
+    fn migrations_do_not_manage_transactions() {
+        for m in MIGRATIONS {
+            let upper = m.sql.to_uppercase();
+            for word in ["BEGIN TRANSACTION", "COMMIT", "ROLLBACK"] {
+                assert!(
+                    !upper.contains(word),
+                    "migration {} contains {word}",
+                    m.version
+                );
+            }
+        }
+    }
+
+    /// 64-bit FNV-1a. Not cryptographic; it only has to notice edits.
+    fn fnv1a(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &b| {
+            (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        })
+    }
+
+    /// Pins the SQL of every merged migration. If this fails you edited an
+    /// existing migration: revert it and add a new migration instead. Only
+    /// append to this list, when adding a migration.
+    #[test]
+    fn migrations_are_unchanged() {
+        const PINNED: &[(u32, u64)] = &[(1, 2_537_882_282_965_863_491)];
+        assert_eq!(
+            MIGRATIONS.len(),
+            PINNED.len(),
+            "pin every new migration here"
+        );
+        for (m, &(version, hash)) in MIGRATIONS.iter().zip(PINNED) {
+            assert_eq!(m.version, version);
+            assert_eq!(
+                fnv1a(m.sql.as_bytes()),
+                hash,
+                "migration {version} was edited; add a new migration instead"
+            );
+        }
+    }
+}

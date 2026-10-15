@@ -1,0 +1,466 @@
+//! Database backups with the SQLite online backup API.
+//!
+//! Backups are named `cards-YYYYMMDD-HHMMSS.sqlite3` (UTC), with `-2`, `-3`…
+//! appended if a name is taken. Each is written to `<name>.partial`, checked
+//! with `PRAGMA quick_check`, synced and only then renamed, so a file with
+//! the final name is always a complete, checked backup.
+
+use std::fs::{self, File, OpenOptions};
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use rusqlite::backup::{Backup, StepResult};
+use rusqlite::{Connection, OpenFlags};
+
+use crate::data_dir::ensure_data_dir;
+use crate::error::{Error, Result};
+use crate::time::utc_parts;
+
+/// How many backups [`prune_backups`] keeps (SPEC §3).
+pub(crate) const KEEP_BACKUPS: usize = 14;
+
+const PREFIX: &str = "cards-";
+const EXTENSION: &str = ".sqlite3";
+const PARTIAL: &str = ".partial";
+const FILE_MODE: u32 = 0o600;
+
+/// `cards-YYYYMMDD-` for the UTC day of `now_ms`.
+fn day_prefix(now_ms: i64) -> String {
+    let t = utc_parts(now_ms);
+    format!("{PREFIX}{:04}{:02}{:02}-", t.year, t.month, t.day)
+}
+
+/// `cards-YYYYMMDD-HHMMSS` for `now_ms`, without extension.
+fn backup_stem(now_ms: i64) -> String {
+    let t = utc_parts(now_ms);
+    format!(
+        "{}{:02}{:02}{:02}",
+        day_prefix(now_ms),
+        t.hour,
+        t.minute,
+        t.second
+    )
+}
+
+/// Parses a backup file name into a sort key: the `YYYYMMDD-HHMMSS` part and
+/// the collision counter (1 when there is no `-N` suffix). `None` for any
+/// other file, so pruning never touches files it did not create.
+fn parse_backup_name(name: &str) -> Option<(&str, u32)> {
+    let rest = name.strip_prefix(PREFIX)?.strip_suffix(EXTENSION)?;
+    let (stamp, counter) = match rest.split_at_checked(15) {
+        Some((stamp, "")) => (stamp, 1),
+        Some((stamp, suffix)) => {
+            let n: u32 = suffix.strip_prefix('-')?.parse().ok()?;
+            // `-1` is never generated, and the suffix must be plain digits.
+            if n < 2 || !suffix[1..].bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            (stamp, n)
+        }
+        None => return None,
+    };
+    let bytes = stamp.as_bytes();
+    let well_formed = bytes.len() == 15
+        && bytes[8] == b'-'
+        && bytes[..8].iter().chain(&bytes[9..]).all(u8::is_ascii_digit);
+    well_formed.then_some((stamp, counter))
+}
+
+/// File names in `dir` that are backups, oldest first. A missing directory
+/// has no backups.
+fn list_backups(dir: &Path) -> Result<Vec<String>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(Error::Io {
+                path: dir.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| Error::Io {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+        if let Some(name) = entry.file_name().to_str()
+            && parse_backup_name(name).is_some()
+        {
+            names.push(name.to_owned());
+        }
+    }
+    names.sort_by(|a, b| parse_backup_name(a).cmp(&parse_backup_name(b)));
+    Ok(names)
+}
+
+/// Whether `dir` holds a backup from the UTC day of `now_ms`.
+pub(crate) fn has_backup_for_day(dir: &Path, now_ms: i64) -> Result<bool> {
+    let prefix = day_prefix(now_ms);
+    Ok(list_backups(dir)?.iter().any(|n| n.starts_with(&prefix)))
+}
+
+/// Copies the database behind `conn` into a new backup in `dir` (created
+/// with mode `0700` if needed). The backup file has mode `0600` and uses a
+/// rollback journal, so it is a single self-contained file.
+///
+/// Returns the path of the finished backup.
+pub(crate) fn create_backup(conn: &Connection, dir: &Path, now_ms: i64) -> Result<PathBuf> {
+    ensure_data_dir(dir)?;
+    let stem = backup_stem(now_ms);
+    let mut path = dir.join(format!("{stem}{EXTENSION}"));
+    let mut counter = 2;
+    while path.try_exists().map_err(|source| Error::Io {
+        path: path.clone(),
+        source,
+    })? {
+        path = dir.join(format!("{stem}-{counter}{EXTENSION}"));
+        counter += 1;
+    }
+    let partial = partial_path(&path);
+
+    let result = write_backup(conn, &partial, &path);
+    if result.is_err() {
+        // Best effort: the error being returned matters more than a failed
+        // cleanup, and pruning removes leftovers next time.
+        let _ = fs::remove_file(&partial);
+    }
+    result.map(|()| path)
+}
+
+fn partial_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(PARTIAL);
+    PathBuf::from(name)
+}
+
+fn write_backup(conn: &Connection, partial: &Path, path: &Path) -> Result<()> {
+    let io_err = |source| Error::Io {
+        path: partial.to_path_buf(),
+        source,
+    };
+    let sql_err = |source| Error::Backup {
+        path: path.to_path_buf(),
+        source,
+    };
+
+    // A leftover from a crash is replaced. Created first so SQLite opens an
+    // existing 0600 file instead of creating one with its default mode.
+    match fs::remove_file(partial) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(io_err(err)),
+        _ => {}
+    }
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(FILE_MODE)
+        .open(partial)
+        .map_err(io_err)?;
+
+    {
+        let mut dest = Connection::open_with_flags(
+            partial,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(sql_err)?;
+        run_backup(conn, &mut dest).map_err(sql_err)?;
+        // The copied header keeps the source's WAL mode; a backup should be
+        // one self-contained file.
+        dest.pragma_update_and_check(None, "journal_mode", "DELETE", |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(sql_err)?;
+        let messages = check_rows(&dest, "quick_check").map_err(sql_err)?;
+        if messages != ["ok"] {
+            return Err(Error::BackupCheckFailed {
+                path: path.to_path_buf(),
+                messages,
+            });
+        }
+        dest.close().map_err(|(_, err)| sql_err(err))?;
+    }
+
+    File::open(partial)
+        .and_then(|f| f.sync_all())
+        .map_err(io_err)?;
+    fs::rename(partial, path).map_err(io_err)?;
+    // Make the rename itself durable.
+    if let Some(dir) = path.parent() {
+        File::open(dir).and_then(|d| d.sync_all()).map_err(io_err)?;
+    }
+    Ok(())
+}
+
+/// Pages copied per backup step.
+const PAGES_PER_STEP: i32 = 256;
+/// Wait between retries when the source is locked.
+const RETRY_PAUSE: Duration = Duration::from_millis(50);
+/// Give up after this many locked steps in a row (about 5 s).
+const MAX_RETRIES: u32 = 100;
+
+/// Copies `src` into `dest` with the online backup API. Unlike
+/// `Backup::run_to_completion`, it gives up with `SQLITE_BUSY` instead of
+/// retrying forever if another connection keeps the source locked.
+fn run_backup(src: &Connection, dest: &mut Connection) -> rusqlite::Result<()> {
+    let backup = Backup::new(src, dest)?;
+    let mut retries = 0;
+    loop {
+        match backup.step(PAGES_PER_STEP)? {
+            StepResult::Done => return Ok(()),
+            StepResult::More => retries = 0,
+            // Busy, Locked, and any future "try again" result.
+            _ => {
+                retries += 1;
+                if retries > MAX_RETRIES {
+                    return Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                        Some("database stayed locked during backup".into()),
+                    ));
+                }
+                std::thread::sleep(RETRY_PAUSE);
+            }
+        }
+    }
+}
+
+/// Runs `PRAGMA <pragma>` (`integrity_check` or `quick_check`) and returns
+/// its rows. A healthy database returns exactly `["ok"]`.
+pub(crate) fn check_rows(conn: &Connection, pragma: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA {pragma}"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    rows.collect()
+}
+
+/// Deletes all but `keep` backups in `dir`, and any leftover `.partial`
+/// files. Other files are never touched.
+///
+/// `protect` (the backup just made) is always kept and counts towards
+/// `keep`; the rest of the slots go to the newest by name. Without this, a
+/// clock that was ahead earlier could make the fresh backup sort oldest and
+/// be deleted right after it was made.
+pub(crate) fn prune_backups(dir: &Path, keep: usize, protect: Option<&Path>) -> Result<()> {
+    let protected_name = protect.and_then(Path::file_name).and_then(|n| n.to_str());
+    let mut backups = list_backups(dir)?;
+    let mut keep = keep;
+    if let Some(name) = protected_name
+        && let Some(i) = backups.iter().position(|b| b == name)
+    {
+        backups.remove(i);
+        keep = keep.saturating_sub(1);
+    }
+    let excess = backups.len().saturating_sub(keep);
+    let mut doomed: Vec<PathBuf> = backups[..excess].iter().map(|n| dir.join(n)).collect();
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str()
+                && let Some(base) = name.strip_suffix(PARTIAL)
+                && parse_backup_name(base).is_some()
+            {
+                doomed.push(entry.path());
+            }
+        }
+    }
+    for path in doomed {
+        fs::remove_file(&path).map_err(|source| Error::Io { path, source })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// 2026-10-15T12:34:56.789Z
+    const NOW: i64 = 1_792_067_696_789;
+
+    #[test]
+    fn names_use_utc_date_and_time() {
+        assert_eq!(backup_stem(NOW), "cards-20261015-123456");
+        assert_eq!(day_prefix(NOW), "cards-20261015-");
+    }
+
+    #[test]
+    fn parses_only_backup_names() {
+        assert_eq!(
+            parse_backup_name("cards-20261015-123456.sqlite3"),
+            Some(("20261015-123456", 1))
+        );
+        assert_eq!(
+            parse_backup_name("cards-20261015-123456-3.sqlite3"),
+            Some(("20261015-123456", 3))
+        );
+        for bad in [
+            "cards.sqlite3",
+            "cards-20261015-123456.sqlite3.partial",
+            "cards-20261015-123456-1.sqlite3",
+            "cards-20261015-123456-+2.sqlite3",
+            "cards-20261015-123456-x.sqlite3",
+            "cards-2026101-1234567.sqlite3",
+            "cards-20261015_123456.sqlite3",
+            "notes.txt",
+            "cards-bad.sqlite3",
+        ] {
+            assert_eq!(parse_backup_name(bad), None, "{bad}");
+        }
+    }
+
+    fn touch(dir: &Path, name: &str) {
+        fs::write(dir.join(name), b"").unwrap();
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn collision_suffix_sorts_after_the_plain_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        touch(tmp.path(), "cards-20261015-123456-2.sqlite3");
+        touch(tmp.path(), "cards-20261015-123456.sqlite3");
+        touch(tmp.path(), "cards-20261014-000000.sqlite3");
+        assert_eq!(
+            list_backups(tmp.path()).unwrap(),
+            [
+                "cards-20261014-000000.sqlite3",
+                "cards-20261015-123456.sqlite3",
+                "cards-20261015-123456-2.sqlite3",
+            ]
+        );
+    }
+
+    #[test]
+    fn prune_keeps_newest_and_ignores_other_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        for day in 1..=16 {
+            touch(tmp.path(), &format!("cards-202610{day:02}-120000.sqlite3"));
+        }
+        touch(tmp.path(), "notes.txt");
+        touch(tmp.path(), "cards-bad.sqlite3");
+        touch(tmp.path(), "cards-20261017-120000.sqlite3.partial");
+
+        prune_backups(tmp.path(), KEEP_BACKUPS, None).unwrap();
+
+        let mut expected: Vec<String> = (3..=16)
+            .map(|day| format!("cards-202610{day:02}-120000.sqlite3"))
+            .collect();
+        expected.push("cards-bad.sqlite3".into());
+        expected.push("notes.txt".into());
+        expected.sort();
+        assert_eq!(names(tmp.path()), expected);
+    }
+
+    #[test]
+    fn prune_never_deletes_the_protected_backup() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 15 backups from a clock that was years ahead.
+        for day in 1..=15 {
+            touch(tmp.path(), &format!("cards-203001{day:02}-120000.sqlite3"));
+        }
+        let fresh = tmp.path().join("cards-20261015-123456.sqlite3");
+        touch(tmp.path(), "cards-20261015-123456.sqlite3");
+
+        prune_backups(tmp.path(), KEEP_BACKUPS, Some(&fresh)).unwrap();
+
+        let left = names(tmp.path());
+        assert_eq!(left.len(), KEEP_BACKUPS);
+        assert!(left.contains(&"cards-20261015-123456.sqlite3".to_owned()));
+        // The other 13 slots go to the newest names.
+        assert_eq!(left[0], "cards-20261015-123456.sqlite3");
+        assert_eq!(left[1], "cards-20300103-120000.sqlite3");
+    }
+
+    #[test]
+    fn prune_on_missing_dir_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        prune_backups(&tmp.path().join("none"), KEEP_BACKUPS, None).unwrap();
+    }
+
+    #[test]
+    fn has_backup_for_day_matches_utc_day_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!has_backup_for_day(tmp.path(), NOW).unwrap());
+        touch(tmp.path(), "cards-20261014-235959.sqlite3");
+        assert!(!has_backup_for_day(tmp.path(), NOW).unwrap());
+        touch(tmp.path(), "cards-20261015-000000.sqlite3");
+        assert!(has_backup_for_day(tmp.path(), NOW).unwrap());
+    }
+
+    fn source_db(dir: &Path) -> Connection {
+        let conn = Connection::open(dir.join("src.sqlite3")).unwrap();
+        conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get::<_, String>(0))
+            .unwrap();
+        conn.execute_batch(
+            "CREATE TABLE t(x INTEGER) STRICT;
+             INSERT INTO t VALUES (1), (2), (3);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn backup_contains_uncheckpointed_wal_rows_and_is_private() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = source_db(tmp.path());
+        // The rows are still in the -wal file, not the main file.
+        assert!(tmp.path().join("src.sqlite3-wal").exists());
+
+        let backups = tmp.path().join("backups");
+        let path = create_backup(&conn, &backups, NOW).unwrap();
+
+        assert_eq!(path, backups.join("cards-20261015-123456.sqlite3"));
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&backups), 0o700);
+
+        let copy = Connection::open(&path).unwrap();
+        let n: i64 = copy
+            .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 3);
+        let mode: String = copy
+            .pragma_query_value(None, "journal_mode", |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "delete");
+        drop(copy);
+        // Only the finished backup is left: no -wal, -journal or .partial.
+        assert_eq!(names(&backups), ["cards-20261015-123456.sqlite3"]);
+    }
+
+    #[test]
+    fn second_backup_in_the_same_second_gets_a_suffix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = source_db(tmp.path());
+        let backups = tmp.path().join("backups");
+        create_backup(&conn, &backups, NOW).unwrap();
+        let second = create_backup(&conn, &backups, NOW).unwrap();
+        assert_eq!(second, backups.join("cards-20261015-123456-2.sqlite3"));
+    }
+
+    #[test]
+    fn stale_partial_is_replaced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = source_db(tmp.path());
+        let backups = tmp.path().join("backups");
+        fs::create_dir(&backups).unwrap();
+        fs::write(
+            backups.join("cards-20261015-123456.sqlite3.partial"),
+            b"junk",
+        )
+        .unwrap();
+        let path = create_backup(&conn, &backups, NOW).unwrap();
+        assert_eq!(names(&backups), ["cards-20261015-123456.sqlite3"]);
+        Connection::open(path)
+            .unwrap()
+            .query_row("SELECT count(*) FROM t", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+    }
+}

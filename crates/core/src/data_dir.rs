@@ -110,9 +110,9 @@ pub fn resolve_data_dir(env: &DataDirEnv, profile: BuildProfile) -> Result<PathB
 ///
 /// # Errors
 /// - [`Error::NotADirectory`] if `path` exists and is not a directory.
-/// - [`Error::CreateDataDir`] if creating it or setting permissions fails.
+/// - [`Error::CreateDir`] if creating it or setting permissions fails.
 pub fn ensure_data_dir(path: &Path) -> Result<()> {
-    let create_err = |source| Error::CreateDataDir {
+    let create_err = |source| Error::CreateDir {
         path: path.to_path_buf(),
         source,
     };
@@ -467,7 +467,7 @@ mod tests {
         let dir = file.join("cards");
         assert!(matches!(
             ensure_data_dir(&dir),
-            Err(Error::CreateDataDir { .. })
+            Err(Error::CreateDir { .. })
         ));
     }
 }

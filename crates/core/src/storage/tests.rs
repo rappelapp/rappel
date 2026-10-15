@@ -1,0 +1,611 @@
+//! Tests for `Store::open`: fresh database, re-open, migrations, backups,
+//! integrity failures and the append-only rule.
+
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+
+use rusqlite::Connection;
+
+use super::*;
+
+/// 2026-10-15T12:34:56.789Z
+const DAY0: i64 = 1_792_067_696_789;
+const DAY_MS: i64 = 86_400_000;
+
+const DECK: &str = "01920000-0000-7000-8000-000000000001";
+const CARD: &str = "01920000-0000-7000-8000-000000000002";
+const CARD2: &str = "01920000-0000-7000-8000-000000000003";
+const EVENT: &str = "01920000-0000-7000-8000-000000000004";
+
+struct Env {
+    _tmp: tempfile::TempDir,
+    db: PathBuf,
+    backups: PathBuf,
+}
+
+fn env() -> Env {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("data").join(DB_FILE_NAME);
+    let backups = tmp.path().join("data").join(BACKUP_DIR_NAME);
+    Env {
+        _tmp: tmp,
+        db,
+        backups,
+    }
+}
+
+impl Env {
+    fn open(&self, now: i64) -> Result<Store> {
+        Store::open_with(&self.db, &self.backups, now, MIGRATIONS)
+    }
+
+    fn open_with(&self, now: i64, migrations: &[Migration]) -> Result<Store> {
+        Store::open_with(&self.db, &self.backups, now, migrations)
+    }
+
+    fn backups(&self) -> Vec<String> {
+        let Ok(entries) = fs::read_dir(&self.backups) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+}
+
+fn mode(path: &Path) -> u32 {
+    fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+fn insert_sample(conn: &Connection) {
+    conn.execute_batch(&format!(
+        "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+         INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+             VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1);
+         INSERT INTO review_events VALUES ('{EVENT}', '{CARD}', 2, 'pass', 1500);
+         INSERT INTO card_schedule VALUES ('{CARD}', 3, 1.5, 5.0, 2, 1, 0);"
+    ))
+    .unwrap();
+}
+
+fn count(conn: &Connection, table: &str) -> i64 {
+    conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+        .unwrap()
+}
+
+fn tables(conn: &Connection) -> Vec<String> {
+    let mut stmt = conn
+        .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
+        .unwrap();
+    stmt.query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+// --- Fresh database -------------------------------------------------------
+
+#[test]
+fn fresh_database_is_created_private_migrated_and_not_backed_up() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+
+    assert_eq!(store.schema_version().unwrap(), latest(MIGRATIONS));
+    assert_eq!(
+        tables(&store.conn),
+        ["card_schedule", "cards", "decks", "review_events"]
+    );
+    assert_eq!(mode(&e.db), 0o600);
+    assert_eq!(mode(e.db.parent().unwrap()), 0o700);
+
+    let journal: String = store
+        .conn
+        .pragma_query_value(None, "journal_mode", |r| r.get(0))
+        .unwrap();
+    assert_eq!(journal, "wal");
+    let fk: bool = store
+        .conn
+        .pragma_query_value(None, "foreign_keys", |r| r.get(0))
+        .unwrap();
+    assert!(fk);
+    let sync: i64 = store
+        .conn
+        .pragma_query_value(None, "synchronous", |r| r.get(0))
+        .unwrap();
+    assert_eq!(sync, 2, "synchronous=FULL");
+
+    assert!(
+        e.backups().is_empty(),
+        "nothing to back up in a new database"
+    );
+}
+
+#[test]
+fn wal_and_shm_files_are_private() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+    insert_sample(&store.conn);
+    for suffix in ["-wal", "-shm"] {
+        assert_eq!(mode(&sidecar(&e.db, suffix)), 0o600, "{suffix}");
+    }
+}
+
+#[test]
+fn existing_loose_permissions_are_tightened() {
+    let e = env();
+    drop(e.open(DAY0).unwrap());
+    fs::set_permissions(&e.db, fs::Permissions::from_mode(0o644)).unwrap();
+    drop(e.open(DAY0).unwrap());
+    assert_eq!(mode(&e.db), 0o600);
+}
+
+// --- Re-open --------------------------------------------------------------
+
+#[test]
+fn reopen_keeps_data_and_backs_up_once_per_utc_day() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+    insert_sample(&store.conn);
+    drop(store);
+
+    // Same day: the first open of an existing database makes today's backup.
+    let store = e.open(DAY0 + 1000).unwrap();
+    assert_eq!(count(&store.conn, "review_events"), 1);
+    assert_eq!(store.schema_version().unwrap(), latest(MIGRATIONS));
+    drop(store);
+    assert_eq!(e.backups(), ["cards-20261015-123457.sqlite3"]);
+
+    // Same day again: no new backup.
+    drop(e.open(DAY0 + 60_000).unwrap());
+    assert_eq!(e.backups().len(), 1);
+
+    // Next day: one more.
+    drop(e.open(DAY0 + DAY_MS).unwrap());
+    assert_eq!(
+        e.backups(),
+        [
+            "cards-20261015-123457.sqlite3",
+            "cards-20261016-123456.sqlite3"
+        ]
+    );
+}
+
+#[test]
+fn backups_are_pruned_to_fourteen() {
+    let e = env();
+    drop(e.open(DAY0).unwrap());
+    for day in 1..=20 {
+        drop(e.open(DAY0 + day * DAY_MS).unwrap());
+    }
+    let backups = e.backups();
+    assert_eq!(backups.len(), KEEP_BACKUPS);
+    assert_eq!(backups.last().unwrap(), "cards-20261104-123456.sqlite3");
+}
+
+// --- Migrations -----------------------------------------------------------
+
+/// For every real migration N: a database at N-1 (built by the real code
+/// with only the first N-1 migrations) opens and reaches N. This covers
+/// "migrate a DB created by the previous version" for every future
+/// migration too; migrations that transform data add their own tests.
+#[test]
+fn every_migration_upgrades_the_previous_version() {
+    for n in 1..=MIGRATIONS.len() {
+        let e = env();
+        let prev = e.open_with(DAY0, &MIGRATIONS[..n - 1]).unwrap();
+        assert_eq!(prev.schema_version().unwrap() as usize, n - 1);
+        drop(prev);
+
+        let store = e.open_with(DAY0, &MIGRATIONS[..n]).unwrap();
+        assert_eq!(store.schema_version().unwrap() as usize, n);
+        assert_eq!(check_rows(&store.conn, "integrity_check").unwrap(), ["ok"]);
+    }
+}
+
+#[test]
+fn migration_0001_applies_to_an_existing_empty_file() {
+    let e = env();
+    fs::create_dir_all(e.db.parent().unwrap()).unwrap();
+    drop(Connection::open(&e.db).unwrap());
+    assert_eq!(fs::metadata(&e.db).unwrap().len(), 0);
+
+    let store = e.open(DAY0).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 1);
+    insert_sample(&store.conn);
+}
+
+const FAKE_V1: Migration = Migration {
+    version: 1,
+    name: "fake v1",
+    sql: "CREATE TABLE t(x INTEGER NOT NULL) STRICT;",
+};
+const FAKE_V2: Migration = Migration {
+    version: 2,
+    name: "fake v2",
+    sql: "ALTER TABLE t ADD COLUMN y INTEGER NOT NULL DEFAULT 7;",
+};
+const FAILING_V2: Migration = Migration {
+    version: 2,
+    name: "failing v2",
+    sql: "CREATE TABLE u(x INTEGER) STRICT; INSERT INTO missing VALUES (1);",
+};
+const FK_VIOLATING_V2: Migration = Migration {
+    version: 2,
+    name: "fk-violating v2",
+    sql: "PRAGMA defer_foreign_keys = ON;
+          CREATE TABLE p(id INTEGER PRIMARY KEY) STRICT;
+          CREATE TABLE c(p INTEGER REFERENCES p(id)) STRICT;
+          INSERT INTO c VALUES (99);",
+};
+
+fn db_at_fake_v1(e: &Env) {
+    let store = e.open_with(DAY0, &[FAKE_V1]).unwrap();
+    store
+        .conn
+        .execute_batch("INSERT INTO t VALUES (1), (2);")
+        .unwrap();
+}
+
+#[test]
+fn upgrade_keeps_data_and_backs_up_the_old_version_first() {
+    let e = env();
+    db_at_fake_v1(&e);
+
+    let store = e.open_with(DAY0, &[FAKE_V1, FAKE_V2]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 2);
+    let sum: i64 = store
+        .conn
+        .query_row("SELECT sum(x + y) FROM t", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(sum, 1 + 7 + 2 + 7);
+
+    // The backup holds the database as it was before the migration.
+    let backups = e.backups();
+    assert_eq!(backups.len(), 1);
+    let old = Connection::open(e.backups.join(&backups[0])).unwrap();
+    let v: u32 = old
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, 1);
+    assert_eq!(count(&old, "t"), 2);
+    let has_y: bool = old
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('t') WHERE name = 'y'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(!has_y);
+}
+
+#[test]
+fn failed_migration_rolls_back_and_keeps_the_backup() {
+    let e = env();
+    db_at_fake_v1(&e);
+
+    let err = e.open_with(DAY0, &[FAKE_V1, FAILING_V2]).unwrap_err();
+    assert!(matches!(err, Error::Migration { version: 2, .. }), "{err}");
+
+    let conn = Connection::open(&e.db).unwrap();
+    let v: u32 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, 1);
+    assert_eq!(tables(&conn), ["t"], "table u was rolled back");
+    assert_eq!(count(&conn, "t"), 2);
+    assert_eq!(e.backups().len(), 1);
+}
+
+#[test]
+fn foreign_key_violation_rolls_back_the_migration() {
+    let e = env();
+    db_at_fake_v1(&e);
+
+    let err = e.open_with(DAY0, &[FAKE_V1, FK_VIOLATING_V2]).unwrap_err();
+    assert!(
+        matches!(err, Error::ForeignKeyViolation { version: 2 }),
+        "{err}"
+    );
+    let conn = Connection::open(&e.db).unwrap();
+    assert_eq!(tables(&conn), ["t"]);
+}
+
+#[test]
+fn newer_database_is_refused_untouched() {
+    let e = env();
+    drop(e.open(DAY0).unwrap());
+    {
+        // Not in WAL mode, like a backup copied back by hand: switching it
+        // to WAL would rewrite the header, so this catches any write that
+        // happens before the version check.
+        let conn = Connection::open(&e.db).unwrap();
+        conn.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get::<_, String>(0))
+            .unwrap();
+        conn.pragma_update(None, "user_version", 99).unwrap();
+    }
+    let before = fs::read(&e.db).unwrap();
+
+    let err = e.open(DAY0 + DAY_MS).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::UnsupportedVersion {
+                found: 99,
+                supported: 1
+            }
+        ),
+        "{err}"
+    );
+    assert_eq!(fs::read(&e.db).unwrap(), before);
+    assert!(!sidecar(&e.db, "-wal").exists(), "no WAL file created");
+    assert!(e.backups().is_empty(), "no backup of a database we refuse");
+}
+
+fn sidecar(db: &Path, suffix: &str) -> PathBuf {
+    let mut p = db.as_os_str().to_owned();
+    p.push(suffix);
+    PathBuf::from(p)
+}
+
+#[test]
+fn foreign_database_is_refused_untouched() {
+    let e = env();
+    fs::create_dir_all(e.db.parent().unwrap()).unwrap();
+    Connection::open(&e.db)
+        .unwrap()
+        .execute_batch("CREATE TABLE other_app(x); INSERT INTO other_app VALUES (1);")
+        .unwrap();
+    let before = fs::read(&e.db).unwrap();
+
+    assert!(matches!(e.open(DAY0), Err(Error::NotACardsDatabase)));
+    assert_eq!(fs::read(&e.db).unwrap(), before);
+    assert_eq!(
+        e.backups(),
+        Vec::<String>::new(),
+        "no backup of a foreign file"
+    );
+}
+
+#[test]
+fn failed_pre_migration_backup_stops_the_migration() {
+    let e = env();
+    db_at_fake_v1(&e);
+    // A regular file where the backup directory should be.
+    fs::write(&e.backups, b"").unwrap();
+
+    let err = e.open_with(DAY0, &[FAKE_V1, FAKE_V2]).unwrap_err();
+    assert!(matches!(err, Error::NotADirectory(_)), "{err}");
+
+    let conn = Connection::open(&e.db).unwrap();
+    let v: u32 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, 1, "not migrated without a backup");
+    let leftovers: Vec<_> = fs::read_dir(e.db.parent().unwrap())
+        .unwrap()
+        .map(|d| d.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.starts_with("cards-"))
+        .collect();
+    assert_eq!(leftovers, Vec::<String>::new());
+}
+
+#[test]
+fn failed_daily_backup_still_opens_a_healthy_database() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+    insert_sample(&store.conn);
+    drop(store);
+    fs::write(&e.backups, b"").unwrap();
+
+    let store = e.open(DAY0 + DAY_MS).unwrap();
+    assert_eq!(count(&store.conn, "review_events"), 1);
+    assert_eq!(store.schema_version().unwrap(), latest(MIGRATIONS));
+}
+
+#[test]
+fn pre_migration_backup_survives_future_dated_backups() {
+    let e = env();
+    db_at_fake_v1(&e);
+    fs::remove_dir_all(&e.backups).ok();
+    fs::create_dir(&e.backups).unwrap();
+    for day in 1..=KEEP_BACKUPS {
+        fs::write(
+            e.backups
+                .join(format!("cards-203001{day:02}-120000.sqlite3")),
+            b"",
+        )
+        .unwrap();
+    }
+
+    let store = e.open_with(DAY0, &[FAKE_V1, FAKE_V2]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 2);
+    let fresh = e.backups.join("cards-20261015-123456.sqlite3");
+    let v: u32 = Connection::open(&fresh)
+        .unwrap()
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, 1, "the pre-migration backup is still there");
+    assert_eq!(e.backups().len(), KEEP_BACKUPS);
+}
+
+#[test]
+fn migration_that_commits_itself_is_not_recorded() {
+    const COMMITTING_V2: Migration = Migration {
+        version: 2,
+        name: "committing v2",
+        sql: "CREATE TABLE u(x INTEGER) STRICT; COMMIT;",
+    };
+    let e = env();
+    db_at_fake_v1(&e);
+    let err = e.open_with(DAY0, &[FAKE_V1, COMMITTING_V2]).unwrap_err();
+    assert!(
+        matches!(err, Error::MigrationEndedTransaction { version: 2 }),
+        "{err}"
+    );
+    let v: u32 = Connection::open(&e.db)
+        .unwrap()
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, 1);
+}
+
+#[test]
+fn negative_user_version_is_refused() {
+    let e = env();
+    fs::create_dir_all(e.db.parent().unwrap()).unwrap();
+    Connection::open(&e.db)
+        .unwrap()
+        .pragma_update(None, "user_version", -1)
+        .unwrap();
+    assert!(matches!(
+        e.open(DAY0),
+        Err(Error::UnsupportedVersion { found: -1, .. })
+    ));
+}
+
+// --- Integrity ------------------------------------------------------------
+
+/// Overwrites the root page of a btree with garbage, the way a bad disk
+/// sector or a torn write would.
+fn corrupt_btree(db: &Path, name: &str) {
+    let (root, page_size): (i64, i64) = {
+        let conn = Connection::open(db).unwrap();
+        let root = conn
+            .query_row(
+                "SELECT rootpage FROM sqlite_schema WHERE name = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let page_size = conn
+            .pragma_query_value(None, "page_size", |r| r.get(0))
+            .unwrap();
+        (root, page_size)
+    };
+    let mut bytes = fs::read(db).unwrap();
+    let start = usize::try_from((root - 1) * page_size).unwrap();
+    let end = start + usize::try_from(page_size).unwrap();
+    bytes[start..end].fill(0xA5);
+    fs::write(db, bytes).unwrap();
+}
+
+#[test]
+fn integrity_failure_is_reported_and_nothing_is_written() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+    insert_sample(&store.conn);
+    // Closing the last connection checkpoints the WAL into the main file.
+    drop(store);
+    corrupt_btree(&e.db, "review_events_card_reviewed");
+    let before = fs::read(&e.db).unwrap();
+
+    match e.open(DAY0 + DAY_MS) {
+        Err(Error::IntegrityCheckFailed { messages }) => {
+            // `any` needs at least one message; `all` rules out the healthy "ok".
+            assert!(
+                messages.iter().any(|m| m != "ok") && messages.iter().all(|m| m != "ok"),
+                "{messages:?}"
+            );
+        }
+        other => panic!("expected IntegrityCheckFailed, got {other:?}"),
+    }
+    assert_eq!(fs::read(&e.db).unwrap(), before, "damaged file unchanged");
+    assert!(e.backups().is_empty(), "no backup made of a damaged file");
+}
+
+#[test]
+fn file_that_is_not_a_database_fails_the_integrity_check() {
+    let e = env();
+    fs::create_dir_all(e.db.parent().unwrap()).unwrap();
+    fs::write(&e.db, vec![0x42; 8192]).unwrap();
+    assert!(matches!(
+        e.open(DAY0),
+        Err(Error::IntegrityCheckFailed { .. })
+    ));
+    assert_eq!(fs::read(&e.db).unwrap(), vec![0x42; 8192]);
+}
+
+// --- Schema rules ---------------------------------------------------------
+
+#[test]
+fn review_events_are_append_only() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+    insert_sample(&store.conn);
+
+    for sql in [
+        "UPDATE review_events SET grade = 'fail'",
+        "DELETE FROM review_events",
+    ] {
+        let err = store.conn.execute(sql, []).unwrap_err();
+        assert!(err.to_string().contains("append-only"), "{sql}: {err}");
+    }
+    assert_eq!(count(&store.conn, "review_events"), 1);
+}
+
+#[test]
+fn card_with_reviews_cannot_be_deleted() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+    insert_sample(&store.conn);
+    assert!(
+        store
+            .conn
+            .execute("DELETE FROM cards WHERE id = ?1", [CARD])
+            .is_err()
+    );
+    assert!(
+        store
+            .conn
+            .execute("DELETE FROM decks WHERE id = ?1", [DECK])
+            .is_err(),
+        "deck with cards"
+    );
+}
+
+#[test]
+fn deleting_a_card_without_reviews_drops_its_cached_schedule() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+    insert_sample(&store.conn);
+    store
+        .conn
+        .execute_batch(&format!(
+            "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+                 VALUES ('{CARD2}', '{DECK}', 'f', 'b', 1, 1);
+             INSERT INTO card_schedule VALUES ('{CARD2}', 3, 1.0, 5.0, 2, 1, 0);
+             DELETE FROM cards WHERE id = '{CARD2}';"
+        ))
+        .unwrap();
+    assert_eq!(count(&store.conn, "card_schedule"), 1);
+}
+
+#[test]
+fn schema_rejects_bad_values() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+    insert_sample(&store.conn);
+    for sql in [
+        // Grade outside Fail/Pass.
+        format!(
+            "INSERT INTO review_events VALUES ('01920000-0000-7000-8000-000000000009', '{CARD}', 5, 'good', 0)"
+        ),
+        // Negative duration.
+        format!(
+            "INSERT INTO review_events VALUES ('01920000-0000-7000-8000-000000000009', '{CARD}', 5, 'pass', -1)"
+        ),
+        // Id not a lowercase 36-character UUID.
+        "INSERT INTO decks VALUES ('short', 'x', 1, 1)".to_owned(),
+        "INSERT INTO decks VALUES ('01920000-0000-7000-8000-00000000000A', 'x', 1, 1)".to_owned(),
+        // STRICT: text in an integer column.
+        "INSERT INTO decks VALUES ('01920000-0000-7000-8000-00000000000b', 'x', 'now', 1)"
+            .to_owned(),
+        // Unknown card.
+        "INSERT INTO review_events VALUES ('01920000-0000-7000-8000-000000000009', '01920000-0000-7000-8000-0000000000ff', 5, 'pass', 0)".to_owned(),
+    ] {
+        assert!(store.conn.execute(&sql, []).is_err(), "{sql}");
+    }
+}

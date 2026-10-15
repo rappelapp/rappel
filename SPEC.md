@@ -68,18 +68,18 @@ cards/
 
 ## 3. Data model changes
 
-Keep everything from v0 (once it is built). Add, via numbered migrations:
+Keep everything from v0 (migration 0001, ADR 0005). Ids are UUIDv7 stored as `TEXT`. Timestamps are UTC milliseconds. `cards` also has an internal `seq INTEGER PRIMARY KEY`, a stable integer key for FTS5 that is never exported. `review_events` is the source of truth; `card_schedule` is a cache rebuilt from it. Triggers forbid `UPDATE`/`DELETE` on `review_events`, and a card with reviews cannot be deleted (`ON DELETE RESTRICT`), so card deletion is a soft delete. Add, via numbered migrations:
 
 ```sql
 ALTER TABLE cards ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0;
 
-tags(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
-card_tags(card_id INTEGER REFERENCES cards(id) ON DELETE CASCADE,
-          tag_id  INTEGER REFERENCES tags(id)  ON DELETE CASCADE,
+tags(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+card_tags(card_id TEXT REFERENCES cards(id) ON DELETE CASCADE,
+          tag_id  TEXT REFERENCES tags(id)  ON DELETE CASCADE,
           PRIMARY KEY(card_id, tag_id));
 
 -- Undo without breaking the append-only log:
-ALTER TABLE review_events ADD COLUMN undoes INTEGER REFERENCES review_events(id);
+ALTER TABLE review_events ADD COLUMN undoes TEXT REFERENCES review_events(id);
 -- An event with `undoes` set cancels the referenced event. rebuild_state skips both.
 
 settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -89,7 +89,7 @@ settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 media(hash TEXT PRIMARY KEY, mime TEXT NOT NULL, bytes INTEGER NOT NULL, created_at INTEGER NOT NULL);
 
 -- Full-text search
-CREATE VIRTUAL TABLE cards_fts USING fts5(front_md, back_md, content='cards', content_rowid='id');
+CREATE VIRTUAL TABLE cards_fts USING fts5(front_md, back_md, content='cards', content_rowid='seq');
 ```
 
 Storage rules:
