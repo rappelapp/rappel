@@ -19,6 +19,12 @@ gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
 glib-build-tools = "0.22"
 
+# Errors (cards-core).
+thiserror = "2"
+
+# Test-only: temporary directories for filesystem tests.
+tempfile = "3"
+
 # Logging.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,5 +1,6 @@
 //! Main application window. Layout lives in `data/window.blp`.
 
+use adw::subclass::prelude::*;
 use gtk::{gio, glib};
 
 mod imp {
@@ -8,7 +9,10 @@ mod imp {
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
     #[template(resource = "/io/github/rsmirke/Cards/window.ui")]
-    pub struct CardsWindow {}
+    pub struct CardsWindow {
+        #[template_child]
+        pub toast_overlay: TemplateChild<adw::ToastOverlay>,
+    }
 
     #[glib::object_subclass]
     impl ObjectSubclass for CardsWindow {
@@ -42,5 +46,10 @@ glib::wrapper! {
 impl CardsWindow {
     pub fn new(app: &adw::Application) -> Self {
         glib::Object::builder().property("application", app).build()
+    }
+
+    /// Shows `toast` over the window content.
+    pub fn add_toast(&self, toast: adw::Toast) {
+        self.imp().toast_overlay.add_toast(toast);
     }
 }

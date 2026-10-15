@@ -15,13 +15,15 @@ Dependency direction: `cards` → `cards-core`, never the reverse. `cards-core` 
 
 ### `cards-core` today
 
-`src/lib.rs` only: the app name and ID constants and `is_valid_app_id`, a placeholder with unit tests so the test pipeline has something real to run.
+- `src/lib.rs`: the app name and ID constants and `is_valid_app_id`; re-exports `Error` and `Result`.
+- `src/error.rs`: the crate-wide `Error` enum (`thiserror`) and `Result` alias.
+- `src/data_dir.rs`: `resolve_data_dir` (pure; takes a `DataDirEnv` and a `BuildProfile`) and `ensure_data_dir` (creates the directory with mode `0700`). Debug builds refuse the release directory. See ADR 0004.
 
 ### `cards` today
 
-- `src/main.rs`: sets up `tracing` (level from `RUST_LOG`), registers the embedded gresource, creates the `adw::Application` and shows the main window.
-- `src/window.rs`: `CardsWindow`, an `adw::ApplicationWindow` subclass using a composite template.
-- `data/window.blp`: the window layout in Blueprint (header bar + empty `AdwStatusPage`).
+- `src/main.rs`: sets up `tracing` (level from `RUST_LOG`), registers the embedded gresource, resolves and creates the data directory (logs the path at `info`; on failure logs an error and the first window shows a toast), creates the `adw::Application` and shows the main window.
+- `src/window.rs`: `CardsWindow`, an `adw::ApplicationWindow` subclass using a composite template; `add_toast` shows an `AdwToast`.
+- `data/window.blp`: the window layout in Blueprint (`AdwToastOverlay` around header bar + empty `AdwStatusPage`).
 
 ## UI build pipeline
 

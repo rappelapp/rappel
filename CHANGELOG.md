@@ -14,3 +14,5 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - `reviewer` Claude Code agent for independent slice review.
 - ADR 0002: GTK/libadwaita minimum versions and the Blueprint build pipeline.
 - CI: GitHub Actions workflow running `scripts/check.sh` on pull requests and pushes to `main` in an Ubuntu 26.04 container, with cargo caching (ADR 0003).
+- Data directory: `CARDS_DATA_DIR`, else `$XDG_DATA_HOME` (default `~/.local/share`) + `cards` (release) or `cards-dev` (debug). Created with mode `0700`. Debug builds refuse the release directory. Path logged at startup; a toast appears if it cannot be created (ADR 0004).
+- Dependencies: `thiserror` (core error type, as SPEC requires), `tempfile` (dev-only, for filesystem tests).

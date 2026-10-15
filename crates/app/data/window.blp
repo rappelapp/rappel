@@ -8,14 +8,16 @@ template $CardsWindow: Adw.ApplicationWindow {
   width-request: 360;
   height-request: 294;
 
-  content: Adw.ToolbarView {
-    [top]
-    Adw.HeaderBar {}
+  content: Adw.ToastOverlay toast_overlay {
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar {}
 
-    content: Adw.StatusPage {
-      icon-name: "accessories-dictionary-symbolic";
-      title: _("Cards");
-      description: _("Nothing here yet");
+      content: Adw.StatusPage {
+        icon-name: "accessories-dictionary-symbolic";
+        title: _("Cards");
+        description: _("Nothing here yet");
+      };
     };
   };
 }

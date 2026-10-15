@@ -2,6 +2,11 @@
 //!
 //! This crate must never depend on gtk4, glib, gio, libadwaita or anything UI.
 
+pub mod data_dir;
+mod error;
+
+pub use error::{Error, Result};
+
 /// Human-readable application name.
 pub const APP_NAME: &str = "Cards";
 
