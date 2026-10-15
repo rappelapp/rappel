@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Independent reviewer for a finished slice. Use after scripts/check.sh passes and before committing/opening the PR. Checks the slice's diff against SPEC.md and the CLAUDE.md hard rules, the quality gate, and test coverage of core logic; reports blocking vs non-blocking findings. Read-only: never edits code.
+description: "Independent reviewer for a finished slice. Use after scripts/check.sh passes and before committing/opening the PR. Checks the slice's diff against SPEC.md and the CLAUDE.md hard rules, the quality gate, and test coverage of core logic; reports blocking vs non-blocking findings. Read-only: never edits code."
 model: opus
 tools: Read, Grep, Glob, Bash
 ---
