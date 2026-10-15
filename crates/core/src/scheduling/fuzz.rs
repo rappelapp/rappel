@@ -41,7 +41,10 @@ pub(crate) fn fuzz_factor(card_id: &str, reps_before: u32) -> f64 {
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^= z >> 31;
     // The top 53 bits fill an f64 mantissa exactly: uniform on [0, 1).
-    #[allow(clippy::cast_precision_loss)] // z >> 11 < 2^53: exactly representable.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "z >> 11 < 2^53: exactly representable"
+    )]
     let top = (z >> 11) as f64;
     top / TWO_POW_53
 }
@@ -108,9 +111,12 @@ pub(crate) fn floored_fuzzed_days(interval: f64, floor: u32, factor: f64) -> u32
 /// A whole, non-negative day count that fits in `u32` to `u32`.
 fn to_days(days: f64) -> u32 {
     debug_assert!(days >= 0.0 && days <= f64::from(u32::MAX) && days.fract() == 0.0);
-    // Callers only pass whole numbers already clamped to
-    // [0, MAX_INTERVAL_DAYS + 1], so nothing is truncated or wrapped.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "callers only pass whole numbers already clamped to \
+                  [0, MAX_INTERVAL_DAYS + 1], so nothing is truncated or wrapped"
+    )]
     let days = days as u32;
     days
 }

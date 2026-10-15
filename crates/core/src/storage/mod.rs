@@ -106,17 +106,7 @@ impl Store {
         }
         prepare_private_file(db_path)?;
 
-        let mut conn = Connection::open_with_flags(
-            db_path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        // Connection-only settings; none of them write to the file.
-        conn.pragma_update(None, "foreign_keys", true)?;
-        conn.pragma_update(None, "trusted_schema", false)?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
-
+        let mut conn = connect(db_path)?;
         check_integrity(&conn)?;
 
         // Read-only checks, before anything that writes to the file (even
@@ -124,48 +114,12 @@ impl Store {
         let supported = latest(migrations);
         let (current, is_new) = check_version(&conn, migrations)?;
 
-        let mode: String =
-            conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
-        if !mode.eq_ignore_ascii_case("wal") {
-            return Err(Error::PragmaRejected {
-                pragma: "journal_mode",
-                value: mode,
-            });
-        }
-        conn.pragma_update(None, "synchronous", "FULL")?;
-        let foreign_keys: bool = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0))?;
-        if !foreign_keys {
-            return Err(Error::PragmaRejected {
-                pragma: "foreign_keys",
-                value: "0".into(),
-            });
-        }
-
-        let mut warnings = Vec::new();
-        if !is_new {
-            let fresh_backup = if current < supported {
-                // No migration without a backup: failure aborts the open.
-                let path = create_backup(&conn, backup_dir, now_ms)?;
-                tracing::info!(path = %path.display(), "database backed up before migrating");
-                Some(path)
-            } else {
-                // A failed daily backup must not lock the user out of a
-                // healthy database.
-                daily_backup(&conn, backup_dir, now_ms).unwrap_or_else(|err| {
-                    tracing::warn!("daily backup failed: {err}");
-                    warnings.push(OpenWarning::DailyBackupFailed(err));
-                    None
-                })
-            };
-            if let Err(err) = prune_backups(backup_dir, KEEP_BACKUPS, fresh_backup.as_deref()) {
-                tracing::warn!("pruning old backups failed: {err}");
-                // A failed backup and a failed prune almost always share one
-                // cause (the backup directory), so the user hears it once.
-                if warnings.is_empty() {
-                    warnings.push(OpenWarning::PruneFailed(err));
-                }
-            }
-        }
+        apply_write_settings(&conn)?;
+        let warnings = if is_new {
+            Vec::new()
+        } else {
+            back_up(&conn, backup_dir, now_ms, current < supported)?
+        };
 
         migrate(&mut conn, migrations, current)?;
         let mut store = Self::from_connection(conn);
@@ -208,6 +162,78 @@ impl Store {
             .pragma_query_value(None, "user_version", |r| r.get(0))?;
         Ok(v)
     }
+}
+
+/// Opens the connection with its connection-only settings; none of them
+/// write to the file.
+fn connect(db_path: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.pragma_update(None, "foreign_keys", true)?;
+    conn.pragma_update(None, "trusted_schema", false)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    Ok(conn)
+}
+
+/// WAL mode, `synchronous=FULL`, and a check that foreign keys are on.
+/// These write to the file, so they come after the read-only checks.
+fn apply_write_settings(conn: &Connection) -> Result<()> {
+    let mode: String =
+        conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
+    if !mode.eq_ignore_ascii_case("wal") {
+        return Err(Error::PragmaRejected {
+            pragma: "journal_mode",
+            value: mode,
+        });
+    }
+    conn.pragma_update(None, "synchronous", "FULL")?;
+    let foreign_keys: bool = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0))?;
+    if !foreign_keys {
+        return Err(Error::PragmaRejected {
+            pragma: "foreign_keys",
+            value: "0".into(),
+        });
+    }
+    Ok(())
+}
+
+/// Backs up an existing database at open and prunes old backups. Before a
+/// migration (`migrating`) a failed backup is an error; otherwise the
+/// daily backup and the prune only produce warnings.
+fn back_up(
+    conn: &Connection,
+    backup_dir: &Path,
+    now_ms: i64,
+    migrating: bool,
+) -> Result<Vec<OpenWarning>> {
+    let mut warnings = Vec::new();
+    let fresh_backup = if migrating {
+        // No migration without a backup: failure aborts the open.
+        let path = create_backup(conn, backup_dir, now_ms)?;
+        tracing::info!(path = %path.display(), "database backed up before migrating");
+        Some(path)
+    } else {
+        // A failed daily backup must not lock the user out of a
+        // healthy database.
+        daily_backup(conn, backup_dir, now_ms).unwrap_or_else(|err| {
+            tracing::warn!("daily backup failed: {err}");
+            warnings.push(OpenWarning::DailyBackupFailed(err));
+            None
+        })
+    };
+    if let Err(err) = prune_backups(backup_dir, KEEP_BACKUPS, fresh_backup.as_deref()) {
+        tracing::warn!("pruning old backups failed: {err}");
+        // A failed backup and a failed prune almost always share one
+        // cause (the backup directory), so the user hears it once.
+        if warnings.is_empty() {
+            warnings.push(OpenWarning::PruneFailed(err));
+        }
+    }
+    Ok(warnings)
 }
 
 /// Raises `ids` above the largest id in `column` (`decks.id`, `cards.id`

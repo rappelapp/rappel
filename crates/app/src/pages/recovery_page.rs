@@ -2,7 +2,6 @@
 //! the backups newest first, and a confirmed "Restore" for each. Layout in
 //! `data/recovery_page.blp` and `data/restore_dialog.blp`.
 
-use std::fmt;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -11,26 +10,14 @@ use adw::subclass::prelude::*;
 use cards_core::storage::{BackupInfo, Restored};
 use gtk::{gio, glib};
 
-use crate::startup::RecoveryReason;
+use crate::startup::{RecoveryReason, data_folder_line};
 use crate::state::AppState;
-use crate::window::{persistent_toast, show_toast_from};
+use crate::ui::callback::Callback;
+use crate::ui::dialog;
+use crate::ui::toast::{persistent_toast, show_toast_from};
 
 /// Called with the data directory and the restored store.
-type OnRestored = Rc<dyn Fn(PathBuf, Restored)>;
-
-/// Holds the callback; closures have no `Debug`, the template struct needs it.
-#[derive(Default)]
-pub struct RestoredHandler(Option<OnRestored>);
-
-impl fmt::Debug for RestoredHandler {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(if self.0.is_some() {
-            "RestoredHandler(set)"
-        } else {
-            "RestoredHandler(unset)"
-        })
-    }
-}
+type OnRestored = dyn Fn(PathBuf, Restored);
 
 mod imp {
     use std::cell::{Cell, RefCell};
@@ -39,8 +26,9 @@ mod imp {
     use adw::subclass::prelude::*;
     use gtk::glib;
 
-    use super::RestoredHandler;
+    use super::OnRestored;
     use crate::startup::RecoveryReason;
+    use crate::ui::callback::Callback;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
     #[template(resource = "/io/github/rsmirke/Cards/recovery_page.ui")]
@@ -53,7 +41,7 @@ mod imp {
         pub path_label: TemplateChild<gtk::Label>,
         pub reason: Cell<Option<RecoveryReason>>,
         pub data_dir: RefCell<Option<PathBuf>>,
-        pub on_restored: RefCell<RestoredHandler>,
+        pub on_restored: RefCell<Option<Callback<OnRestored>>>,
     }
 
     #[glib::object_subclass]
@@ -94,11 +82,10 @@ impl RecoveryPage {
         let imp = self.imp();
         imp.reason.set(Some(reason));
         imp.status.set_title(reason.title());
-        imp.path_label
-            .set_label(&format!("Data folder: {}", data_dir.display()));
+        imp.path_label.set_label(&data_folder_line(&data_dir));
         imp.data_dir.replace(Some(data_dir));
         imp.on_restored
-            .replace(RestoredHandler(Some(Rc::new(on_restored))));
+            .replace(Some(Callback::new(Rc::new(on_restored))));
         self.reload();
     }
 
@@ -167,9 +154,7 @@ impl RecoveryPage {
     }
 
     fn confirm_restore(&self, button: &gtk::Button, backup: BackupInfo, when: &str) {
-        let builder = gtk::Builder::from_resource("/io/github/rsmirke/Cards/restore_dialog.ui");
-        let Some(dialog) = builder.object::<adw::AlertDialog>("restore_dialog") else {
-            tracing::error!("restore_dialog.ui has no restore_dialog object");
+        let Some(dialog) = dialog::alert("restore_dialog.ui", "restore_dialog") else {
             return;
         };
         dialog.set_heading(Some(&format!("Restore Backup From {when}?")));
@@ -213,7 +198,7 @@ impl RecoveryPage {
         let message = match result {
             Ok(Ok(restored)) => {
                 // Clone the callback out so no borrow is held while it runs.
-                let handler = imp.on_restored.borrow().0.clone();
+                let handler = imp.on_restored.borrow().as_ref().map(Callback::get);
                 if let Some(handler) = handler {
                     handler(dir, restored);
                 }

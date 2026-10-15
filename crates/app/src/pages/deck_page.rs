@@ -18,8 +18,11 @@ use crate::clock::local_day_start_ms;
 use crate::dialogs::card_editor::{CardEditor, Saved};
 use crate::pages::ReviewPage;
 use crate::state::AppState;
+use crate::ui::focus::index_after_removal;
+use crate::ui::toast::{log_failure, persistent_toast, show_error, show_toast_from, undo_toast};
+use crate::ui::{init_once, nav};
 use crate::widgets::{CardObject, CardRow};
-use crate::window::{CardsWindow, persistent_toast, show_toast_from};
+use crate::window::CardsWindow;
 
 mod imp {
     use std::cell::{Cell, OnceCell, RefCell};
@@ -30,6 +33,7 @@ mod imp {
     use gtk::{gio, glib};
 
     use crate::state::AppState;
+    use crate::ui::rows;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
     #[template(resource = "/io/github/rsmirke/Cards/deck_page.ui")]
@@ -67,24 +71,8 @@ mod imp {
                 page.study();
             });
             // Activated by the card rows' menus with the card id.
-            klass.install_action(
-                "deck.edit-card",
-                Some(glib::VariantTy::STRING),
-                |page, _, id| {
-                    if let Some(id) = id.and_then(glib::Variant::str) {
-                        page.edit(id);
-                    }
-                },
-            );
-            klass.install_action(
-                "deck.delete-card",
-                Some(glib::VariantTy::STRING),
-                |page, _, id| {
-                    if let Some(id) = id.and_then(glib::Variant::str) {
-                        page.delete(id);
-                    }
-                },
-            );
+            rows::install_id_action(klass, "deck.edit-card", super::DeckPage::edit);
+            rows::install_id_action(klass, "deck.delete-card", super::DeckPage::delete);
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -146,10 +134,9 @@ impl DeckPage {
             }
         ));
 
-        // A new object's cells are empty, so these cannot fail.
-        let _ = imp.state.set(state);
-        let _ = imp.deck.set(deck);
-        let _ = imp.cards.set(store);
+        init_once(&imp.state, state);
+        init_once(&imp.deck, deck);
+        init_once(&imp.cards, store);
         page.update_empty_state();
         page.update_study();
         Ok(page)
@@ -182,11 +169,7 @@ impl DeckPage {
         let (Some(state), Some(deck)) = (imp.state.get(), imp.deck.get()) else {
             return;
         };
-        let Some(view) = self
-            .ancestor(adw::NavigationView::static_type())
-            .and_downcast::<adw::NavigationView>()
-        else {
-            tracing::error!("the deck page is not inside a navigation view");
+        let Some(view) = nav::navigation_view(self) else {
             return;
         };
         // A double click or key repeat must not push two sessions.
@@ -284,20 +267,13 @@ impl DeckPage {
             return;
         }
         store.remove(position);
-        if store.n_items() == 0 {
-            imp.empty_add_button.grab_focus();
-        } else {
-            self.focus(position.min(store.n_items() - 1));
+        match index_after_removal(position, store.n_items()) {
+            Some(next) => self.focus(next),
+            None => {
+                imp.empty_add_button.grab_focus();
+            }
         }
 
-        // The front is not in the title: it can be long or many lines.
-        let toast = adw::Toast::builder()
-            .title("Card deleted")
-            .use_markup(false)
-            .button_label("_Undo")
-            // Never queued behind a toast that stays until dismissed.
-            .priority(adw::ToastPriority::High)
-            .build();
         // Undo must work after going back to the deck list too, when this
         // page may be gone: the closure keeps the state, not the page.
         let id = id.to_owned();
@@ -307,27 +283,9 @@ impl DeckPage {
             .root()
             .and_downcast::<CardsWindow>()
             .map(|w| w.downgrade());
-        toast.connect_button_clicked(move |_| {
-            let window = window.as_ref().and_then(glib::WeakRef::upgrade);
-            match state.undelete_card(&id) {
-                Ok(card) => {
-                    if let Some(page) = page.upgrade() {
-                        page.restored(&card);
-                    }
-                    if let Some(window) = window {
-                        // The deck may have been reopened in a new page.
-                        window.card_restored(&card);
-                    }
-                }
-                Err(err) => {
-                    let message = format!("The card could not be restored: {err}");
-                    tracing::warn!("a card operation failed");
-                    tracing::debug!("{message}");
-                    if let Some(window) = window {
-                        window.add_toast(persistent_toast(&message));
-                    }
-                }
-            }
+        // The front is not in the title: it can be long or many lines.
+        let toast = undo_toast("Card deleted", move || {
+            undo_card_delete(&state, &id, &page, window.as_ref());
         });
         show_toast_from(self, toast);
     }
@@ -380,10 +338,37 @@ impl DeckPage {
     }
 
     fn error_toast(&self, message: &str) {
-        // The message may hold card content: only at debug level (SPEC §2).
-        tracing::warn!("a card operation failed");
-        tracing::debug!("{message}");
-        show_toast_from(self, persistent_toast(message));
+        show_error(self, "a card operation", message);
+    }
+}
+
+/// The Undo of a card delete: brings card `id` back, on `page` if it is
+/// still there and through `window` (the deck may have been reopened in a
+/// new page, or left). Errors go to the window's toasts.
+fn undo_card_delete(
+    state: &AppState,
+    id: &str,
+    page: &glib::WeakRef<DeckPage>,
+    window: Option<&glib::WeakRef<CardsWindow>>,
+) {
+    let window = window.and_then(glib::WeakRef::upgrade);
+    match state.undelete_card(id) {
+        Ok(card) => {
+            if let Some(page) = page.upgrade() {
+                page.restored(&card);
+            }
+            if let Some(window) = window {
+                // The deck may have been reopened in a new page.
+                window.card_restored(&card);
+            }
+        }
+        Err(err) => {
+            let message = format!("The card could not be restored: {err}");
+            log_failure("a card operation", &message);
+            if let Some(window) = window {
+                window.add_toast(persistent_toast(&message));
+            }
+        }
     }
 }
 

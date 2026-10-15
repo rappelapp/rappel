@@ -6,11 +6,11 @@
 //! `row.edit` / `row.delete` actions, which forward to the page's
 //! `deck.edit-card` / `deck.delete-card` with the bound card's id.
 
-use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
 use super::CardObject;
+use crate::ui::rows;
 
 mod imp {
     use std::cell::RefCell;
@@ -73,11 +73,7 @@ impl CardRow {
         let imp = self.imp();
         let preview = item.preview();
         imp.front_label.set_label(&preview);
-        // Every row has a menu button; say which card it is for.
-        imp.menu_button
-            .update_property(&[gtk::accessible::Property::Label(&format!(
-                "Actions for {preview}"
-            ))]);
+        rows::label_menu_button(&imp.menu_button, &preview);
         imp.card_id.replace(item.card().id.clone());
     }
 
@@ -91,8 +87,6 @@ impl CardRow {
         if id.is_empty() {
             return;
         }
-        if let Err(err) = self.activate_action(action, Some(&id.to_variant())) {
-            tracing::error!("cannot activate {action}: {err}");
-        }
+        rows::forward_id(self, action, &id);
     }
 }

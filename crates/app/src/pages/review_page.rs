@@ -18,7 +18,8 @@ use gtk::glib;
 
 use crate::clock::local_day_start_ms;
 use crate::state::AppState;
-use crate::window::{persistent_toast, show_toast_from};
+use crate::ui::toast::{log_failure, persistent_toast, show_toast_from};
+use crate::ui::{init_once, nav};
 
 mod imp {
     use std::cell::{Cell, OnceCell, RefCell};
@@ -116,6 +117,17 @@ glib::wrapper! {
 /// auto-repeat. Clicks are not delayed.
 const KEY_SETTLE: Duration = Duration::from_millis(300);
 
+/// Which buttons and actions the bottom bar offers.
+#[derive(Debug, Clone, Copy)]
+enum Controls {
+    /// Show Answer.
+    Reveal,
+    /// Fail and Pass.
+    Grade,
+    /// Nothing: the summary is shown.
+    Hidden,
+}
+
 /// What a key does on this page.
 #[derive(Debug, Clone, Copy)]
 enum Key {
@@ -140,9 +152,8 @@ impl ReviewPage {
         // Deck names are untrusted; AdwWindowTitle shows plain text.
         imp.window_title.set_title(&deck.name);
         imp.session.replace(Some(Session::new(input)));
-        // A new object's cells are empty, so these cannot fail.
-        let _ = imp.state.set(state);
-        let _ = imp.deck.set(deck);
+        init_once(&imp.state, state);
+        init_once(&imp.deck, deck);
         page.show_next();
         Ok(page)
     }
@@ -243,11 +254,8 @@ impl ReviewPage {
         imp.shown_at.set(Some(Instant::now()));
         let left = imp.session.borrow().as_ref().map_or(0, Session::remaining);
         imp.window_title.set_subtitle(&left_text(left));
-        imp.buttons.set_visible_child_name("reveal");
+        self.set_controls(Controls::Reveal);
         imp.stack.set_visible_child_name("card");
-        self.action_set_enabled("review.reveal", true);
-        self.action_set_enabled("review.fail", false);
-        self.action_set_enabled("review.pass", false);
         imp.card_area.grab_focus();
     }
 
@@ -259,11 +267,21 @@ impl ReviewPage {
         imp.revealed_at.set(Some(Instant::now()));
         imp.back_separator.set_visible(true);
         imp.back_label.set_visible(true);
-        imp.buttons.set_visible_child_name("grade");
-        self.action_set_enabled("review.reveal", false);
-        self.action_set_enabled("review.fail", true);
-        self.action_set_enabled("review.pass", true);
+        self.set_controls(Controls::Grade);
         imp.card_area.grab_focus();
+    }
+
+    /// Shows `controls` in the bottom bar and enables only their actions.
+    fn set_controls(&self, controls: Controls) {
+        let (name, reveal, grade) = match controls {
+            Controls::Reveal => ("reveal", true, false),
+            Controls::Grade => ("grade", false, true),
+            Controls::Hidden => ("none", false, false),
+        };
+        self.imp().buttons.set_visible_child_name(name);
+        self.action_set_enabled("review.reveal", reveal);
+        self.action_set_enabled("review.fail", grade);
+        self.action_set_enabled("review.pass", grade);
     }
 
     /// Records the answer for the card on screen and shows the next one.
@@ -313,27 +331,19 @@ impl ReviewPage {
         imp.summary_page
             .set_description(Some(&glib::markup_escape_text(&summary_text(&summary))));
         imp.window_title.set_subtitle("");
-        imp.buttons.set_visible_child_name("none");
+        self.set_controls(Controls::Hidden);
         imp.stack.set_visible_child_name("summary");
-        self.action_set_enabled("review.reveal", false);
-        self.action_set_enabled("review.fail", false);
-        self.action_set_enabled("review.pass", false);
         imp.done_button.grab_focus();
     }
 
     fn done(&self) {
-        if let Some(view) = self
-            .ancestor(adw::NavigationView::static_type())
-            .and_downcast::<adw::NavigationView>()
-        {
-            view.pop();
-        }
+        nav::pop(self);
     }
 
+    /// Shows `message`, dismissing the previous error toast of this page
+    /// first, so a toast that stays until dismissed does not hold it back.
     fn error_toast(&self, message: &str) {
-        // Messages may hold card content: only at debug level (SPEC §2).
-        tracing::warn!("a review operation failed");
-        tracing::debug!("{message}");
+        log_failure("a review operation", message);
         let toast = persistent_toast(message);
         if let Some(old) = self.imp().error_toast.replace(Some(toast.clone())) {
             old.dismiss();

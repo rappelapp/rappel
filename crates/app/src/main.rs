@@ -5,6 +5,7 @@ mod dialogs;
 mod pages;
 mod startup;
 mod state;
+mod ui;
 mod widgets;
 mod window;
 

@@ -158,26 +158,3 @@ impl AppState {
         self.0.store.borrow_mut().take_open_warnings()
     }
 }
-
-/// The toast text for a warning from opening the database.
-pub fn warning_message(warning: &OpenWarning) -> String {
-    match warning {
-        OpenWarning::DailyBackupFailed(err) => format!("Today’s backup could not be made: {err}"),
-        OpenWarning::PruneFailed(err) => format!("Old backups could not be removed: {err}"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn warnings_name_what_failed_and_why() {
-        let err = || cards_core::Error::NotADirectory(PathBuf::from("/data/backups"));
-        let text = warning_message(&OpenWarning::DailyBackupFailed(err()));
-        assert!(text.starts_with("Today’s backup could not be made: "));
-        assert!(text.contains("/data/backups"));
-        let text = warning_message(&OpenWarning::PruneFailed(err()));
-        assert!(text.starts_with("Old backups could not be removed: "));
-    }
-}

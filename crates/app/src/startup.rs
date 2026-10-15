@@ -116,6 +116,11 @@ fn prepare_data_dir() -> cards_core::Result<PathBuf> {
     Ok(dir)
 }
 
+/// "Data folder: …", the line under a problem that names the data folder.
+pub fn data_folder_line(dir: &Path) -> String {
+    format!("Data folder: {}", dir.display())
+}
+
 /// The screen for a data directory that could not be resolved or created.
 pub fn data_dir_problem(err: &Error) -> Problem {
     let (message, data_dir) = match err {

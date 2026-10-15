@@ -3,13 +3,14 @@
 //!
 //! The menu items activate the row's own `row.rename` / `row.delete`
 //! actions, which forward to the page's `decks.rename` / `decks.delete`
-//! with this row's deck id. So the menu model is static and lives in
-//! Blueprint.
+//! with this row's deck id (see `ui::rows`).
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use cards_core::domain::DeckSummary;
 use gtk::glib;
+
+use crate::ui::rows;
 
 mod imp {
     use std::cell::RefCell;
@@ -68,12 +69,7 @@ impl DeckRow {
             "{} new · {} due",
             summary.new_count, summary.due_count
         ));
-        // Every row has a menu button; say which deck it is for.
-        row.imp()
-            .menu_button
-            .update_property(&[gtk::accessible::Property::Label(&format!(
-                "Actions for {name}"
-            ))]);
+        rows::label_menu_button(&row.imp().menu_button, name);
         row.imp().deck_id.replace(summary.deck.id.clone());
         row
     }
@@ -84,9 +80,6 @@ impl DeckRow {
     }
 
     fn forward(&self, action: &str) {
-        let id = self.deck_id();
-        if let Err(err) = self.activate_action(action, Some(&id.to_variant())) {
-            tracing::error!("cannot activate {action}: {err}");
-        }
+        rows::forward_id(self, action, &self.deck_id());
     }
 }

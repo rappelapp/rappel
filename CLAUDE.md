@@ -6,7 +6,7 @@
 - App name **Cards**, app ID `io.github.rsmirke.Cards`, licence GPL-3.0-or-later.
 - Crates: `cards-core` in `crates/core` (no UI), `cards` in `crates/app` (GTK binary).
 - Data dir `~/.local/share/cards/`; debug builds use `~/.local/share/cards-dev/`. `CARDS_DATA_DIR` overrides both. Never point development at the real data dir.
-- Status: v0 not started. Build order and scope are in `SPEC.md`.
+- Status: v0 in progress (decks, plain-text cards, studying with FSRS; Markdown rendering not yet). Build order and scope are in `SPEC.md`.
 
 ## About me
 - Strong in maths and algorithms, not a Rust or GTK developer, and I do **not** read most diffs. You are responsible for quality. The automated gate and the reviewer agent are how quality is checked, so never weaken them to make a task pass.
@@ -21,7 +21,7 @@
 - Card content is untrusted: always escape for Pango, never render HTML, no SVG media.
 - No `unwrap()`/`expect()` on IO or DB results outside tests; `expect()` is allowed only for template children and invariants, with a message saying why it cannot fail.
 - Do not add a dependency without stating why in the slice summary. Prefer well-maintained crates. Check that the licence is allowed by `deny.toml`.
-- Never disable a lint, skip a test, or add `#[allow(...)]` without a comment explaining why, and mention it in the summary.
+- Never disable a lint or skip a test without explaining why, and mention it in the summary. Silence a lint only with `#[expect(lint, reason = "…")]`; `#[allow]` is refused by the workspace lints.
 - Before using a crate API, read its current docs or source in `~/.cargo/registry`. Do not rely on memory for gtk-rs/libadwaita APIs.
 - UI layout lives in Blueprint files. Use libadwaita widgets and style classes as the GNOME HIG intends. No hard-coded colors.
 
@@ -45,10 +45,16 @@ A slice is not done until `scripts/check.sh` passes. It also runs as the git pre
 - One branch per slice, named `feat/…`, `fix/…`, `refactor/…`, `docs/…` or `chore/…` (short kebab-case, e.g. `feat/card-editor`).
 - Commit messages follow Conventional Commits: `type: summary` (`feat: …`, `fix: …`, `refactor: …`, `docs: …`, `chore: …`, `test: …`), imperative, lower case, no trailing period. Use `type!:` and a `BREAKING CHANGE:` footer for breaking changes.
 - A slice ends with the branch pushed (`git push -u origin <branch>`) and a PR opened with `gh pr create`. Never merge into, push to or rewrite `main` yourself; I merge after review and green CI. Rebasing your slice branch onto `main` is fine.
+- No stacked PRs. Base every PR on `main`. If a slice needs an unmerged one, wait for that merge or ask me. If you stack anyway, never let a PR merge into another feature branch: once its base is squash-merged, rebase onto `main` and retarget the PR to `main`. (#18 was based on `feat/decks-ui` and merged into that branch, so it never reached `main` by itself.)
 
 ## UI work
 - You cannot see the window. Do not claim a UI looks right. Tell me exactly what to check, and I will send screenshots.
 - Check every new screen in light mode, dark mode, and at 360 px width.
+- Put every UI decision that does not need GTK (texts, counts, focus targets, key handling) in a pure function and unit-test it.
+- Before relying on GTK behaviour (signal order, focus, key propagation phase, toast queueing), read the gtk4/libadwaita source or docs and cite it in a comment.
+- Every UI PR has a **Try it** section with exact commands, including scratch data from `fill_scratch_db`, and a numbered checklist for me: light, dark, 360 px, keyboard only, screen-reader labels.
+- Focus: after pushing an `AdwNavigationPage`, set the focus in its `shown` handler. A `grab_focus()` before or during the push is lost, and the view focuses the first focusable widget (usually Back), which then takes Space and Enter. After removing a row, focus the row now at that index, else the last one, else the empty state's button (`ui::focus::index_after_removal`).
+- Toasts, alert dialogs, navigation, row menus and one-time cells go through `crates/app/src/ui/`. Add to it instead of writing a local copy.
 
 ## Commands
 - Run: `cargo run -p cards`
@@ -56,3 +62,4 @@ A slice is not done until `scripts/check.sh` passes. It also runs as the git pre
 - Install git hooks (once per clone): `scripts/install-hooks.sh`
 - Inspector: `GTK_DEBUG=interactive cargo run -p cards`
 - Logs: `RUST_LOG=cards=debug cargo run -p cards`
+- Scratch data: `cargo run -p cards-core --example fill_scratch_db -- <dir> <cards> [--due N]`, then `CARDS_DATA_DIR=<dir> cargo run -p cards`

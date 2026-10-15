@@ -55,7 +55,7 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 # Tests may unwrap/expect (see clippy.toml). Elsewhere, `expect()` is only for
-# template children and invariants, with an `#[allow]` and a comment saying why.
+# template children and invariants, with an `#[expect(.., reason = "..")]`.
 unwrap_used = "warn"
 expect_used = "warn"
 dbg_macro = "warn"
@@ -63,6 +63,10 @@ todo = "warn"
 unimplemented = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
+# A lint is silenced only with `#[expect(.., reason = "..")]`: the reason is
+# required, and the build fails once the lint no longer fires.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
 
 [profile.release]
 lto = "thin"

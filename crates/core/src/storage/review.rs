@@ -1,14 +1,14 @@
-//! Recording reviews, and the due and new queues of a deck.
+//! Recording reviews, and what a deck has to study.
 
 use std::time::Duration;
 
 use rusqlite::{TransactionBehavior, params};
 
-use super::cards::{CARD_COLUMNS, card_from_row, live_card};
+use super::cards::live_card;
 use super::decks::ensure_live_deck;
 use super::schedule::{read_card_state, write_card_state};
 use super::{Store, observe_max_id};
-use crate::domain::{Card, Grade, Phase, ReviewEvent};
+use crate::domain::{Grade, Phase, ReviewEvent};
 use crate::error::Result;
 use crate::scheduling::session::{Due, EARLY_MS, StudyInput, new_allowance};
 
@@ -140,39 +140,6 @@ impl Store {
             new,
             new_today,
         })
-    }
-
-    /// The live cards of deck `deck_id` that have been reviewed and are due
-    /// at `now` (UTC milliseconds), most overdue first. Daily limits are
-    /// not applied.
-    ///
-    /// # Errors
-    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound), SQLite errors.
-    pub fn due_cards(&self, deck_id: &str, now: i64) -> Result<Vec<Card>> {
-        ensure_live_deck(&self.conn, deck_id)?;
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CARD_COLUMNS} FROM cards c JOIN card_schedule s ON s.card_id = c.id
-             WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.due_at <= ?2
-             ORDER BY s.due_at, c.seq"
-        ))?;
-        let rows = stmt.query_map(params![deck_id, now], card_from_row)?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
-    }
-
-    /// Up to `limit` live cards of deck `deck_id` that were never reviewed,
-    /// oldest first.
-    ///
-    /// # Errors
-    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound), SQLite errors.
-    pub fn new_cards(&self, deck_id: &str, limit: u32) -> Result<Vec<Card>> {
-        ensure_live_deck(&self.conn, deck_id)?;
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CARD_COLUMNS} FROM cards c LEFT JOIN card_schedule s ON s.card_id = c.id
-             WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.card_id IS NULL
-             ORDER BY c.seq LIMIT ?2"
-        ))?;
-        let rows = stmt.query_map(params![deck_id, limit], card_from_row)?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 }
 

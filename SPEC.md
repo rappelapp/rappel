@@ -7,7 +7,7 @@ App name: **Cards**. App ID: `io.github.rsmirke.Cards`. Licence: **GPL-3.0-or-la
 - Crates: `cards-core` (`crates/core`, library) and `cards` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/cards/`. Debug builds use `~/.local/share/cards-dev/` so development never touches real data. Both can be overridden with the `CARDS_DATA_DIR` environment variable.
 
-v0 (**not started**, we start from zero): decks, Markdown cards, review with Fail/Pass, FSRS, SQLite. v0.2 builds on it.
+v0 (**in progress**): decks, Markdown cards, review with Fail/Pass, FSRS, SQLite. Done so far: all of it except Markdown rendering (cards are shown as plain text). v0.2 builds on it.
 
 ---
 

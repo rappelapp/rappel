@@ -7,6 +7,13 @@ use crate::domain::{CardState, Grade};
 const T0: i64 = 1_792_067_696_789;
 const MISSING: &str = "01920000-0000-7000-8000-00000000dead";
 
+/// How many reviewed live cards of `deck` are due at any time: reviews
+/// and step cards in [`Store::study_input`].
+fn due_count(store: &Store, deck: &str) -> usize {
+    let input = store.study_input(deck, i64::MAX, 0).unwrap();
+    input.reviews.len() + input.steps.len()
+}
+
 fn store_with_deck() -> (Store, String) {
     let mut store = Store::in_memory();
     let deck = store.create_deck_at("Maths", T0).unwrap().id;
@@ -90,7 +97,7 @@ fn deleted_cards_are_hidden_and_refuse_changes_but_keep_history() {
     store.delete_card_at(&card.id, T0 + 1).unwrap();
 
     assert_eq!(store.list_cards(&deck).unwrap(), [other]);
-    assert_eq!(store.due_cards(&deck, i64::MAX).unwrap().len(), 0);
+    assert_eq!(due_count(&store, &deck), 0);
     assert!(matches!(store.card(&card.id), Err(Error::CardNotFound(_))));
     assert!(matches!(
         store.edit_card_at(&card.id, "x", "y", T0),
@@ -148,7 +155,7 @@ fn undelete_restores_the_card_in_place_with_its_history() {
     assert_eq!(store.review_events(&b.id).unwrap(), events);
     assert_eq!(store.card_state(&b.id).unwrap(), state);
     assert_eq!(counts(&store), (2, 1));
-    assert_eq!(store.due_cards(&deck, i64::MAX).unwrap().len(), 1);
+    assert_eq!(due_count(&store, &deck), 1);
 }
 
 #[test]

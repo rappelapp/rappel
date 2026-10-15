@@ -214,9 +214,10 @@ pub enum Error {
     #[error("a restore was interrupted before it finished ({} is waiting to be installed)", .0.display())]
     InterruptedRestore(PathBuf),
 
-    /// The operating system gave no random bytes for a new id.
+    /// The operating system gave no random bytes for a new id. The cause
+    /// is boxed so the random-number crate stays out of this API (ADR 0015).
     #[error("cannot generate an id: no randomness available: {0}")]
-    Random(#[source] getrandom::Error),
+    Random(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// Every `UUIDv7` up to the year 10889 has been issued.
     #[error("no more ids can be generated")]
@@ -246,3 +247,22 @@ pub enum Error {
 
 /// `Result` with [`Error`] as the error type.
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+
+    #[test]
+    fn random_keeps_its_cause_in_the_message_and_the_source() {
+        let cause = io::Error::other("entropy pool closed");
+        let err = Error::Random(Box::new(cause));
+        assert_eq!(
+            err.to_string(),
+            "cannot generate an id: no randomness available: entropy pool closed"
+        );
+        let source = err.source().map(ToString::to_string);
+        assert_eq!(source.as_deref(), Some("entropy pool closed"));
+    }
+}

@@ -1,4 +1,5 @@
-//! Reusable widgets. Each is a `.rs` file with its layout in `data/*.blp`.
+//! Reusable widgets. Each is a `.rs` file; the row widgets have their
+//! layout in `data/*.blp`, and `CardObject` is a list item with none.
 
 mod card_object;
 mod card_row;

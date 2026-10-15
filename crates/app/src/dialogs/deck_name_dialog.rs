@@ -9,6 +9,8 @@ use adw::prelude::*;
 use cards_core::domain::{Deck, deck_name_key};
 use gtk::glib;
 
+use crate::ui::dialog;
+
 /// What the dialog is for.
 #[derive(Debug, Clone)]
 pub enum Purpose {
@@ -50,13 +52,13 @@ pub async fn ask(
     purpose: Purpose,
     decks: Vec<Deck>,
 ) -> Option<String> {
-    let builder = gtk::Builder::from_resource("/io/github/rsmirke/Cards/deck_name_dialog.ui");
+    const FILE: &str = "deck_name_dialog.ui";
+    let builder = dialog::builder(FILE);
     let (Some(dialog), Some(entry), Some(error_label)) = (
-        builder.object::<adw::AlertDialog>("deck_name_dialog"),
-        builder.object::<adw::EntryRow>("name_entry"),
-        builder.object::<gtk::Label>("error_label"),
+        dialog::object::<adw::AlertDialog>(&builder, FILE, "deck_name_dialog"),
+        dialog::object::<adw::EntryRow>(&builder, FILE, "name_entry"),
+        dialog::object::<gtk::Label>(&builder, FILE, "error_label"),
     ) else {
-        tracing::error!("deck_name_dialog.ui is missing an object");
         return None;
     };
 
@@ -88,25 +90,7 @@ pub async fn ask(
         error_label,
         move |entry: &adw::EntryRow| {
             let check = check_deck_name(&entry.text(), &decks, exclude.as_deref());
-            dialog.set_response_enabled("confirm", check == NameCheck::Valid);
-            match check {
-                NameCheck::Duplicate(name) => {
-                    let message = format!("A deck named “{name}” already exists");
-                    if !error_label.is_visible() || error_label.label() != message {
-                        // Screen readers hear the error when it appears.
-                        entry
-                            .upcast_ref::<gtk::Widget>()
-                            .announce(&message, gtk::AccessibleAnnouncementPriority::Medium);
-                    }
-                    error_label.set_label(&message);
-                    error_label.set_visible(true);
-                    entry.add_css_class("error");
-                }
-                NameCheck::Empty | NameCheck::Valid => {
-                    error_label.set_visible(false);
-                    entry.remove_css_class("error");
-                }
-            }
+            show_check(&dialog, entry, &error_label, check);
         }
     );
     update(&entry);
@@ -115,6 +99,35 @@ pub async fn ask(
 
     let response = dialog.choose_future(Some(parent)).await;
     (response == "confirm").then(|| entry.text().to_string())
+}
+
+/// Shows `check` in the dialog: the confirm button only for a valid name,
+/// and the error under the entry for a duplicate.
+fn show_check(
+    dialog: &adw::AlertDialog,
+    entry: &adw::EntryRow,
+    error_label: &gtk::Label,
+    check: NameCheck,
+) {
+    dialog.set_response_enabled("confirm", check == NameCheck::Valid);
+    match check {
+        NameCheck::Duplicate(name) => {
+            let message = format!("A deck named “{name}” already exists");
+            if !error_label.is_visible() || error_label.label() != message {
+                // Screen readers hear the error when it appears.
+                entry
+                    .upcast_ref::<gtk::Widget>()
+                    .announce(&message, gtk::AccessibleAnnouncementPriority::Medium);
+            }
+            error_label.set_label(&message);
+            error_label.set_visible(true);
+            entry.add_css_class("error");
+        }
+        NameCheck::Empty | NameCheck::Valid => {
+            error_label.set_visible(false);
+            entry.remove_css_class("error");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -32,7 +32,7 @@ You are an independent, sceptical code reviewer for **Cards**, a GNOME flashcard
 - Card content treated as untrusted: escaped for Pango (`glib::markup_escape_text` or equivalent), never rendered as HTML, no SVG media.
 - No `unwrap()`/`expect()` on IO or DB results outside tests. `expect()` only for template children and invariants, with a message saying why it cannot fail.
 - Every new dependency is justified (in the slice summary/PR description or CHANGELOG), well maintained, and its licence passes `deny.toml`.
-- No disabled lint, skipped/ignored test, or `#[allow(...)]` without an explanatory comment.
+- No disabled lint or skipped/ignored test without an explanatory comment. Lints are silenced only with `#[expect(lint, reason = "…")]`; any `#[allow(...)]` is blocking.
 - UI layout in Blueprint (`.blp`), libadwaita widgets and style classes, no hard-coded colours (no hex/rgb in CSS or code).
 
 **Quality gate not weakened** — blocking if any of these got weaker without an explicit, justified reason: `scripts/check.sh` steps and flags, `scripts/pre-commit.sh` (main refusal), `[workspace.lints]`, `clippy.toml`, `rustfmt.toml`, `deny.toml` (new allowed licences must be GPL-3.0-or-later compatible; new advisory ignores need a reason).

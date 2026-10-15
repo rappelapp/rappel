@@ -86,3 +86,10 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - Scheduling: a Pass on a review card is scheduled at least elapsed days + 1 out, before and after fuzz, as in Anki. Migration 0005 rebuilds the schedule cache for the new rule (ADR 0009).
 - SPEC §3: ids are TEXT UUIDv7, `cards.seq` is the FTS5 rowid, and card deletion will be a soft delete.
 - `Error::CreateDataDir` renamed to `Error::CreateDir` (also used for the backups directory).
+- `Error::Random` holds a boxed error instead of `getrandom::Error`, so `getrandom` is no longer part of the `cards-core` API (ADR 0015, part of #13).
+- The app's toasts, alert dialogs, navigation, row menus and list focus go through shared helpers in `crates/app/src/ui/`. No visible change.
+- Lints are silenced only with `#[expect(.., reason = "..")]` (workspace lints `allow_attributes`, `allow_attributes_without_reason`).
+- Docs: README, CLAUDE.md and SPEC say what v0 already does; CLAUDE.md has rules on focus, stacked PRs and UI that cannot be seen.
+
+### Removed
+- `Store::due_cards` and `Store::new_cards` in `cards-core`: unused since `Store::study_input`.

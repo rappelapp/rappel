@@ -44,7 +44,7 @@ impl IdGen {
     /// [`Error::IdsExhausted`] after the last id of the year 10889.
     pub(crate) fn next(&mut self, now_ms: i64) -> Result<String> {
         let mut bytes = [0u8; 16];
-        getrandom::fill(&mut bytes).map_err(Error::Random)?;
+        getrandom::fill(&mut bytes).map_err(|err| Error::Random(Box::new(err)))?;
         self.next_with(now_ms, u128::from_le_bytes(bytes))
     }
 

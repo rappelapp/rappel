@@ -8,13 +8,17 @@
 //! - Closing with unsaved changes asks first.
 //! - A store error keeps the dialog open with the text as typed.
 
+use std::rc::Rc;
+
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use cards_core::domain::Card;
 use gtk::glib;
 
 use crate::state::AppState;
-use crate::window::persistent_toast;
+use crate::ui::callback::Callback;
+use crate::ui::toast::{log_failure, persistent_toast};
+use crate::ui::{dialog, init_once};
 
 /// What a save did, for the deck page to update its list.
 #[derive(Debug, Clone)]
@@ -23,7 +27,7 @@ pub enum Saved {
     Edited(Card),
 }
 
-type OnSaved = Box<dyn Fn(Saved)>;
+type OnSaved = dyn Fn(Saved);
 
 mod imp {
     use std::cell::{OnceCell, RefCell};
@@ -34,6 +38,7 @@ mod imp {
 
     use super::OnSaved;
     use crate::state::AppState;
+    use crate::ui::callback::Callback;
 
     #[derive(Default, gtk::CompositeTemplate)]
     #[template(resource = "/io/github/rsmirke/Cards/card_editor.ui")]
@@ -50,9 +55,11 @@ mod imp {
         pub card_id: RefCell<Option<String>>,
         /// Front and back as last loaded or saved, to tell unsaved changes.
         pub saved_text: RefCell<(String, String)>,
-        pub on_saved: OnceCell<OnSaved>,
+        pub on_saved: OnceCell<Callback<OnSaved>>,
     }
 
+    /// Written by hand to leave out the text fields: card content is never
+    /// logged above debug level (SPEC §2), and `{:?}` would print it.
     impl std::fmt::Debug for CardEditor {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("CardEditor")
@@ -113,10 +120,9 @@ impl CardEditor {
     ) -> Self {
         let editor: Self = glib::Object::new();
         let imp = editor.imp();
-        // A new object's cells are empty, so these cannot fail.
-        let _ = imp.state.set(state);
-        let _ = imp.deck_id.set(deck_id.to_owned());
-        let _ = imp.on_saved.set(Box::new(on_saved));
+        init_once(&imp.state, state);
+        init_once(&imp.deck_id, deck_id.to_owned());
+        init_once(&imp.on_saved, Callback::new(Rc::new(on_saved)));
         match card {
             Some(card) => editor.load(Some(&card.id), &card.front_md, &card.back_md),
             None => editor.load(None, "", ""),
@@ -212,12 +218,7 @@ impl CardEditor {
         let card_id = imp.card_id.borrow().clone();
         // An unchanged card is not written (that would bump `updated_at`).
         if card_id.is_some() && (front.clone(), back.clone()) == *imp.saved_text.borrow() {
-            if and_new {
-                self.load(None, "", "");
-                imp.front_view.grab_focus();
-            } else {
-                self.force_close();
-            }
+            self.after_save(and_new);
             return;
         }
         let result = match &card_id {
@@ -227,12 +228,10 @@ impl CardEditor {
         let saved = match result {
             Ok(saved) => saved,
             Err(err) => {
-                // Card text is user content: only at debug level (SPEC §2).
-                tracing::warn!("a card could not be saved");
-                tracing::debug!("{err}");
-                imp.toast_overlay.add_toast(persistent_toast(&format!(
-                    "The card could not be saved: {err}"
-                )));
+                // The editor's own overlay: the dialog covers the page's.
+                let message = format!("The card could not be saved: {err}");
+                log_failure("a card save", &message);
+                imp.toast_overlay.add_toast(persistent_toast(&message));
                 return;
             }
         };
@@ -240,18 +239,26 @@ impl CardEditor {
             Saved::Added(_) => "Card added",
             Saved::Edited(_) => "Card saved",
         };
-        if let Some(on_saved) = imp.on_saved.get() {
+        if let Some(on_saved) = imp.on_saved.get().map(Callback::get) {
             on_saved(saved);
         }
+        self.after_save(and_new);
         if and_new {
-            self.load(None, "", "");
-            imp.front_view.grab_focus();
             imp.toast_overlay.add_toast(
                 adw::Toast::builder()
                     .title(toast_text)
                     .use_markup(false)
                     .build(),
             );
+        }
+    }
+
+    /// After a save (or nothing to save): an empty editor for the next
+    /// card, or close.
+    fn after_save(&self, and_new: bool) {
+        if and_new {
+            self.load(None, "", "");
+            self.imp().front_view.grab_focus();
         } else {
             self.force_close();
         }
@@ -262,10 +269,7 @@ impl CardEditor {
             #[weak(rename_to = editor)]
             self,
             async move {
-                let builder =
-                    gtk::Builder::from_resource("/io/github/rsmirke/Cards/discard_dialog.ui");
-                let Some(dialog) = builder.object::<adw::AlertDialog>("discard_dialog") else {
-                    tracing::error!("discard_dialog.ui is missing its dialog");
+                let Some(dialog) = dialog::alert("discard_dialog.ui", "discard_dialog") else {
                     return;
                 };
                 if dialog.choose_future(Some(&editor)).await == "discard" {

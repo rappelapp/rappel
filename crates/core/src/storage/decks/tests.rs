@@ -310,11 +310,7 @@ fn deleting_a_deck_hides_it_and_its_cards_and_keeps_their_history() {
         Err(Error::DeckNotFound(_))
     ));
     assert!(matches!(
-        store.due_cards(&maths.id, T0),
-        Err(Error::DeckNotFound(_))
-    ));
-    assert!(matches!(
-        store.new_cards(&maths.id, 10),
+        store.study_input(&maths.id, T0, T0),
         Err(Error::DeckNotFound(_))
     ));
     assert!(matches!(store.card(&card.id), Err(Error::CardNotFound(_))));

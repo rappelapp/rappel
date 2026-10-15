@@ -10,7 +10,9 @@ use gtk::{gio, glib};
 
 use crate::pages::DeckPage;
 use crate::startup::Problem;
-use crate::state::{AppState, warning_message};
+use crate::startup::data_folder_line;
+use crate::state::AppState;
+use crate::ui::toast::{persistent_toast, warning_message};
 
 mod imp {
     use std::cell::OnceCell;
@@ -123,12 +125,7 @@ impl CardsWindow {
         // Checked before keeping the state, so a failure leaves the window
         // without one (and a later retry could still call this).
         if let Err(err) = state.list_decks() {
-            tracing::error!("cannot list decks: {err}");
-            self.show_problem(Problem::Failed {
-                message: "The decks could not be read.".to_owned(),
-                details: err.to_string(),
-                data_dir: Some(state.data_dir().to_path_buf()),
-            });
+            self.decks_unreadable(&err, state.data_dir());
             return;
         }
         if imp.state.set(state).is_err() {
@@ -141,18 +138,23 @@ impl CardsWindow {
             && let Err(err) = imp.decks_page.set_state(state.clone())
         {
             // Never show "No Decks Yet" for decks that could not be read.
-            tracing::error!("cannot list decks: {err}");
-            self.show_problem(Problem::Failed {
-                message: "The decks could not be read.".to_owned(),
-                details: err.to_string(),
-                data_dir: Some(state.data_dir().to_path_buf()),
-            });
+            self.decks_unreadable(&err, state.data_dir());
             return;
         }
         tracing::debug!("showing the main page");
         imp.stack.set_visible_child_name("main");
         self.action_set_enabled("win.new-deck", true);
         self.action_set_enabled("win.new", true);
+    }
+
+    /// Shows the error page for decks that could not be read in `data_dir`.
+    fn decks_unreadable(&self, err: &cards_core::Error, data_dir: &Path) {
+        tracing::error!("cannot list decks: {err}");
+        self.show_problem(Problem::Failed {
+            message: "The decks could not be read.".to_owned(),
+            details: err.to_string(),
+            data_dir: Some(data_dir.to_path_buf()),
+        });
     }
 
     /// After an Undo from a toast brought `card` back: shows it on the
@@ -191,11 +193,12 @@ impl CardsWindow {
                 supported,
                 data_dir,
             } => {
-                imp.too_new_page.set_description(Some(&escape(&format!(
-                    "This database was made by a newer version of Cards (database version \
-                     {found}; this version supports up to {supported}). Update Cards to open \
-                     it. The database has not been changed."
-                ))));
+                imp.too_new_page
+                    .set_description(Some(&glib::markup_escape_text(&format!(
+                        "This database was made by a newer version of Cards (database version \
+                         {found}; this version supports up to {supported}). Update Cards to \
+                         open it. The database has not been changed."
+                    ))));
                 imp.too_new_path.set_label(&data_folder_line(&data_dir));
                 imp.stack.set_visible_child_name("too-new");
             }
@@ -204,7 +207,8 @@ impl CardsWindow {
                 details,
                 data_dir,
             } => {
-                imp.error_page.set_description(Some(&escape(&message)));
+                imp.error_page
+                    .set_description(Some(&glib::markup_escape_text(&message)));
                 let mut text = details;
                 if let Some(dir) = data_dir {
                     text.push_str("\n\n");
@@ -227,35 +231,4 @@ impl CardsWindow {
         self.show_main(AppState::new(data_dir, restored.store));
         self.add_toast(persistent_toast(&message));
     }
-}
-
-/// A toast with plain text (paths and errors may contain `<` or `&`) that
-/// stays until dismissed, so the user cannot miss it.
-pub fn persistent_toast(text: &str) -> adw::Toast {
-    adw::Toast::builder()
-        .title(text)
-        .use_markup(false)
-        .timeout(0)
-        .build()
-}
-
-/// Shows `toast` in the toast overlay that contains `widget`.
-pub fn show_toast_from(widget: &impl IsA<gtk::Widget>, toast: adw::Toast) {
-    if let Some(overlay) = widget
-        .ancestor(adw::ToastOverlay::static_type())
-        .and_downcast::<adw::ToastOverlay>()
-    {
-        overlay.add_toast(toast);
-    } else {
-        tracing::error!("widget is not inside a toast overlay");
-    }
-}
-
-/// Escapes text for a markup property such as `AdwStatusPage:description`.
-fn escape(text: &str) -> glib::GString {
-    glib::markup_escape_text(text)
-}
-
-fn data_folder_line(dir: &Path) -> String {
-    format!("Data folder: {}", dir.display())
 }

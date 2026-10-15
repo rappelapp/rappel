@@ -1,9 +1,11 @@
 //! Compiles Blueprint files to `GtkBuilder` XML, then bundles them into a
 //! gresource that `main.rs` embeds in the binary.
 
-// A build script reports failure by panicking: cargo shows the message and
-// stops the build. So `expect()` is the correct error handling here.
-#![allow(clippy::expect_used)]
+#![expect(
+    clippy::expect_used,
+    reason = "a build script reports failure by panicking: cargo shows the message and \
+              stops the build, so `expect()` is the correct error handling here"
+)]
 
 use std::{env, fs, path::PathBuf, process::Command};
 

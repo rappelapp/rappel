@@ -2,7 +2,7 @@
 
 A native GNOME flashcard app. Two grades only (Fail and Pass), Markdown cards with LaTeX math, FSRS scheduling. Everything stays on your computer: no network access, no accounts.
 
-**Status:** early development. Nothing usable yet; v0 has not started. See [SPEC.md](SPEC.md) for what is planned.
+**Status:** early development (v0 in progress). You can create decks, add plain-text cards and study them with Fail and Pass on an FSRS schedule. Markdown and math rendering are not there yet. See [SPEC.md](SPEC.md) for what is planned.
 
 ## Building
 
@@ -20,6 +20,13 @@ RUST_LOG=cards=debug cargo run -p cards    # with debug logs
 GTK_DEBUG=interactive cargo run -p cards   # with the GTK inspector
 scripts/check.sh                           # format, lint, test, licence/advisory checks
 scripts/install-hooks.sh                   # once per clone: run checks before every commit
+```
+
+To try the app on scratch data instead of your own (60 cards, 30 of them due now):
+
+```sh
+cargo run -p cards-core --example fill_scratch_db -- /tmp/cards-scratch 60 --due 30
+CARDS_DATA_DIR=/tmp/cards-scratch cargo run -p cards
 ```
 
 ## Recovering your data

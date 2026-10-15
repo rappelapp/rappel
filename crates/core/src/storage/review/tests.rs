@@ -303,53 +303,6 @@ fn a_failed_cache_write_rolls_back_the_event() {
     assert_eq!(schedule_table(&store).len(), 0);
 }
 
-#[test]
-fn due_cards_are_the_reviewed_live_cards_due_most_overdue_first() {
-    let (mut store, deck, cards) = store_with_cards(4);
-    // cards[0] reviewed at T0 + 1 min, cards[1] at T0: both due 10 min later.
-    store
-        .record_review(&cards[0], Grade::Fail, Duration::ZERO, T0 + 60_000)
-        .unwrap();
-    store
-        .record_review(&cards[1], Grade::Fail, Duration::ZERO, T0)
-        .unwrap();
-    store
-        .record_review(&cards[2], Grade::Fail, Duration::ZERO, T0)
-        .unwrap();
-    store.delete_card_at(&cards[2], T0).unwrap();
-
-    let ids = |v: Vec<Card>| v.into_iter().map(|c| c.id).collect::<Vec<_>>();
-    assert_eq!(store.due_cards(&deck, T0 + STEP_MS - 1).unwrap().len(), 0);
-    assert_eq!(
-        ids(store.due_cards(&deck, T0 + STEP_MS).unwrap()),
-        [cards[1].clone()]
-    );
-    assert_eq!(
-        ids(store.due_cards(&deck, T0 + DAY_MS).unwrap()),
-        [cards[1].clone(), cards[0].clone()]
-    );
-}
-
-#[test]
-fn new_cards_are_unreviewed_live_cards_oldest_first_up_to_the_limit() {
-    let (mut store, deck, cards) = store_with_cards(5);
-    store
-        .record_review(&cards[1], Grade::Pass, Duration::ZERO, T0)
-        .unwrap();
-    store.delete_card_at(&cards[3], T0).unwrap();
-
-    let ids = |v: Vec<Card>| v.into_iter().map(|c| c.id).collect::<Vec<_>>();
-    assert_eq!(
-        ids(store.new_cards(&deck, 10).unwrap()),
-        [cards[0].clone(), cards[2].clone(), cards[4].clone()]
-    );
-    assert_eq!(
-        ids(store.new_cards(&deck, 2).unwrap()),
-        [cards[0].clone(), cards[2].clone()]
-    );
-    assert_eq!(store.new_cards(&deck, 0).unwrap().len(), 0);
-}
-
 #[derive(Debug, Clone)]
 enum Step {
     Review {

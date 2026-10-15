@@ -10,8 +10,10 @@ use gtk::glib;
 use crate::dialogs::deck_name_dialog::{self, Purpose};
 use crate::pages::DeckPage;
 use crate::state::AppState;
+use crate::ui::focus::index_after_removal;
+use crate::ui::nav;
+use crate::ui::toast::{show_error, show_toast_from, undo_toast};
 use crate::widgets::DeckRow;
-use crate::window::{persistent_toast, show_toast_from};
 
 mod imp {
     use std::cell::{Cell, OnceCell, RefCell};
@@ -21,6 +23,7 @@ mod imp {
     use gtk::glib;
 
     use crate::state::AppState;
+    use crate::ui::rows;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
     #[template(resource = "/io/github/rsmirke/Cards/decks_page.ui")]
@@ -49,24 +52,10 @@ mod imp {
         fn class_init(klass: &mut Self::Class) {
             klass.bind_template();
             // Activated by the deck rows' menus with the deck id.
-            klass.install_action(
-                "decks.rename",
-                Some(glib::VariantTy::STRING),
-                |page, _, id| {
-                    if let Some(id) = id.and_then(glib::Variant::str) {
-                        page.rename(id.to_owned());
-                    }
-                },
-            );
-            klass.install_action(
-                "decks.delete",
-                Some(glib::VariantTy::STRING),
-                |page, _, id| {
-                    if let Some(id) = id.and_then(glib::Variant::str) {
-                        page.delete(id);
-                    }
-                },
-            );
+            rows::install_id_action(klass, "decks.rename", |page, id| {
+                page.rename(id.to_owned());
+            });
+            rows::install_id_action(klass, "decks.delete", super::DecksPage::delete);
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -149,11 +138,7 @@ impl DecksPage {
         else {
             return;
         };
-        let Some(view) = self
-            .ancestor(adw::NavigationView::static_type())
-            .and_downcast::<adw::NavigationView>()
-        else {
-            tracing::error!("the deck list is not inside a navigation view");
+        let Some(view) = nav::navigation_view(self) else {
             return;
         };
         match DeckPage::new(state.clone(), deck) {
@@ -232,19 +217,16 @@ impl DecksPage {
         }
         self.reload_or_toast(Focus::Index(index));
 
-        let toast = adw::Toast::builder()
-            .title(format!("“{name}” deleted"))
-            .use_markup(false)
-            .button_label("_Undo")
-            // Never queued behind a toast that stays until dismissed.
-            .priority(adw::ToastPriority::High)
-            .build();
+        let title = format!("“{name}” deleted");
         let id = id.to_owned();
-        toast.connect_button_clicked(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move |_| page.undelete(&id, &name)
-        ));
+        let toast = undo_toast(
+            &title,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move || page.undelete(&id, &name)
+            ),
+        );
         show_toast_from(self, toast);
     }
 
@@ -294,7 +276,7 @@ impl DecksPage {
             let wanted = match focus {
                 Focus::Keep => false,
                 Focus::Deck(id) => summary.deck.id == id,
-                Focus::Index(n) => i == n.min(decks.len() - 1),
+                Focus::Index(n) => index_after_removal(n, decks.len()) == Some(i),
             };
             if wanted {
                 focus_row = Some(row.clone());
@@ -322,9 +304,6 @@ impl DecksPage {
     }
 
     fn error_toast(&self, message: &str) {
-        // Deck names are user content: only at debug level in logs (SPEC §2).
-        tracing::warn!("a deck operation failed");
-        tracing::debug!("{message}");
-        show_toast_from(self, persistent_toast(message));
+        show_error(self, "a deck operation", message);
     }
 }

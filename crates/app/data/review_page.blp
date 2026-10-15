@@ -106,7 +106,7 @@ template $CardsReviewPage: Adw.NavigationPage {
       Gtk.StackPage {
         name: "reveal";
 
-        child: Gtk.Button reveal_button {
+        child: Gtk.Button {
           label: _("_Show Answer");
           use-underline: true;
           action-name: "review.reveal";
