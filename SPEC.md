@@ -156,7 +156,7 @@ Storage rules:
 - FSRS parameter optimisation from the user's own review log.
 - Sync.
 - Cloze cards.
-- Obsidian-style in-place live preview in the editor (formulas rendered inside the text being edited, source shown where the cursor is). Needs a spike first (ADR 0007).
+- Obsidian-style in-place live preview in the editor (formulas rendered inside the text being edited, source shown where the cursor is). Needs a spike first, with its own ADR (next free number).
 
 ## 6. Never in this project
 - More than two grades. Card links, proximal-zone suggestions, prerequisite graphs: those belong to the separate method app.

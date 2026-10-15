@@ -1,0 +1,477 @@
+//! Restoring a backup over the current database.
+//!
+//! The current database is never deleted and never opened, so a restore
+//! works even when it is damaged. In order:
+//! 1. The backup is byte-copied to `cards.sqlite3.restore.checking` in the
+//!    data directory, and **the copy** is validated (integrity, version,
+//!    schema), so what gets installed is exactly what was checked. A copy
+//!    older than this build is migrated there and validated again, so a
+//!    migration that fails refuses the restore before anything changed.
+//!    Only then is it renamed to `cards.sqlite3.restore.partial`: that name
+//!    always means "a validated copy", and a later attempt that fails never
+//!    deletes it.
+//! 2. The current database and its `-wal`, `-shm` and `-journal` files are
+//!    renamed, main file first, to `cards.sqlite3.replaced-YYYYMMDD-HHMMSS`
+//!    (plus the same suffixes). SQLite finds `<name>-wal` next to
+//!    `<name>`, so the moved-aside set still opens as one database.
+//! 3. The copy is renamed to `cards.sqlite3`, and opened with
+//!    [`Store::open`].
+//!
+//! Once step 2 has started, a failure or crash can leave no main file. The
+//! data is never lost, but a plain [`Store::open`] would create a new,
+//! empty database. It refuses instead: [`Error::OrphanedSidecar`] for a
+//! `-wal` left without its main file, [`Error::InterruptedRestore`] when
+//! the validated copy is waiting to be installed. Running the restore again
+//! finishes the job. See ADR 0007.
+
+use std::fs::{self, File, OpenOptions, Permissions};
+use std::io::{self, Read};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+
+use rusqlite::{Connection, OpenFlags};
+
+use super::backup::{BackupInfo, SQLITE_HEADER, parse_backup_name, utc_stamp};
+use super::migrations::{MIGRATIONS, Migration, latest, migrate};
+use super::{
+    BACKUP_DIR_NAME, DB_FILE_NAME, FILE_MODE, SIDECAR_SUFFIXES, Store, check_integrity,
+    check_version, exists, sidecar_paths,
+};
+use crate::data_dir::ensure_data_dir;
+use crate::error::{Error, Result};
+use crate::time::now_ms;
+
+/// The result of a successful [`restore_backup`].
+#[derive(Debug)]
+pub struct Restored {
+    /// The restored database, open and migrated.
+    pub store: Store,
+    /// Where the previous database was moved: its main file, with its
+    /// `-wal`/`-shm`/`-journal` files next to it under the same name plus
+    /// suffix. `None` if there was nothing to move. If only leftover
+    /// sidecar files were moved, this main file does not exist.
+    pub replaced: Option<PathBuf>,
+}
+
+/// Restores `backup` (from [`super::list_backups`]) as the database in
+/// `data_dir`, and opens it.
+///
+/// `current` is the open store, if there is one (`None` when the database
+/// could not be opened). It is closed before any file is moved, so no
+/// connection keeps writing to the moved-aside file.
+///
+/// The backup is validated before anything is changed. The previous
+/// database is never deleted; it is moved to
+/// `cards.sqlite3.replaced-YYYYMMDD-HHMMSS` (mode `0600`), see
+/// [`Restored::replaced`]. This works when the current database is damaged.
+///
+/// # Errors
+/// - [`Error::RestoreRefused`] if the backup is not a backup file in
+///   `<data_dir>/backups/`, is damaged, is newer than this build, or does
+///   not have the Cards schema, or cannot be migrated to this build's
+///   schema. Nothing was changed.
+/// - IO errors while copying or moving files, and any error from
+///   [`Store::open`] on the restored database. If the old files were
+///   already moved aside, they stay under their `replaced-…` name, and
+///   [`Store::open`] refuses to start an empty database in their place
+///   until a restore succeeds.
+pub fn restore_backup(
+    data_dir: &Path,
+    current: Option<Store>,
+    backup: &BackupInfo,
+) -> Result<Restored> {
+    drop(current);
+    restore_with(data_dir, backup.path(), now_ms(), MIGRATIONS)
+}
+
+/// Path of the validated copy waiting to be installed.
+pub(super) fn restore_partial_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(format!("{DB_FILE_NAME}.restore.partial"))
+}
+
+/// Path of the copy while it is being validated.
+fn restore_checking_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(format!("{DB_FILE_NAME}.restore.checking"))
+}
+
+/// [`restore_backup`] with every input explicit, for tests.
+fn restore_with(
+    data_dir: &Path,
+    backup: &Path,
+    now_ms: i64,
+    migrations: &[Migration],
+) -> Result<Restored> {
+    let refused = |source: Error| Error::RestoreRefused {
+        path: backup.to_path_buf(),
+        source: Box::new(source),
+    };
+    check_location(data_dir, backup).map_err(refused)?;
+
+    ensure_data_dir(data_dir)?;
+    // Copy and check under a scratch name, so that a failure here never
+    // touches a validated copy left by an interrupted earlier restore.
+    let checking = restore_checking_path(data_dir);
+    copy_private(backup, &checking).inspect_err(|_| remove_copy(&checking))?;
+    if let Err(err) = check_copy(&checking, migrations) {
+        remove_copy(&checking);
+        tracing::warn!(backup = %backup.display(), "backup refused: {err}");
+        return Err(refused(err));
+    }
+
+    // From here on the validated copy is never deleted on error: if the
+    // main file is gone, it is what makes `Store::open` refuse to start an
+    // empty database (`InterruptedRestore`), and a retry replaces it.
+    let partial = restore_partial_path(data_dir);
+    fs::rename(&checking, &partial).map_err(|source| Error::Io {
+        path: checking.clone(),
+        source,
+    })?;
+    sync_parent(&partial)?;
+    let db_path = data_dir.join(DB_FILE_NAME);
+    let replaced = move_aside(&db_path, now_ms)?;
+    if let Some(path) = &replaced {
+        tracing::info!(path = %path.display(), "previous database moved aside");
+    }
+    install(&partial, &db_path)?;
+    tracing::info!(backup = %backup.display(), "backup restored");
+
+    let store = Store::open_with(
+        &db_path,
+        &data_dir.join(BACKUP_DIR_NAME),
+        now_ms,
+        migrations,
+    )?;
+    Ok(Restored { store, replaced })
+}
+
+/// The backup must be a regular file with a backup name directly inside
+/// `<data_dir>/backups/`. Restore only reads files Cards made itself.
+fn check_location(data_dir: &Path, backup: &Path) -> Result<()> {
+    let not_a_backup = || Error::Io {
+        path: backup.to_path_buf(),
+        source: io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a backup file in the backups directory",
+        ),
+    };
+    let in_backup_dir = backup.parent() == Some(&data_dir.join(BACKUP_DIR_NAME));
+    let well_named = backup
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(parse_backup_name)
+        .is_some();
+    if !in_backup_dir || !well_named {
+        return Err(not_a_backup());
+    }
+    let meta = fs::symlink_metadata(backup).map_err(|source| Error::Io {
+        path: backup.to_path_buf(),
+        source,
+    })?;
+    if meta.file_type().is_file() {
+        Ok(())
+    } else {
+        Err(not_a_backup())
+    }
+}
+
+/// Copies `src` to a new file `dest` with mode `0600` and syncs it. A
+/// leftover `dest` from an interrupted restore, and any `-wal`/`-shm`/
+/// `-journal` next to it, are removed first so they cannot be read along
+/// with the copy.
+fn copy_private(src: &Path, dest: &Path) -> Result<()> {
+    let io_err = |path: &Path| {
+        let path = path.to_path_buf();
+        move |source| Error::Io { path, source }
+    };
+    for p in std::iter::once(dest.to_path_buf()).chain(sidecar_paths(dest)) {
+        match fs::remove_file(&p) {
+            Err(err) if err.kind() != io::ErrorKind::NotFound => return Err(io_err(&p)(err)),
+            _ => {}
+        }
+    }
+    let mut from = File::open(src).map_err(io_err(src))?;
+    let mut to = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(FILE_MODE)
+        .open(dest)
+        .map_err(io_err(dest))?;
+    io::copy(&mut from, &mut to).map_err(io_err(dest))?;
+    to.sync_all().map_err(io_err(dest))
+}
+
+/// Validates the copy at `path`. If it is older than `migrations`, migrates
+/// it in place and validates it again, so the installed file is current
+/// and a migration that fails refuses the restore while nothing else has
+/// changed.
+fn check_copy(path: &Path, migrations: &[Migration]) -> Result<()> {
+    let version = validate(path, migrations)?;
+    if version < latest(migrations) {
+        migrate_copy(path, migrations, version)?;
+        validate(path, migrations)?;
+    }
+    Ok(())
+}
+
+/// Migrates the copy at `path` from `current` with the settings
+/// [`Store::open`] uses, except that it stays in rollback-journal mode.
+/// Each migration commits in its own transaction; on an error the copy is
+/// left part-way and must be removed.
+fn migrate_copy(path: &Path, migrations: &[Migration], current: u32) -> Result<()> {
+    let mut conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.pragma_update(None, "foreign_keys", true)?;
+    conn.pragma_update(None, "trusted_schema", false)?;
+    conn.pragma_update(None, "synchronous", "FULL")?;
+    let foreign_keys: bool = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0))?;
+    if !foreign_keys {
+        return Err(Error::PragmaRejected {
+            pragma: "foreign_keys",
+            value: "0".into(),
+        });
+    }
+    migrate(&mut conn, migrations, current)?;
+    conn.close().map_err(|(_, err)| err)?;
+    Ok(())
+}
+
+/// Checks the file at `path` without writing to it: it uses a rollback
+/// journal (as every backup does), passes `integrity_check`, its version is
+/// between 1 and the last migration, and it has exactly the tables,
+/// indexes, triggers and views that `migrations` create at that version,
+/// with the same columns. Returns the version.
+fn validate(path: &Path, migrations: &[Migration]) -> Result<u32> {
+    // A WAL-mode file would make even a read-only connection create and
+    // read `-wal`/`-shm` files next to it, so what is checked would not be
+    // the file alone. Backups are always written with a rollback journal.
+    require_rollback_journal(path)?;
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    // The file is not trusted until it passes the checks below.
+    conn.pragma_update(None, "trusted_schema", false)?;
+    check_integrity(&conn)?;
+    let (version, is_new) = check_version(&conn, migrations)?;
+    if is_new {
+        // An empty database: nothing to restore.
+        return Err(Error::NotACardsDatabase);
+    }
+    if schema_objects(&conn)? != reference_schema(migrations, version)? {
+        return Err(Error::NotACardsDatabase);
+    }
+    conn.close().map_err(|(_, err)| err)?;
+    Ok(version)
+}
+
+/// Refuses a database file whose header does not say "rollback journal"
+/// (bytes 18 and 19 both 1). A file that is not an SQLite database at all
+/// is left to the integrity check, which reports it more clearly.
+fn require_rollback_journal(path: &Path) -> Result<()> {
+    let io_err = |source| Error::Io {
+        path: path.to_path_buf(),
+        source,
+    };
+    let mut header = [0u8; 20];
+    match File::open(path).map_err(io_err)?.read_exact(&mut header) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+        Err(err) => return Err(io_err(err)),
+    }
+    if &header[..16] != SQLITE_HEADER || (header[18] == 1 && header[19] == 1) {
+        Ok(())
+    } else {
+        Err(io_err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the file is in WAL mode, which backups never are",
+        )))
+    }
+}
+
+/// A schema object: its type, its name, and for a table or an index its
+/// columns as SQLite reports them.
+type SchemaObject = (String, String, Vec<String>);
+
+/// Every schema object, sorted, leaving out SQLite's own `sqlite_*`
+/// objects (`sqlite_stat1` and `sqlite_sequence` come and go with `ANALYZE`
+/// and use, and are not part of our schema).
+///
+/// Columns come from `pragma_table_xinfo` / `pragma_index_xinfo` (name,
+/// type, NOT NULL, default, primary key; or key order and collation), not
+/// from the stored SQL text, which depends on how the object was created.
+/// Two schema versions with the same object names but different columns
+/// (as 0001 and 0002 have) are told apart.
+fn schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>> {
+    let mut stmt = conn.prepare(
+        "SELECT type, name FROM sqlite_schema
+         WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+         ORDER BY type, name",
+    )?;
+    let names = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut table_cols = conn.prepare(
+        "SELECT name, type, \"notnull\", dflt_value, pk
+         FROM pragma_table_xinfo(?1) ORDER BY cid",
+    )?;
+    let mut index_cols = conn.prepare(
+        "SELECT name, \"desc\", coll, key
+         FROM pragma_index_xinfo(?1) ORDER BY seqno",
+    )?;
+    let mut objects = Vec::with_capacity(names.len());
+    for (kind, name) in names {
+        let columns = match kind.as_str() {
+            "table" => table_cols
+                .query_map([&name], |r| {
+                    Ok(format!(
+                        "{} {} notnull={} default={:?} pk={}",
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, i64>(4)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<_>>()?,
+            "index" => index_cols
+                .query_map([&name], |r| {
+                    Ok(format!(
+                        "{:?} desc={} coll={:?} key={}",
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, i64>(3)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<_>>()?,
+            _ => Vec::new(),
+        };
+        objects.push((kind, name, columns));
+    }
+    Ok(objects)
+}
+
+/// The schema objects of a fresh in-memory database migrated to `version`.
+fn reference_schema(migrations: &[Migration], version: u32) -> Result<Vec<SchemaObject>> {
+    let upto = migrations
+        .iter()
+        .take_while(|m| m.version <= version)
+        .count();
+    let mut conn = Connection::open_in_memory()?;
+    migrate(&mut conn, &migrations[..upto], 0)?;
+    schema_objects(&conn)
+}
+
+/// Renames the database at `db_path` and its sidecar files, main file
+/// first, to a free `<db>.replaced-YYYYMMDD-HHMMSS[-N]` name with mode
+/// `0600`. Returns that name, or `None` if none of the files exist.
+fn move_aside(db_path: &Path, now_ms: i64) -> Result<Option<PathBuf>> {
+    let mut present = Vec::new();
+    for (path, suffix) in std::iter::once((db_path.to_path_buf(), ""))
+        .chain(sidecar_paths(db_path).into_iter().zip(SIDECAR_SUFFIXES))
+    {
+        if exists(&path)? {
+            present.push((path, suffix));
+        }
+    }
+    if present.is_empty() {
+        return Ok(None);
+    }
+
+    let stem = free_stem(db_path, now_ms)?;
+    for (path, suffix) in present {
+        let mut target = stem.as_os_str().to_owned();
+        target.push(suffix);
+        let target = PathBuf::from(target);
+        let io_err = |source| Error::Io {
+            path: path.clone(),
+            source,
+        };
+        fs::rename(&path, &target).map_err(io_err)?;
+        // Only regular files; never follow a symlink to chmod its target.
+        if fs::symlink_metadata(&target)
+            .map_err(io_err)?
+            .file_type()
+            .is_file()
+        {
+            fs::set_permissions(&target, Permissions::from_mode(FILE_MODE)).map_err(io_err)?;
+        }
+    }
+    sync_parent(db_path)?;
+    Ok(Some(stem))
+}
+
+/// `<db>.replaced-<stamp>`, or `<db>.replaced-<stamp>-N` with the smallest
+/// N ≥ 2, such that neither it nor any of its sidecar names exist.
+fn free_stem(db_path: &Path, now_ms: i64) -> Result<PathBuf> {
+    let mut base = db_path.as_os_str().to_owned();
+    base.push(".replaced-");
+    base.push(utc_stamp(now_ms));
+    let mut candidate = PathBuf::from(&base);
+    let mut counter = 2;
+    loop {
+        let mut taken = exists(&candidate)?;
+        for p in sidecar_paths(&candidate) {
+            taken |= exists(&p)?;
+        }
+        if !taken {
+            return Ok(candidate);
+        }
+        let mut next = base.clone();
+        next.push(format!("-{counter}"));
+        candidate = PathBuf::from(next);
+        counter += 1;
+    }
+}
+
+/// Renames `partial` to `db_path` once no database file or sidecar is left
+/// there, and makes the rename durable.
+fn install(partial: &Path, db_path: &Path) -> Result<()> {
+    for p in std::iter::once(db_path.to_path_buf()).chain(sidecar_paths(db_path)) {
+        if exists(&p)? {
+            return Err(Error::Io {
+                path: p,
+                source: io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "appeared while restoring a backup",
+                ),
+            });
+        }
+    }
+    fs::rename(partial, db_path).map_err(|source| Error::Io {
+        path: partial.to_path_buf(),
+        source,
+    })?;
+    sync_parent(db_path)
+}
+
+/// Syncs the directory holding `path`, so renames in it survive a crash.
+fn sync_parent(path: &Path) -> Result<()> {
+    let Some(dir) = path.parent() else {
+        return Ok(());
+    };
+    File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(|source| Error::Io {
+            path: dir.to_path_buf(),
+            source,
+        })
+}
+
+/// Removes the copy being checked and any sidecar files next to it. Used on
+/// error paths before anything else was changed, where the original error
+/// matters more than a failed cleanup.
+fn remove_copy(copy: &Path) {
+    for p in std::iter::once(copy.to_path_buf()).chain(sidecar_paths(copy)) {
+        if let Err(err) = fs::remove_file(&p)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            tracing::warn!(path = %p.display(), "could not remove: {err}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

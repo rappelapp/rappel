@@ -65,6 +65,42 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (year, month, day)
 }
 
+/// UTC milliseconds for the start of the second given by `parts`; the
+/// inverse of [`utc_parts`] up to the dropped milliseconds.
+///
+/// `None` if a field is out of range (month 1–12, day 1–31, hour 0–23,
+/// minute and second 0–59, year within ±1 000 000) or names a day that does
+/// not exist, such as 31 April.
+#[must_use]
+pub fn utc_ms(parts: UtcParts) -> Option<i64> {
+    let in_range = (-1_000_000..=1_000_000).contains(&parts.year)
+        && (1..=12).contains(&parts.month)
+        && (1..=31).contains(&parts.day)
+        && (0..24).contains(&parts.hour)
+        && (0..60).contains(&parts.minute)
+        && (0..60).contains(&parts.second);
+    if !in_range {
+        return None;
+    }
+    // In range, so none of this can overflow: |days| < 4e8, |ms| < 4e16.
+    let days = days_from_civil(parts.year, parts.month, parts.day);
+    let ms = (days * 86_400 + parts.hour * 3600 + parts.minute * 60 + parts.second) * 1000;
+    // A day past the end of its month rolls over into the next month.
+    (utc_parts(ms) == parts).then_some(ms)
+}
+
+/// (year, month, day) to days since 1970-01-01; the inverse of
+/// [`civil_from_days`] (same algorithm, run backwards).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (m + 9).rem_euclid(12);
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,17 +131,6 @@ mod tests {
         assert_eq!(parts(-2_208_988_800_000), (1900, 1, 1, 0, 0, 0));
     }
 
-    /// Inverse of `civil_from_days`, written independently for the test.
-    fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-        let y = if m <= 2 { y - 1 } else { y };
-        let era = y.div_euclid(400);
-        let yoe = y.rem_euclid(400);
-        let mp = (m + 9) % 12;
-        let doy = (153 * mp + 2) / 5 + d - 1;
-        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-        era * 146_097 + doe - 719_468
-    }
-
     #[test]
     fn days_round_trip_and_are_consecutive() {
         let mut prev = civil_from_days(-800_000);
@@ -123,6 +148,51 @@ mod tests {
                 (y, m, d)
             );
             prev = (y, m, d);
+        }
+    }
+
+    #[test]
+    fn utc_ms_inverts_utc_parts_to_the_second() {
+        for ms in [
+            0,
+            -1,
+            951_782_400_000,
+            1_792_067_696_789,
+            4_107_542_399_999,
+            -2_208_988_800_000,
+        ] {
+            assert_eq!(
+                utc_ms(utc_parts(ms)),
+                Some(ms.div_euclid(1000) * 1000),
+                "{ms}"
+            );
+        }
+    }
+
+    #[test]
+    fn utc_ms_rejects_impossible_dates() {
+        let ok = utc_parts(1_792_067_696_789);
+        assert!(utc_ms(ok).is_some());
+        for bad in [
+            UtcParts { month: 13, ..ok },
+            UtcParts {
+                month: 4,
+                day: 31,
+                ..ok
+            },
+            UtcParts {
+                month: 2,
+                day: 29,
+                ..ok
+            }, // 2026 is not a leap year
+            UtcParts { hour: 24, ..ok },
+            UtcParts { second: 60, ..ok },
+            UtcParts {
+                year: i64::MAX,
+                ..ok
+            },
+        ] {
+            assert_eq!(utc_ms(bad), None, "{bad:?}");
         }
     }
 

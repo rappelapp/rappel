@@ -1,0 +1,721 @@
+//! Tests for restoring backups: over healthy, damaged and missing
+//! databases, with stale journal files, and refusals that change nothing.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use rusqlite::Connection;
+
+use super::*;
+use crate::domain::CardState;
+use crate::scheduling::Scheduler;
+use crate::storage::backup::{check_rows, create_backup, list_backups};
+use crate::storage::latest;
+use crate::storage::tests::{
+    CARD, CARD2, DAY_MS, DAY0, DECK, FAILING_V2, FAKE_V1, FAKE_V2, REVIEWS, corrupt_btree, count,
+    insert_events, insert_sample, mode,
+};
+
+const DECK2: &str = "01920000-0000-7000-8000-000000000009";
+/// `utc_stamp(DAY0 + DAY_MS)`, the time every restore below runs at.
+const RESTORE_STAMP: &str = "20261016-123456";
+
+struct Env {
+    _tmp: tempfile::TempDir,
+    data: PathBuf,
+}
+
+impl Env {
+    fn new() -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("data");
+        Self { _tmp: tmp, data }
+    }
+
+    fn db(&self) -> PathBuf {
+        self.data.join(DB_FILE_NAME)
+    }
+
+    fn backups(&self) -> PathBuf {
+        self.data.join(BACKUP_DIR_NAME)
+    }
+
+    fn open(&self) -> Result<Store> {
+        Store::open_with(&self.db(), &self.backups(), DAY0, MIGRATIONS)
+    }
+
+    fn restore(&self, backup: &Path) -> Result<Restored> {
+        restore_with(&self.data, backup, DAY0 + DAY_MS, MIGRATIONS)
+    }
+
+    fn replaced(&self) -> PathBuf {
+        self.data
+            .join(format!("{DB_FILE_NAME}.replaced-{RESTORE_STAMP}"))
+    }
+
+    /// A database with one deck ("Maths"), backed up; then a second deck
+    /// ("Physics") is added that only the current database has. Returns the
+    /// still-open store and the backup path.
+    fn diverged(&self) -> (Store, PathBuf) {
+        let store = self.open().unwrap();
+        insert_sample(&store.conn);
+        let backup = create_backup(&store.conn, &self.backups(), DAY0).unwrap();
+        add_deck(&store.conn);
+        (store, backup)
+    }
+}
+
+fn add_deck(conn: &Connection) {
+    conn.execute_batch(&format!(
+        "INSERT INTO decks VALUES ('{DECK2}', 'Physics', 2, 2);"
+    ))
+    .unwrap();
+}
+
+fn deck_names(conn: &Connection) -> Vec<String> {
+    let mut stmt = conn
+        .prepare("SELECT name FROM decks ORDER BY name")
+        .unwrap();
+    stmt.query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// Every file and directory under `dir` with its bytes (directories map to
+/// an empty vector), for "nothing changed" checks.
+fn snapshot(dir: &Path) -> BTreeMap<PathBuf, (bool, Vec<u8>)> {
+    let mut out = BTreeMap::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            out.insert(path.clone(), (true, Vec::new()));
+            out.extend(snapshot(&path));
+        } else {
+            out.insert(path.clone(), (false, fs::read(&path).unwrap()));
+        }
+    }
+    out
+}
+
+/// No scratch copy, and no `-journal`/`-wal`/`-shm` next to one, is left.
+fn no_partial_left(e: &Env) {
+    for copy in [
+        restore_partial_path(&e.data),
+        restore_checking_path(&e.data),
+    ] {
+        for p in std::iter::once(copy.clone()).chain(sidecar_paths(&copy)) {
+            assert!(!p.exists(), "{} left behind", p.display());
+        }
+    }
+}
+
+// --- Successful restores --------------------------------------------------
+
+#[test]
+fn restore_over_a_healthy_database() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    let before = fs::read(e.db()).unwrap();
+
+    let restored = e.restore(&backup).unwrap();
+
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    assert_eq!(count(&restored.store.conn, "review_events"), 1);
+    assert_eq!(restored.replaced.as_deref(), Some(e.replaced().as_path()));
+    // The previous database is intact, byte for byte, and private.
+    assert_eq!(fs::read(e.replaced()).unwrap(), before);
+    assert_eq!(mode(&e.replaced()), 0o600);
+    assert_eq!(mode(&e.db()), 0o600);
+    let old = Connection::open(e.replaced()).unwrap();
+    assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+    // The backup itself is untouched and still listed.
+    assert!(backup.exists());
+    no_partial_left(&e);
+}
+
+#[test]
+fn restore_through_the_public_api_closes_the_open_store() {
+    let e = Env::new();
+    // Still open, with the Physics deck only in its WAL.
+    let (store, _) = e.diverged();
+    let list = list_backups(&e.data).unwrap();
+    assert_eq!(list.len(), 1);
+
+    let restored = restore_backup(&e.data, Some(store), &list[0]).unwrap();
+
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    // Closing the store checkpointed its WAL before the move, so the
+    // moved-aside database has everything.
+    let replaced = restored.replaced.unwrap();
+    let old = Connection::open(&replaced).unwrap();
+    assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+}
+
+#[test]
+fn restore_over_a_corrupted_database() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    corrupt_btree(&e.db(), "decks");
+    let damaged = fs::read(e.db()).unwrap();
+    assert!(matches!(e.open(), Err(Error::IntegrityCheckFailed { .. })));
+
+    let restored = e.restore(&backup).unwrap();
+
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    assert_eq!(fs::read(e.replaced()).unwrap(), damaged);
+    no_partial_left(&e);
+}
+
+#[test]
+fn restore_over_a_file_that_is_not_a_database() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    fs::write(e.db(), vec![0x42; 8192]).unwrap();
+
+    let restored = e.restore(&backup).unwrap();
+
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    assert_eq!(fs::read(e.replaced()).unwrap(), vec![0x42; 8192]);
+}
+
+#[test]
+fn restore_when_there_is_no_database() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    fs::remove_file(e.db()).unwrap();
+
+    let restored = e.restore(&backup).unwrap();
+
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    assert_eq!(restored.replaced, None);
+}
+
+/// Copies the database files as they are on disk while `store` still has
+/// uncheckpointed rows in the `-wal`, closes it, and puts the copies back:
+/// the state a crash leaves behind.
+fn crash_with_rows_in_wal(e: &Env, store: Store) -> Vec<u8> {
+    let wal = with_suffix(&e.db(), "-wal");
+    let main = fs::read(e.db()).unwrap();
+    let wal_bytes = fs::read(&wal).unwrap();
+    let shm_bytes = fs::read(with_suffix(&e.db(), "-shm")).unwrap();
+    assert!(!wal_bytes.is_empty(), "rows are in the WAL");
+    drop(store);
+    fs::write(e.db(), main).unwrap();
+    fs::write(&wal, &wal_bytes).unwrap();
+    fs::write(with_suffix(&e.db(), "-shm"), shm_bytes).unwrap();
+    wal_bytes
+}
+
+#[test]
+fn stale_wal_does_not_leak_into_the_restored_database() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    let wal_bytes = crash_with_rows_in_wal(&e, store);
+
+    let restored = e.restore(&backup).unwrap();
+
+    // Only the backup's data: the Physics deck lived in the stale WAL.
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    assert_eq!(
+        check_rows(&restored.store.conn, "integrity_check").unwrap(),
+        ["ok"]
+    );
+    // The WAL moved with its database, unchanged and private…
+    let replaced_wal = with_suffix(&e.replaced(), "-wal");
+    assert_eq!(fs::read(&replaced_wal).unwrap(), wal_bytes);
+    assert_eq!(mode(&replaced_wal), 0o600);
+    assert_eq!(mode(&with_suffix(&e.replaced(), "-shm")), 0o600);
+    drop(restored);
+    // …so the moved-aside database still has the rows that were only in it.
+    let old = Connection::open(e.replaced()).unwrap();
+    assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+}
+
+#[test]
+fn orphaned_wal_is_refused_by_open_and_moved_aside_by_restore() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    let wal_bytes = crash_with_rows_in_wal(&e, store);
+    // A crash after the main file was moved but before its -wal was.
+    fs::remove_file(e.db()).unwrap();
+
+    match e.open() {
+        Err(Error::OrphanedSidecar(path)) => assert_eq!(path, with_suffix(&e.db(), "-wal")),
+        other => panic!("expected OrphanedSidecar, got {other:?}"),
+    }
+    assert!(!e.db().exists(), "open created nothing");
+
+    let restored = e.restore(&backup).unwrap();
+
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    let stem = restored.replaced.unwrap();
+    assert!(!stem.exists(), "there was no main file to move");
+    assert_eq!(fs::read(with_suffix(&stem, "-wal")).unwrap(), wal_bytes);
+}
+
+/// Runs the first half of a restore by hand: copy and validate, then move
+/// the current database aside. Returns the validated copy.
+fn copy_validate_and_move_aside(e: &Env, backup: &Path) -> PathBuf {
+    let partial = restore_partial_path(&e.data);
+    copy_private(backup, &partial).unwrap();
+    validate(&partial, MIGRATIONS).unwrap();
+    move_aside(&e.db(), DAY0 + DAY_MS).unwrap();
+    partial
+}
+
+/// After an interrupted restore, a retry that fails must leave the
+/// validated copy in place, so `Store::open` keeps refusing.
+fn assert_failed_retry_keeps_the_guard(make_bad: impl FnOnce(&Env, &Path) -> PathBuf) {
+    let e = Env::new();
+    let (store, good) = e.diverged();
+    drop(store);
+    let partial = copy_validate_and_move_aside(&e, &good);
+    let bad = make_bad(&e, &good);
+    let before = snapshot(&e.data);
+
+    assert!(e.restore(&bad).is_err());
+
+    assert_eq!(snapshot(&e.data), before, "nothing changed");
+    assert!(partial.exists());
+    assert!(matches!(e.open(), Err(Error::InterruptedRestore(_))));
+    assert!(!e.db().exists(), "no empty database was started");
+    // A good backup still finishes the job.
+    let _ = fs::remove_dir(restore_checking_path(&e.data));
+    let restored = e.restore(&good).unwrap();
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+}
+
+#[test]
+fn refused_retry_after_an_interrupted_restore_keeps_the_guard() {
+    assert_failed_retry_keeps_the_guard(|e, good| {
+        let bad = bad_path(e);
+        fs::copy(good, &bad).unwrap();
+        corrupt_btree(&bad, "decks");
+        bad
+    });
+}
+
+#[test]
+fn failed_copy_after_an_interrupted_restore_keeps_the_guard() {
+    assert_failed_retry_keeps_the_guard(|e, good| {
+        // A directory in the way of the scratch copy makes copying fail
+        // (also when the tests run as root, unlike a permission trick).
+        fs::create_dir(restore_checking_path(&e.data)).unwrap();
+        good.to_path_buf()
+    });
+}
+
+#[test]
+fn interrupted_restore_is_refused_by_open_and_finished_by_a_new_restore() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    // A crash between moving the old database aside and installing the copy.
+    let partial = copy_validate_and_move_aside(&e, &backup);
+
+    match e.open() {
+        Err(Error::InterruptedRestore(path)) => assert_eq!(path, partial),
+        other => panic!("expected InterruptedRestore, got {other:?}"),
+    }
+    assert!(!e.db().exists(), "open did not start an empty database");
+
+    let restored = e.restore(&backup).unwrap();
+
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    assert!(!partial.exists());
+    let old = Connection::open(e.replaced()).unwrap();
+    assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+}
+
+#[test]
+fn failed_install_keeps_the_copy_and_never_starts_an_empty_database() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    let partial = copy_validate_and_move_aside(&e, &backup);
+    // Something appears at the target between moving aside and installing.
+    let intruder = with_suffix(&e.db(), "-wal");
+    fs::write(&intruder, b"intruder").unwrap();
+
+    let err = install(&partial, &e.db()).unwrap_err();
+
+    assert!(
+        matches!(&err, Error::Io { path, .. } if *path == intruder),
+        "{err}"
+    );
+    assert!(partial.exists(), "the validated copy is kept");
+    assert!(!e.db().exists());
+    assert!(matches!(e.open(), Err(Error::OrphanedSidecar(_))));
+    // With only the copy left (no stray -wal), open still refuses.
+    fs::remove_file(&intruder).unwrap();
+    assert!(matches!(e.open(), Err(Error::InterruptedRestore(_))));
+    fs::write(&intruder, b"intruder").unwrap();
+
+    // A new restore moves the stray file aside and finishes.
+    let restored = e.restore(&backup).unwrap();
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    let stem = restored.replaced.unwrap();
+    assert_eq!(stem, with_suffix(&e.replaced(), "-2"));
+    assert_eq!(fs::read(with_suffix(&stem, "-wal")).unwrap(), b"intruder");
+    let old = Connection::open(e.replaced()).unwrap();
+    assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+}
+
+#[test]
+fn replaced_name_gets_a_suffix_when_taken() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    fs::write(with_suffix(&e.replaced(), "-wal"), b"someone else's").unwrap();
+
+    let restored = e.restore(&backup).unwrap();
+
+    let expected = with_suffix(&e.replaced(), "-2");
+    assert_eq!(restored.replaced.as_deref(), Some(expected.as_path()));
+    assert_eq!(
+        fs::read(with_suffix(&e.replaced(), "-wal")).unwrap(),
+        b"someone else's"
+    );
+}
+
+#[test]
+fn older_backup_is_migrated_before_install() {
+    let e = Env::new();
+    let store = Store::open_with(&e.db(), &e.backups(), DAY0, &[FAKE_V1]).unwrap();
+    store
+        .conn
+        .execute_batch("INSERT INTO t VALUES (1);")
+        .unwrap();
+    let backup = create_backup(&store.conn, &e.backups(), DAY0).unwrap();
+    drop(store);
+
+    let restored = restore_with(&e.data, &backup, DAY0 + DAY_MS, &[FAKE_V1, FAKE_V2]).unwrap();
+
+    assert_eq!(restored.store.schema_version().unwrap(), 2);
+    let y: i64 = restored
+        .store
+        .conn
+        .query_row("SELECT y FROM t", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(y, 7);
+}
+
+/// Writes a database at schema v1 (the real migration 0001) with two
+/// cards, one of them reviewed, and a cache row in the v1 shape; backs it
+/// up; then adds a deck only the current database has. The current
+/// database stays at v1. Returns the backup path.
+fn diverged_v1(e: &Env) -> PathBuf {
+    let v1 = Store::open_with(&e.db(), &e.backups(), DAY0, &MIGRATIONS[..1]).unwrap();
+    v1.conn
+        .execute_batch(&format!(
+            "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+             INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+                 VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1),
+                        ('{CARD2}', '{DECK}', 'new card', 'back', 1, 1);
+             INSERT INTO card_schedule VALUES ('{CARD}', 3, 1.5, 5.0, 2, 1, 0);"
+        ))
+        .unwrap();
+    insert_events(&v1.conn, CARD, 0, &REVIEWS);
+    let backup = create_backup(&v1.conn, &e.backups(), DAY0).unwrap();
+    add_deck(&v1.conn);
+    backup
+}
+
+/// A backup from schema v1 is migrated to v2 before it is installed: the
+/// review log is kept and the schedule cache is rebuilt from it.
+#[test]
+fn v1_backup_is_restored_and_migrated_to_v2() {
+    let e = Env::new();
+    let backup = diverged_v1(&e);
+    let backup_bytes = fs::read(&backup).unwrap();
+
+    let restored = e.restore(&backup).unwrap();
+
+    let store = &restored.store;
+    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(deck_names(&store.conn), ["Maths"]);
+    assert_eq!(count(&store.conn, "cards"), 2);
+    assert_eq!(count(&store.conn, "review_events"), 4);
+    let events = store.review_events(CARD).unwrap();
+    let expected = Scheduler::default().rebuild_state(CARD, &events).unwrap();
+    assert!(matches!(expected, CardState::Scheduled(_)));
+    assert_eq!(store.card_state(CARD).unwrap(), expected);
+    assert_eq!(store.card_state(CARD2).unwrap(), CardState::New);
+    // The old v1 database is moved aside, the backup is left at v1.
+    let old = Connection::open(e.replaced()).unwrap();
+    assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+    assert_eq!(fs::read(&backup).unwrap(), backup_bytes);
+    no_partial_left(&e);
+}
+
+/// A backup at the current schema version is installed as it is.
+#[test]
+fn v2_backup_is_restored() {
+    let e = Env::new();
+    let (mut store, backup) = e.diverged();
+    insert_events(&store.conn, CARD, 0, &REVIEWS);
+    store.rebuild_schedule_cache(&Scheduler::default()).unwrap();
+    let backup_v2 = create_backup(&store.conn, &e.backups(), DAY0 + 1).unwrap();
+    let expected = store.card_state(CARD).unwrap();
+    assert!(matches!(expected, CardState::Scheduled(_)));
+    drop(store);
+    fs::remove_file(backup).unwrap();
+    let backups_before = list_backups(&e.data).unwrap().len();
+
+    let restored = e.restore(&backup_v2).unwrap();
+
+    let store = &restored.store;
+    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(deck_names(&store.conn), ["Maths", "Physics"]);
+    assert_eq!(count(&store.conn, "review_events"), 5);
+    assert_eq!(store.card_state(CARD).unwrap(), expected);
+    // Nothing to migrate, so no pre-migration backup; the daily backup for
+    // the restore day is the only new one.
+    assert_eq!(list_backups(&e.data).unwrap().len(), backups_before + 1);
+    no_partial_left(&e);
+}
+
+/// A backup whose migration fails is refused before anything is moved,
+/// so the current database stays in place and opens.
+#[test]
+fn backup_whose_migration_fails_is_refused_untouched() {
+    let e = Env::new();
+    let backup = diverged_v1(&e);
+    let before = snapshot(&e.data);
+
+    let err = restore_with(
+        &e.data,
+        &backup,
+        DAY0 + DAY_MS,
+        &[MIGRATIONS[0], FAILING_V2],
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(&err, Error::RestoreRefused { source, .. }
+            if matches!(**source, Error::Migration { version: 2, .. })),
+        "{err:?}"
+    );
+    assert_eq!(snapshot(&e.data), before, "nothing changed");
+    no_partial_left(&e);
+    let store = Store::open_with(&e.db(), &e.backups(), DAY0, &MIGRATIONS[..1]).unwrap();
+    assert_eq!(deck_names(&store.conn), ["Maths", "Physics"]);
+}
+
+// --- Refusals -------------------------------------------------------------
+
+/// Sets up a healthy database plus a bad backup made by `make_bad`, and
+/// checks that restoring it is refused for `expected` reasons with every
+/// file in the data directory unchanged.
+fn assert_refused(
+    make_bad: impl FnOnce(&Env, &Path) -> PathBuf,
+    expected: impl FnOnce(&Error) -> bool,
+) {
+    let e = Env::new();
+    let (store, good) = e.diverged();
+    drop(store);
+    let bad = make_bad(&e, &good);
+    let before = snapshot(&e.data);
+
+    let err = e.restore(&bad).unwrap_err();
+
+    match &err {
+        Error::RestoreRefused { path, source } => {
+            assert_eq!(path, &bad);
+            assert!(expected(source), "wrong reason: {source}");
+        }
+        other => panic!("expected RestoreRefused, got {other:?}"),
+    }
+    assert_eq!(snapshot(&e.data), before, "nothing changed");
+    no_partial_left(&e);
+    // The current database still opens with its own data.
+    assert_eq!(deck_names(&e.open().unwrap().conn), ["Maths", "Physics"]);
+}
+
+/// A backup-named path in the backups directory for a bad file.
+fn bad_path(e: &Env) -> PathBuf {
+    e.backups().join("cards-20261014-000000.sqlite3")
+}
+
+/// A copy of the good backup, changed by `change` through SQLite.
+fn altered_copy(e: &Env, good: &Path, change: &str) -> PathBuf {
+    let bad = bad_path(e);
+    fs::copy(good, &bad).unwrap();
+    Connection::open(&bad)
+        .unwrap()
+        .execute_batch(change)
+        .unwrap();
+    bad
+}
+
+#[test]
+fn corrupted_backup_is_refused() {
+    assert_refused(
+        |e, good| {
+            let bad = bad_path(e);
+            fs::copy(good, &bad).unwrap();
+            corrupt_btree(&bad, "decks");
+            bad
+        },
+        |err| matches!(err, Error::IntegrityCheckFailed { .. }),
+    );
+}
+
+#[test]
+fn garbage_backup_is_refused() {
+    assert_refused(
+        |e, _| {
+            let bad = bad_path(e);
+            fs::write(&bad, vec![0x42; 8192]).unwrap();
+            bad
+        },
+        |err| matches!(err, Error::IntegrityCheckFailed { .. }),
+    );
+}
+
+#[test]
+fn too_new_backup_is_refused() {
+    let too_new = latest(MIGRATIONS) + 1;
+    assert_refused(
+        |e, good| altered_copy(e, good, &format!("PRAGMA user_version = {too_new};")),
+        |err| matches!(err, Error::UnsupportedVersion { found, .. } if *found == i64::from(too_new)),
+    );
+}
+
+#[test]
+fn foreign_database_is_refused() {
+    assert_refused(
+        |e, _| {
+            let bad = bad_path(e);
+            Connection::open(&bad)
+                .unwrap()
+                .execute_batch("CREATE TABLE notes(x TEXT);")
+                .unwrap();
+            bad
+        },
+        |err| matches!(err, Error::NotACardsDatabase),
+    );
+}
+
+#[test]
+fn empty_database_is_refused() {
+    assert_refused(
+        |e, _| {
+            let bad = bad_path(e);
+            fs::write(&bad, b"").unwrap();
+            bad
+        },
+        |err| matches!(err, Error::NotACardsDatabase),
+    );
+}
+
+#[test]
+fn backup_missing_a_table_is_refused() {
+    assert_refused(
+        |e, good| altered_copy(e, good, "DROP TABLE card_schedule;"),
+        |err| matches!(err, Error::NotACardsDatabase),
+    );
+}
+
+#[test]
+fn backup_with_an_extra_object_is_refused() {
+    assert_refused(
+        |e, good| altered_copy(e, good, "CREATE VIEW sneaky AS SELECT 1;"),
+        |err| matches!(err, Error::NotACardsDatabase),
+    );
+}
+
+/// A v1 database relabelled as v2 has v2's table and index names but
+/// v1's `card_schedule` columns. Comparing names alone would accept it.
+#[test]
+fn v1_schema_labelled_v2_is_refused() {
+    assert_refused(
+        |e, _good| {
+            let v1 = e.backups().join("v1.sqlite3");
+            {
+                let conn = Connection::open(&v1).unwrap();
+                migrate(&mut { conn }, &MIGRATIONS[..1], 0).unwrap();
+            }
+            let bad = bad_path(e);
+            fs::rename(&v1, &bad).unwrap();
+            Connection::open(&bad)
+                .unwrap()
+                .execute_batch("PRAGMA user_version = 2;")
+                .unwrap();
+            bad
+        },
+        |err| matches!(err, Error::NotACardsDatabase),
+    );
+}
+
+#[test]
+fn wal_mode_backup_is_refused() {
+    assert_refused(
+        |e, good| altered_copy(e, good, "PRAGMA journal_mode = WAL;"),
+        |err| matches!(err, Error::Io { source, .. } if source.kind() == std::io::ErrorKind::InvalidData),
+    );
+}
+
+#[test]
+fn file_outside_the_backups_directory_is_refused() {
+    assert_refused(
+        |e, good| {
+            let elsewhere = e.data.join("cards-20261014-000000.sqlite3");
+            fs::copy(good, &elsewhere).unwrap();
+            elsewhere
+        },
+        |err| matches!(err, Error::Io { .. }),
+    );
+}
+
+#[test]
+fn badly_named_file_is_refused() {
+    assert_refused(
+        |e, good| {
+            let bad = e.backups().join("my-copy.sqlite3");
+            fs::copy(good, &bad).unwrap();
+            bad
+        },
+        |err| matches!(err, Error::Io { .. }),
+    );
+}
+
+#[test]
+fn symlinked_backup_is_refused() {
+    assert_refused(
+        |e, good| {
+            let link = bad_path(e);
+            std::os::unix::fs::symlink(good, &link).unwrap();
+            link
+        },
+        |err| matches!(err, Error::Io { .. }),
+    );
+}
+
+#[test]
+fn leftover_partial_from_an_interrupted_restore_is_replaced() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    let partial = restore_checking_path(&e.data);
+    fs::write(&partial, b"junk").unwrap();
+    let stale_wal = with_suffix(&partial, "-wal");
+    fs::write(&stale_wal, b"junk").unwrap();
+
+    let restored = e.restore(&backup).unwrap();
+    assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
+    assert!(!partial.exists());
+    assert!(!stale_wal.exists());
+}

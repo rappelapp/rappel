@@ -6,6 +6,7 @@
 //! the final name is always a complete, checked backup.
 
 use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -15,7 +16,9 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::data_dir::ensure_data_dir;
 use crate::error::{Error, Result};
-use crate::time::utc_parts;
+use crate::time::{UtcParts, utc_ms, utc_parts};
+
+use super::BACKUP_DIR_NAME;
 
 /// How many backups [`prune_backups`] keeps (SPEC §3).
 pub(crate) const KEEP_BACKUPS: usize = 14;
@@ -31,22 +34,24 @@ fn day_prefix(now_ms: i64) -> String {
     format!("{PREFIX}{:04}{:02}{:02}-", t.year, t.month, t.day)
 }
 
-/// `cards-YYYYMMDD-HHMMSS` for `now_ms`, without extension.
-fn backup_stem(now_ms: i64) -> String {
+/// `YYYYMMDD-HHMMSS` for `now_ms` (UTC).
+pub(crate) fn utc_stamp(now_ms: i64) -> String {
     let t = utc_parts(now_ms);
     format!(
-        "{}{:02}{:02}{:02}",
-        day_prefix(now_ms),
-        t.hour,
-        t.minute,
-        t.second
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        t.year, t.month, t.day, t.hour, t.minute, t.second
     )
+}
+
+/// `cards-YYYYMMDD-HHMMSS` for `now_ms`, without extension.
+fn backup_stem(now_ms: i64) -> String {
+    format!("{PREFIX}{}", utc_stamp(now_ms))
 }
 
 /// Parses a backup file name into a sort key: the `YYYYMMDD-HHMMSS` part and
 /// the collision counter (1 when there is no `-N` suffix). `None` for any
 /// other file, so pruning never touches files it did not create.
-fn parse_backup_name(name: &str) -> Option<(&str, u32)> {
+pub(crate) fn parse_backup_name(name: &str) -> Option<(&str, u32)> {
     let rest = name.strip_prefix(PREFIX)?.strip_suffix(EXTENSION)?;
     let (stamp, counter) = match rest.split_at_checked(15) {
         Some((stamp, "")) => (stamp, 1),
@@ -69,7 +74,7 @@ fn parse_backup_name(name: &str) -> Option<(&str, u32)> {
 
 /// File names in `dir` that are backups, oldest first. A missing directory
 /// has no backups.
-fn list_backups(dir: &Path) -> Result<Vec<String>> {
+fn backup_names(dir: &Path) -> Result<Vec<String>> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -96,10 +101,109 @@ fn list_backups(dir: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
+/// The first 16 bytes of every SQLite database file.
+pub(super) const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+
+/// A backup file found by [`list_backups`].
+///
+/// Only [`list_backups`] makes these, so a `BackupInfo` always names a file
+/// in the backups directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupInfo {
+    path: PathBuf,
+    created_ms: i64,
+    size_bytes: u64,
+}
+
+impl BackupInfo {
+    /// Full path of the backup file.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// When the backup was made, in UTC milliseconds, read from its file
+    /// name (to the second).
+    #[must_use]
+    pub fn created_ms(&self) -> i64 {
+        self.created_ms
+    }
+
+    /// File size in bytes.
+    #[must_use]
+    pub fn size_bytes(&self) -> u64 {
+        self.size_bytes
+    }
+}
+
+/// The backups in `<data_dir>/backups/`, newest first.
+///
+/// Only well-named regular files (not symlinks) that start with the SQLite
+/// header are listed. This is a cheap filter; the full check (integrity,
+/// version, schema) happens in [`super::restore_backup`]. A file that cannot
+/// be read is skipped with a warning. A missing directory gives an empty
+/// list.
+///
+/// # Errors
+/// If the backups directory exists but cannot be read.
+pub fn list_backups(data_dir: &Path) -> Result<Vec<BackupInfo>> {
+    let dir = data_dir.join(BACKUP_DIR_NAME);
+    let mut found = Vec::new();
+    for name in backup_names(&dir)?.into_iter().rev() {
+        let path = dir.join(&name);
+        let Some(created_ms) = parse_backup_name(&name).and_then(|(stamp, _)| stamp_ms(stamp))
+        else {
+            continue;
+        };
+        match inspect_backup_file(&path) {
+            Ok(Some(size_bytes)) => found.push(BackupInfo {
+                path,
+                created_ms,
+                size_bytes,
+            }),
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(path = %path.display(), "skipping unreadable backup: {err}");
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// The size of `path` if it is a regular file (not a symlink) starting with
+/// the SQLite header, `None` otherwise.
+fn inspect_backup_file(path: &Path) -> std::io::Result<Option<u64>> {
+    let meta = fs::symlink_metadata(path)?;
+    if !meta.file_type().is_file() {
+        return Ok(None);
+    }
+    let mut header = [0u8; 16];
+    match File::open(path)?.read_exact(&mut header) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(err) => return Err(err),
+    }
+    Ok((&header == SQLITE_HEADER).then_some(meta.len()))
+}
+
+/// UTC milliseconds for a `YYYYMMDD-HHMMSS` stamp (already checked to be
+/// digits), or `None` if it is not a real date and time.
+fn stamp_ms(stamp: &str) -> Option<i64> {
+    let field = |range: std::ops::Range<usize>| stamp.get(range)?.parse::<i64>().ok();
+    utc_ms(UtcParts {
+        year: field(0..4)?,
+        month: field(4..6)?,
+        day: field(6..8)?,
+        hour: field(9..11)?,
+        minute: field(11..13)?,
+        second: field(13..15)?,
+    })
+}
+
 /// Whether `dir` holds a backup from the UTC day of `now_ms`.
 pub(crate) fn has_backup_for_day(dir: &Path, now_ms: i64) -> Result<bool> {
     let prefix = day_prefix(now_ms);
-    Ok(list_backups(dir)?.iter().any(|n| n.starts_with(&prefix)))
+    Ok(backup_names(dir)?.iter().any(|n| n.starts_with(&prefix)))
 }
 
 /// Copies the database behind `conn` into a new backup in `dir` (created
@@ -242,7 +346,7 @@ pub(crate) fn check_rows(conn: &Connection, pragma: &str) -> rusqlite::Result<Ve
 /// be deleted right after it was made.
 pub(crate) fn prune_backups(dir: &Path, keep: usize, protect: Option<&Path>) -> Result<()> {
     let protected_name = protect.and_then(Path::file_name).and_then(|n| n.to_str());
-    let mut backups = list_backups(dir)?;
+    let mut backups = backup_names(dir)?;
     let mut keep = keep;
     if let Some(name) = protected_name
         && let Some(i) = backups.iter().position(|b| b == name)
@@ -328,7 +432,7 @@ mod tests {
         touch(tmp.path(), "cards-20261015-123456.sqlite3");
         touch(tmp.path(), "cards-20261014-000000.sqlite3");
         assert_eq!(
-            list_backups(tmp.path()).unwrap(),
+            backup_names(tmp.path()).unwrap(),
             [
                 "cards-20261014-000000.sqlite3",
                 "cards-20261015-123456.sqlite3",
@@ -443,6 +547,78 @@ mod tests {
         create_backup(&conn, &backups, NOW).unwrap();
         let second = create_backup(&conn, &backups, NOW).unwrap();
         assert_eq!(second, backups.join("cards-20261015-123456-2.sqlite3"));
+    }
+
+    fn backup_file(dir: &Path, name: &str, len: usize) {
+        let mut bytes = SQLITE_HEADER.to_vec();
+        bytes.resize(len, 0);
+        fs::write(dir.join(name), bytes).unwrap();
+    }
+
+    #[test]
+    fn list_backups_newest_first_with_time_and_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(BACKUP_DIR_NAME);
+        fs::create_dir(&dir).unwrap();
+        backup_file(&dir, "cards-20261014-000000.sqlite3", 100);
+        backup_file(&dir, "cards-20261015-123456.sqlite3", 200);
+        backup_file(&dir, "cards-20261015-123456-2.sqlite3", 300);
+
+        let list = list_backups(tmp.path()).unwrap();
+        let names: Vec<_> = list
+            .iter()
+            .map(|b| b.path().file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "cards-20261015-123456-2.sqlite3",
+                "cards-20261015-123456.sqlite3",
+                "cards-20261014-000000.sqlite3",
+            ]
+        );
+        assert_eq!(list[0].created_ms(), NOW - 789);
+        assert_eq!(list[1].created_ms(), NOW - 789);
+        assert_eq!(list[2].created_ms(), 1_791_936_000_000); // 2026-10-14T00:00:00Z
+        assert_eq!(
+            list.iter().map(BackupInfo::size_bytes).collect::<Vec<_>>(),
+            [300, 200, 100]
+        );
+        assert_eq!(list[2].path(), dir.join("cards-20261014-000000.sqlite3"));
+    }
+
+    #[test]
+    fn list_backups_skips_everything_that_is_not_a_backup_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(BACKUP_DIR_NAME);
+        fs::create_dir(&dir).unwrap();
+        backup_file(&dir, "cards-20261015-123456.sqlite3", 100);
+        // Wrong names.
+        backup_file(&dir, "notes.sqlite3", 100);
+        backup_file(&dir, "cards-20261016-123456.sqlite3.partial", 100);
+        // Impossible dates.
+        backup_file(&dir, "cards-20261316-123456.sqlite3", 100);
+        backup_file(&dir, "cards-20260431-123456.sqlite3", 100);
+        backup_file(&dir, "cards-20261016-243456.sqlite3", 100);
+        // Not an SQLite file, empty, a directory, a symlink.
+        fs::write(dir.join("cards-20261016-000001.sqlite3"), vec![0x42; 100]).unwrap();
+        fs::write(dir.join("cards-20261016-000002.sqlite3"), b"").unwrap();
+        fs::create_dir(dir.join("cards-20261016-000003.sqlite3")).unwrap();
+        std::os::unix::fs::symlink(
+            dir.join("cards-20261015-123456.sqlite3"),
+            dir.join("cards-20261016-000004.sqlite3"),
+        )
+        .unwrap();
+
+        let list = list_backups(tmp.path()).unwrap();
+        assert_eq!(list.len(), 1, "{list:?}");
+        assert_eq!(list[0].path(), dir.join("cards-20261015-123456.sqlite3"));
+    }
+
+    #[test]
+    fn list_backups_of_missing_dir_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(list_backups(tmp.path()).unwrap(), []);
     }
 
     #[test]

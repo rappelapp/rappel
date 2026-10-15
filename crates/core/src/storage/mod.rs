@@ -4,6 +4,7 @@
 
 mod backup;
 mod migrations;
+mod restore;
 mod schedule;
 
 use std::fs::{self, OpenOptions, Permissions};
@@ -15,8 +16,10 @@ use rusqlite::{Connection, ErrorCode, OpenFlags};
 use crate::data_dir::ensure_data_dir;
 use crate::error::{Error, Result};
 use crate::time::now_ms;
+pub use backup::{BackupInfo, list_backups};
 use backup::{KEEP_BACKUPS, check_rows, create_backup, has_backup_for_day, prune_backups};
 use migrations::{MIGRATIONS, Migration, latest, migrate};
+pub use restore::{Restored, restore_backup};
 
 /// File name of the database inside the data directory.
 pub const DB_FILE_NAME: &str = "cards.sqlite3";
@@ -37,6 +40,10 @@ impl Store {
     /// when needed and migrates it to the current schema.
     ///
     /// In order:
+    /// 0. If the database file is missing but a `-wal` or `-journal` file
+    ///    is there, the open is refused: SQLite would replay that stale
+    ///    file into a new, empty database. Likewise if a restore was
+    ///    interrupted after moving the old database aside.
     /// 1. The directory is created with mode `0700` and the database file
     ///    with `0600` (an existing one is tightened, with its `-wal`/`-shm`).
     /// 2. `PRAGMA integrity_check`, then the version check. A damaged file,
@@ -52,7 +59,7 @@ impl Store {
     ///
     /// # Errors
     /// [`Error::IntegrityCheckFailed`], [`Error::UnsupportedVersion`],
-    /// [`Error::NotACardsDatabase`],
+    /// [`Error::NotACardsDatabase`], [`Error::OrphanedSidecar`], [`Error::InterruptedRestore`],
     /// [`Error::Migration`], [`Error::ForeignKeyViolation`], backup errors,
     /// and IO or SQLite errors.
     pub fn open(data_dir: &Path) -> Result<Self> {
@@ -71,6 +78,7 @@ impl Store {
         now_ms: i64,
         migrations: &[Migration],
     ) -> Result<Self> {
+        refuse_orphaned_sidecars(db_path)?;
         if let Some(parent) = db_path.parent() {
             ensure_data_dir(parent)?;
         }
@@ -92,17 +100,7 @@ impl Store {
         // Read-only checks, before anything that writes to the file (even
         // switching to WAL rewrites header bytes).
         let supported = latest(migrations);
-        let found: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        let current = u32::try_from(found)
-            .ok()
-            .filter(|&v| v <= supported)
-            .ok_or(Error::UnsupportedVersion { found, supported })?;
-        let is_new = current == 0 && is_empty(&conn)?;
-        if current == 0 && !is_new {
-            // Migration 0001 sets user_version in the same transaction that
-            // creates the tables, so this is some other application's file.
-            return Err(Error::NotACardsDatabase);
-        }
+        let (current, is_new) = check_version(&conn, migrations)?;
 
         let mode: String =
             conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
@@ -173,13 +171,7 @@ fn prepare_private_file(path: &Path) -> Result<()> {
         .open(path)
         .map_err(io_err(path))?;
 
-    let mut paths = vec![path.to_path_buf()];
-    for suffix in ["-wal", "-shm", "-journal"] {
-        let mut name = path.as_os_str().to_owned();
-        name.push(suffix);
-        paths.push(PathBuf::from(name));
-    }
-    for p in paths {
+    for p in std::iter::once(path.to_path_buf()).chain(sidecar_paths(path)) {
         match fs::metadata(&p) {
             Ok(meta) if meta.permissions().mode() & 0o7777 != FILE_MODE => {
                 fs::set_permissions(&p, Permissions::from_mode(FILE_MODE)).map_err(io_err(&p))?;
@@ -190,6 +182,83 @@ fn prepare_private_file(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Suffixes of the files SQLite keeps next to a database.
+const SIDECAR_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
+
+/// The `-wal`, `-shm` and `-journal` paths that belong to the database at
+/// `path`, in that order.
+fn sidecar_paths(path: &Path) -> [PathBuf; 3] {
+    SIDECAR_SUFFIXES.map(|suffix| {
+        let mut name = path.as_os_str().to_owned();
+        name.push(suffix);
+        PathBuf::from(name)
+    })
+}
+
+/// Whether anything (file, directory or dangling symlink) exists at `path`.
+fn exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(Error::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// Refuses a missing database whose `-wal` or `-journal` is still there, or
+/// whose restore was interrupted.
+/// SQLite would create a new, empty database and replay the stale file into
+/// it. A leftover `-shm` is harmless: it is only an index and is rebuilt.
+fn refuse_orphaned_sidecars(db_path: &Path) -> Result<()> {
+    if exists(db_path)? {
+        return Ok(());
+    }
+    let [wal, _shm, journal] = sidecar_paths(db_path);
+    for p in [wal, journal] {
+        if exists(&p)? {
+            tracing::error!(path = %p.display(), "database file missing but its journal is present");
+            return Err(Error::OrphanedSidecar(p));
+        }
+    }
+    // A restore that moved the old database aside and was then interrupted:
+    // an empty database here would hide the user's data, and its daily
+    // backups would prune away the real ones.
+    if let Some(dir) = db_path.parent() {
+        let partial = restore::restore_partial_path(dir);
+        if exists(&partial)? {
+            tracing::error!(path = %partial.display(), "database file missing during a restore");
+            return Err(Error::InterruptedRestore(partial));
+        }
+    }
+    Ok(())
+}
+
+/// Checks `PRAGMA user_version` against `migrations` without writing.
+/// Returns the current version and whether the database is brand new (no
+/// schema at all).
+///
+/// # Errors
+/// [`Error::UnsupportedVersion`] for a negative version or one newer than
+/// the last migration, [`Error::NotACardsDatabase`] for a database with
+/// tables but version 0.
+fn check_version(conn: &Connection, migrations: &[Migration]) -> Result<(u32, bool)> {
+    let supported = latest(migrations);
+    let found: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let current = u32::try_from(found)
+        .ok()
+        .filter(|&v| v <= supported)
+        .ok_or(Error::UnsupportedVersion { found, supported })?;
+    let is_new = current == 0 && is_empty(conn)?;
+    if current == 0 && !is_new {
+        // Migration 0001 sets user_version in the same transaction that
+        // creates the tables, so this is some other application's file.
+        return Err(Error::NotACardsDatabase);
+    }
+    Ok((current, is_new))
 }
 
 /// Runs `PRAGMA integrity_check`. A file SQLite cannot even read as a

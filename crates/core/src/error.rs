@@ -178,6 +178,30 @@ pub enum Error {
         /// What was found.
         value: String,
     },
+
+    /// A backup was not restored because it failed validation (`source`
+    /// says why: damaged, too new, not a Cards database, or not a backup
+    /// file at all). Nothing in the data directory was changed.
+    #[error("backup {} cannot be restored: {source}", path.display())]
+    RestoreRefused {
+        /// The backup that was refused.
+        path: PathBuf,
+        /// Why it was refused.
+        source: Box<Error>,
+    },
+
+    /// A `-wal` or `-journal` file exists without its database file. Opening
+    /// would create an empty database and replay this stale file into it,
+    /// so the store refuses. Restoring a backup moves it aside safely.
+    #[error("{} exists without its database file", .0.display())]
+    OrphanedSidecar(PathBuf),
+
+    /// A restore was interrupted after the old database was moved aside and
+    /// before the backup was installed (the path is the validated copy
+    /// waiting to be installed). Opening would start an empty database in
+    /// its place; restoring a backup again finishes the job.
+    #[error("a restore was interrupted before it finished ({} is waiting to be installed)", .0.display())]
+    InterruptedRestore(PathBuf),
 }
 
 /// `Result` with [`Error`] as the error type.

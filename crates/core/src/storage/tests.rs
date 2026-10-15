@@ -12,12 +12,12 @@ use crate::domain::{CardState, Phase, Schedule};
 use crate::scheduling::Scheduler;
 
 /// 2026-10-15T12:34:56.789Z
-const DAY0: i64 = 1_792_067_696_789;
-const DAY_MS: i64 = 86_400_000;
+pub(super) const DAY0: i64 = 1_792_067_696_789;
+pub(super) const DAY_MS: i64 = 86_400_000;
 
-const DECK: &str = "01920000-0000-7000-8000-000000000001";
-const CARD: &str = "01920000-0000-7000-8000-000000000002";
-const CARD2: &str = "01920000-0000-7000-8000-000000000003";
+pub(super) const DECK: &str = "01920000-0000-7000-8000-000000000001";
+pub(super) const CARD: &str = "01920000-0000-7000-8000-000000000002";
+pub(super) const CARD2: &str = "01920000-0000-7000-8000-000000000003";
 const EVENT: &str = "01920000-0000-7000-8000-000000000004";
 
 struct Env {
@@ -58,11 +58,11 @@ impl Env {
     }
 }
 
-fn mode(path: &Path) -> u32 {
+pub(super) fn mode(path: &Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
-fn insert_sample(conn: &Connection) {
+pub(super) fn insert_sample(conn: &Connection) {
     conn.execute_batch(&format!(
         "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
          INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
@@ -73,7 +73,7 @@ fn insert_sample(conn: &Connection) {
     .unwrap();
 }
 
-fn count(conn: &Connection, table: &str) -> i64 {
+pub(super) fn count(conn: &Connection, table: &str) -> i64 {
     conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
         .unwrap()
 }
@@ -219,19 +219,19 @@ fn migration_0001_applies_to_an_existing_empty_file() {
     insert_sample(&store.conn);
 }
 
-const FAKE_V1: Migration = Migration {
+pub(super) const FAKE_V1: Migration = Migration {
     version: 1,
     name: "fake v1",
     sql: "CREATE TABLE t(x INTEGER NOT NULL) STRICT;",
     rebuild_schedule: false,
 };
-const FAKE_V2: Migration = Migration {
+pub(super) const FAKE_V2: Migration = Migration {
     version: 2,
     name: "fake v2",
     sql: "ALTER TABLE t ADD COLUMN y INTEGER NOT NULL DEFAULT 7;",
     rebuild_schedule: false,
 };
-const FAILING_V2: Migration = Migration {
+pub(super) const FAILING_V2: Migration = Migration {
     version: 2,
     name: "failing v2",
     sql: "CREATE TABLE u(x INTEGER) STRICT; INSERT INTO missing VALUES (1);",
@@ -477,7 +477,7 @@ fn negative_user_version_is_refused() {
 
 /// Overwrites the root page of a btree with garbage, the way a bad disk
 /// sector or a torn write would.
-fn corrupt_btree(db: &Path, name: &str) {
+pub(super) fn corrupt_btree(db: &Path, name: &str) {
     let (root, page_size): (i64, i64) = {
         let conn = Connection::open(db).unwrap();
         let root = conn
@@ -620,7 +620,7 @@ fn schema_rejects_bad_values() {
 // --- Schedule cache ---------------------------------------------------------
 
 /// Inserts review events for `card` at `DAY0 + offsets`, ids from `first_id`.
-fn insert_events(conn: &Connection, card: &str, first_id: u32, reviews: &[(i64, &str)]) {
+pub(super) fn insert_events(conn: &Connection, card: &str, first_id: u32, reviews: &[(i64, &str)]) {
     for (i, (offset, grade)) in (first_id..).zip(reviews) {
         conn.execute(
             "INSERT INTO review_events VALUES (?1, ?2, ?3, ?4, 1000)",
@@ -636,7 +636,7 @@ fn insert_events(conn: &Connection, card: &str, first_id: u32, reviews: &[(i64, 
 }
 
 const STEP: i64 = crate::scheduling::STEP_MS;
-const REVIEWS: [(i64, &str); 4] = [
+pub(super) const REVIEWS: [(i64, &str); 4] = [
     (0, "fail"),
     (STEP, "pass"),
     (3 * DAY_MS, "fail"),
