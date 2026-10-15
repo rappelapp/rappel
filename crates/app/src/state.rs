@@ -11,6 +11,8 @@ use cards_core::domain::{Card, CardState, Deck, DeckSummary, Grade, ReviewEvent}
 use cards_core::scheduling::session::StudyInput;
 use cards_core::storage::{self, BackupInfo, OpenWarning, Restored, Store};
 
+use crate::clock::local_day_start_ms;
+
 /// A cheap-to-clone handle on the open database, shared by the window and
 /// its widgets.
 ///
@@ -62,14 +64,26 @@ impl AppState {
         storage::restore_backup(data_dir, None, backup)
     }
 
+    /// Moves the database in `data_dir` aside and starts an empty one, when
+    /// none could be opened (see [`storage::start_fresh`]). Blocking; runs
+    /// on a worker thread.
+    pub fn start_fresh_unopened(data_dir: &Path) -> cards_core::Result<Restored> {
+        storage::start_fresh(data_dir, None)
+    }
+
     /// The data directory the database lives in.
     pub fn data_dir(&self) -> &Path {
         &self.0.data_dir
     }
 
-    /// The live decks with their new and due counts as of now.
+    /// The live decks with what each has to study now, counted like the
+    /// deck page (see [`Store::list_decks`]).
     pub fn list_decks(&self) -> cards_core::Result<Vec<DeckSummary>> {
-        self.0.store.borrow().list_decks(cards_core::time::now_ms())
+        let now = cards_core::time::now_ms();
+        self.0
+            .store
+            .borrow()
+            .list_decks(now, local_day_start_ms(now))
     }
 
     /// Creates a deck (see [`Store::create_deck`]).
@@ -121,6 +135,12 @@ impl AppState {
         day_start: i64,
     ) -> cards_core::Result<StudyInput> {
         self.0.store.borrow().study_input(deck_id, now, day_start)
+    }
+
+    /// When what a deck has to study next changes (see
+    /// [`Store::next_study_change`]).
+    pub fn next_study_change(&self, deck_id: &str, now: i64) -> cards_core::Result<Option<i64>> {
+        self.0.store.borrow().next_study_change(deck_id, now)
     }
 
     /// Records an answer (see [`Store::record_review`]).

@@ -2,11 +2,16 @@
 //! add, edit and delete (undone from a toast). Layout in
 //! `data/deck_page.blp` (ADR 0013).
 //!
+//! The subtitle and the Study button follow what there is to study. A
+//! one-shot timer re-checks it when the next card becomes due or the next
+//! study day begins, so they change while the page is open.
+//!
 //! The list model is a `gio::ListStore` of [`CardObject`] in creation
 //! order. Changes update it item by item instead of rebuilding it, so a
 //! deck of thousands of cards keeps its scroll position and stays fast.
 
 use std::cmp::Ordering;
+use std::time::Duration;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -14,7 +19,7 @@ use cards_core::domain::{Card, Deck};
 use cards_core::scheduling::session::StudyInput;
 use gtk::{gio, glib};
 
-use crate::clock::local_day_start_ms;
+use crate::clock::{local_day_start_ms, local_next_day_start_ms};
 use crate::dialogs::card_editor::{CardEditor, Saved};
 use crate::pages::ReviewPage;
 use crate::state::AppState;
@@ -54,6 +59,9 @@ mod imp {
         pub editing: Cell<bool>,
         /// The card to focus when the editor closes: the one last saved.
         pub focus_after_edit: RefCell<Option<String>>,
+        /// The pending re-check of what there is to study. Taken out by its
+        /// own callback, so a stored id always names a live source.
+        pub study_timer: RefCell<Option<glib::SourceId>>,
     }
 
     #[glib::object_subclass]
@@ -154,6 +162,16 @@ impl DeckPage {
             Ok(input) => {
                 imp.window_title.set_subtitle(&study_subtitle(&input));
                 self.action_set_enabled("deck.study", !input.is_empty());
+                match state.next_study_change(&deck.id, now) {
+                    Ok(next) => self.arm_study_timer(timer_delay_ms(
+                        now,
+                        next,
+                        local_next_day_start_ms(now),
+                    )),
+                    // The subtitle is right now; it only will not update by
+                    // itself until the next change on this page.
+                    Err(err) => tracing::warn!("cannot read the next due time: {err}"),
+                }
             }
             Err(err) => {
                 imp.window_title.set_subtitle("");
@@ -161,6 +179,24 @@ impl DeckPage {
                 self.error_toast(&format!("What to study could not be read: {err}"));
             }
         }
+    }
+
+    /// Re-checks what there is to study after `delay_ms`, replacing any
+    /// pending re-check. Holds the page weakly: a closed page ends it.
+    fn arm_study_timer(&self, delay_ms: u64) {
+        let imp = self.imp();
+        if let Some(pending) = imp.study_timer.take() {
+            pending.remove();
+        }
+        let page = self.downgrade();
+        let id = glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
+            if let Some(page) = page.upgrade() {
+                // This source is ending; forget it before re-arming.
+                page.imp().study_timer.take();
+                page.update_study();
+            }
+        });
+        imp.study_timer.replace(Some(id));
     }
 
     /// Pushes a review page for this deck.
@@ -384,6 +420,22 @@ fn study_subtitle(input: &StudyInput) -> String {
     }
 }
 
+/// The longest single wait before re-checking what there is to study. A
+/// later change is reached in steps, so a changed clock or time zone is
+/// noticed within this long.
+const MAX_STUDY_WAIT_MS: u64 = 3_600_000;
+
+/// How long to wait from `now` until the earlier of `next_change` (the next
+/// card that becomes due, if any) and `next_day` (the next study day, which
+/// renews the new cards), capped at [`MAX_STUDY_WAIT_MS`]. All times are
+/// UTC milliseconds; a time already past gives 0.
+fn timer_delay_ms(now: i64, next_change: Option<i64>, next_day: i64) -> u64 {
+    let at = next_change.map_or(next_day, |change| change.min(next_day));
+    u64::try_from(at.saturating_sub(now))
+        .unwrap_or(0)
+        .min(MAX_STUDY_WAIT_MS)
+}
+
 /// Inserts `item` where its creation order puts it and returns that
 /// position. Card ids increase with creation (ADR 0008), the same order as
 /// `list_cards`. `insert_sorted` searches by halves, so it relies on that:
@@ -444,6 +496,29 @@ mod tests {
             card_id: id.to_owned(),
             due_at: 0,
         }
+    }
+
+    #[test]
+    fn the_timer_waits_for_the_next_due_card_or_the_next_day() {
+        let now = 1_000_000;
+        // A card due in 10 minutes comes before tomorrow.
+        assert_eq!(
+            timer_delay_ms(now, Some(now + 600_000), now + 50_000_000),
+            600_000
+        );
+        // Nothing scheduled: wait for the next day, at most an hour at a time.
+        assert_eq!(timer_delay_ms(now, None, now + 1_800_000), 1_800_000);
+        assert_eq!(
+            timer_delay_ms(now, None, now + 50_000_000),
+            MAX_STUDY_WAIT_MS
+        );
+        // The next day comes before the card.
+        assert_eq!(
+            timer_delay_ms(now, Some(now + 900_000), now + 300_000),
+            300_000
+        );
+        // A time already past fires at once.
+        assert_eq!(timer_delay_ms(now, Some(now - 5), now + 300_000), 0);
     }
 
     #[test]

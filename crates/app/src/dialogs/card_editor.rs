@@ -5,7 +5,8 @@
 //!   card in the same deck, with the focus in the front field. Both are
 //!   caught in the capture phase, before the text views see the Enter.
 //! - A blank front disables saving (the store's own rule).
-//! - Closing with unsaved changes asks first.
+//! - Closing with unsaved changes asks first, whether by Escape, Cancel or
+//!   closing the window (`CardsWindow` calls [`CardEditor::confirm_discard`]).
 //! - A store error keeps the dialog open with the text as typed.
 
 use std::rc::Rc;
@@ -30,7 +31,7 @@ pub enum Saved {
 type OnSaved = dyn Fn(Saved);
 
 mod imp {
-    use std::cell::{OnceCell, RefCell};
+    use std::cell::{Cell, OnceCell, RefCell};
 
     use adw::prelude::*;
     use adw::subclass::prelude::*;
@@ -56,6 +57,10 @@ mod imp {
         /// Front and back as last loaded or saved, to tell unsaved changes.
         pub saved_text: RefCell<(String, String)>,
         pub on_saved: OnceCell<Callback<OnSaved>>,
+        /// The "Discard Changes?" question is showing; it is not asked twice.
+        pub asking_discard: Cell<bool>,
+        /// Discard was chosen; the editor is closing without saving.
+        pub discarded: Cell<bool>,
     }
 
     /// Written by hand to leave out the text fields: card content is never
@@ -269,14 +274,38 @@ impl CardEditor {
             #[weak(rename_to = editor)]
             self,
             async move {
-                let Some(dialog) = dialog::alert("discard_dialog.ui", "discard_dialog") else {
-                    return;
-                };
-                if dialog.choose_future(Some(&editor)).await == "discard" {
-                    editor.force_close();
+                if editor.confirm_discard().await {
+                    editor.discard();
                 }
             }
         ));
+    }
+
+    /// Whether the editor holds text that is not saved and not discarded.
+    pub fn has_unsaved_changes(&self) -> bool {
+        !self.imp().discarded.get() && !self.can_close()
+    }
+
+    /// Closes without saving, after the user chose Discard.
+    pub fn discard(&self) {
+        self.imp().discarded.set(true);
+        self.force_close();
+    }
+
+    /// Asks "Discard Changes?" and returns whether the user chose Discard.
+    /// Returns `false` at once if the question is already showing, so the
+    /// caller that asked first decides.
+    pub async fn confirm_discard(&self) -> bool {
+        let asking = &self.imp().asking_discard;
+        if asking.replace(true) {
+            return false;
+        }
+        let discard = match dialog::alert("discard_dialog.ui", "discard_dialog") {
+            Some(dialog) => dialog.choose_future(Some(self)).await == "discard",
+            None => false,
+        };
+        asking.set(false);
+        discard
     }
 }
 

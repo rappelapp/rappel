@@ -140,7 +140,7 @@ fn undelete_restores_the_card_in_place_with_its_history() {
     let events = store.review_events(&b.id).unwrap();
     let state = store.card_state(&b.id).unwrap();
     let counts = |store: &Store| {
-        let summary = &store.list_decks(i64::MAX).unwrap()[0];
+        let summary = &store.list_decks(i64::MAX, i64::MAX).unwrap()[0];
         (summary.new_count, summary.due_count)
     };
     assert_eq!(counts(&store), (2, 1));

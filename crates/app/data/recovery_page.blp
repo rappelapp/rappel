@@ -23,6 +23,19 @@ template $CardsRecoveryPage: Adw.Bin {
           ]
         }
 
+        // Only with no backups to restore (pages/recovery_page.rs).
+        Gtk.Button start_fresh_button {
+          label: _("_Start Fresh");
+          use-underline: true;
+          halign: center;
+          visible: false;
+
+          styles [
+            "pill",
+            "destructive-action",
+          ]
+        }
+
         Gtk.Label path_label {
           wrap: true;
           wrap-mode: word_char;

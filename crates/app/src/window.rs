@@ -8,7 +8,8 @@ use cards_core::domain::Card;
 use cards_core::storage::Restored;
 use gtk::{gio, glib};
 
-use crate::pages::DeckPage;
+use crate::dialogs::card_editor::CardEditor;
+use crate::pages::{DeckPage, Recovered};
 use crate::startup::Problem;
 use crate::startup::data_folder_line;
 use crate::state::AppState;
@@ -93,7 +94,29 @@ mod imp {
         }
     }
     impl WidgetImpl for CardsWindow {}
-    impl WindowImpl for CardsWindow {}
+    impl WindowImpl for CardsWindow {
+        /// Closing the window with unsaved text in a card editor asks the
+        /// editor's "Discard Changes?" first, as Escape does.
+        fn close_request(&self) -> glib::Propagation {
+            let window = self.obj();
+            let Some(editor) = window.unsaved_editor() else {
+                return self.parent_close_request();
+            };
+            glib::spawn_future_local(glib::clone!(
+                #[weak]
+                window,
+                #[weak]
+                editor,
+                async move {
+                    if editor.confirm_discard().await {
+                        editor.discard();
+                        window.close();
+                    }
+                }
+            ));
+            glib::Propagation::Stop
+        }
+    }
     impl ApplicationWindowImpl for CardsWindow {}
     impl AdwApplicationWindowImpl for CardsWindow {}
 }
@@ -108,6 +131,16 @@ glib::wrapper! {
 impl CardsWindow {
     pub fn new(app: &adw::Application) -> Self {
         glib::Object::builder().property("application", app).build()
+    }
+
+    /// An open card editor holding unsaved text, if any. Every open dialog
+    /// is searched, so it is found even under its "Discard Changes?"
+    /// question.
+    fn unsaved_editor(&self) -> Option<CardEditor> {
+        let dialogs = self.dialogs();
+        (0..dialogs.n_items())
+            .filter_map(|i| dialogs.item(i).and_downcast::<CardEditor>())
+            .find(CardEditor::has_unsaved_changes)
     }
 
     /// Shows `toast` over the window content.
@@ -183,7 +216,7 @@ impl CardsWindow {
                     glib::clone!(
                         #[weak(rename_to = window)]
                         self,
-                        move |dir, restored| window.restored(dir, restored)
+                        move |dir, restored, how| window.restored(dir, restored, how)
                     ),
                 );
                 imp.stack.set_visible_child_name("recovery");
@@ -220,15 +253,53 @@ impl CardsWindow {
         }
     }
 
-    fn restored(&self, data_dir: PathBuf, restored: Restored) {
-        let message = match &restored.replaced {
-            Some(path) => format!(
-                "Backup restored. The previous database was kept as {}",
-                path.display()
-            ),
-            None => "Backup restored".to_owned(),
-        };
+    fn restored(&self, data_dir: PathBuf, restored: Restored, how: Recovered) {
+        let message = recovered_message(how, restored.replaced.as_deref());
         self.show_main(AppState::new(data_dir, restored.store));
         self.add_toast(persistent_toast(&message));
+    }
+}
+
+/// The toast after the recovery page got a database: what happened, and
+/// where the previous database was kept.
+fn recovered_message(how: Recovered, replaced: Option<&Path>) -> String {
+    let done = match how {
+        Recovered::Backup => "Backup restored",
+        Recovered::Fresh => "Started with an empty database",
+    };
+    match replaced {
+        Some(path) => format!(
+            "{done}. The previous database was kept as {}",
+            path.display()
+        ),
+        None => done.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_toasts_say_what_happened_and_where_the_old_file_is() {
+        let kept = Path::new("/data/cards.sqlite3.replaced-20261015-120000");
+        assert_eq!(
+            recovered_message(Recovered::Backup, Some(kept)),
+            "Backup restored. The previous database was kept as \
+             /data/cards.sqlite3.replaced-20261015-120000"
+        );
+        assert_eq!(
+            recovered_message(Recovered::Backup, None),
+            "Backup restored"
+        );
+        assert_eq!(
+            recovered_message(Recovered::Fresh, Some(kept)),
+            "Started with an empty database. The previous database was kept as \
+             /data/cards.sqlite3.replaced-20261015-120000"
+        );
+        assert_eq!(
+            recovered_message(Recovered::Fresh, None),
+            "Started with an empty database"
+        );
     }
 }

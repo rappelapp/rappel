@@ -480,6 +480,66 @@ fn v1_backup_is_restored_and_migrated_to_the_current_version() {
     no_partial_left(&e);
 }
 
+/// A backup from schema v2 (cache with `phase`, no soft delete, no name
+/// keys) is migrated through 0003–0005 before it is installed: its data is
+/// kept, every deck gets its name key, and the cache equals the rebuild.
+#[test]
+fn v2_backup_is_restored_and_migrated_to_the_current_version() {
+    let e = Env::new();
+    // "Économie" with a combining accent: the key is NFC and lower case.
+    let name = "E\u{301}conomie";
+    let backup = {
+        let v2 = Store::open_with(&e.db(), &e.backups(), DAY0, &MIGRATIONS[..2]).unwrap();
+        v2.conn
+            .execute(
+                "INSERT INTO decks (id, name, created_at, updated_at) VALUES (?1, ?2, 1, 1)",
+                rusqlite::params![DECK, name],
+            )
+            .unwrap();
+        v2.conn
+            .execute_batch(&format!(
+                "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+                     VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1),
+                            ('{CARD2}', '{DECK}', 'new card', 'back', 1, 1);
+                 INSERT INTO card_schedule VALUES ('{CARD}', 'learning', 3, 1.5, 5.0, 2, 1, 0);"
+            ))
+            .unwrap();
+        insert_events(&v2.conn, CARD, 0, &REVIEWS);
+        assert_eq!(v2.schema_version().unwrap(), 2);
+        create_backup(&v2.conn, &e.backups(), DAY0).unwrap()
+    };
+    let backup_bytes = fs::read(&backup).unwrap();
+
+    let restored = e.restore(&backup).unwrap();
+
+    let store = &restored.store;
+    assert_eq!(store.schema_version().unwrap(), latest(MIGRATIONS));
+    assert_eq!(deck_names(&store.conn), [name]);
+    let key: String = store
+        .conn
+        .query_row("SELECT name_key FROM decks WHERE id = ?1", [DECK], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(key, crate::domain::deck_name_key(name));
+    assert_eq!(key, "\u{e9}conomie");
+    assert_eq!(count(&store.conn, "cards"), 2);
+    assert_eq!(count(&store.conn, "review_events"), 4);
+    let events = store.review_events(CARD).unwrap();
+    let expected = Scheduler::default().rebuild_state(CARD, &events).unwrap();
+    assert!(matches!(expected, CardState::Scheduled(_)));
+    assert_eq!(
+        store.card_state(CARD).unwrap(),
+        expected,
+        "stale cache replaced"
+    );
+    assert_eq!(store.card_state(CARD2).unwrap(), CardState::New);
+    // Live after the soft-delete migration, and the backup is left at v2.
+    assert_eq!(store.list_decks(DAY0, DAY0).unwrap().len(), 1);
+    assert_eq!(fs::read(&backup).unwrap(), backup_bytes);
+    no_partial_left(&e);
+}
+
 /// A backup at the current schema version is installed as it is.
 #[test]
 fn current_version_backup_is_restored() {
@@ -741,4 +801,132 @@ fn leftover_partial_from_an_interrupted_restore_is_replaced() {
     assert_eq!(deck_names(&restored.store.conn), ["Maths"]);
     assert!(!partial.exists());
     assert!(!stale_wal.exists());
+}
+
+// --- Starting fresh (ADR 0016) --------------------------------------------
+
+/// Deletes every backup, for the tests below: Start Fresh is only for a
+/// data folder with nothing to restore.
+fn without_backups(e: &Env) {
+    fs::remove_dir_all(e.backups()).unwrap();
+}
+
+impl Env {
+    fn start_fresh(&self) -> Result<Restored> {
+        start_fresh_with(&self.data, DAY0 + DAY_MS, MIGRATIONS)
+    }
+}
+
+/// The new database is empty, at the latest version, and opens again.
+fn assert_fresh(e: &Env, fresh: Restored) {
+    assert_eq!(fresh.store.schema_version().unwrap(), latest(MIGRATIONS));
+    assert_eq!(count(&fresh.store.conn, "decks"), 0);
+    drop(fresh);
+    let reopened = e.open().unwrap();
+    assert_eq!(count(&reopened.conn, "decks"), 0);
+}
+
+#[test]
+fn start_fresh_moves_a_damaged_database_aside_unchanged() {
+    let e = Env::new();
+    let (store, _) = e.diverged();
+    drop(store);
+    without_backups(&e);
+    corrupt_btree(&e.db(), "decks");
+    let damaged = fs::read(e.db()).unwrap();
+
+    let fresh = e.start_fresh().unwrap();
+
+    assert_eq!(fresh.replaced.as_deref(), Some(e.replaced().as_path()));
+    assert_eq!(fs::read(e.replaced()).unwrap(), damaged);
+    assert_eq!(mode(&e.replaced()), 0o600);
+    assert_fresh(&e, fresh);
+}
+
+#[test]
+fn start_fresh_moves_another_applications_database_aside() {
+    let e = Env::new();
+    fs::create_dir_all(&e.data).unwrap();
+    {
+        let conn = Connection::open(e.db()).unwrap();
+        conn.execute_batch("CREATE TABLE notes (body TEXT); INSERT INTO notes VALUES ('x');")
+            .unwrap();
+    }
+    assert!(matches!(e.open(), Err(Error::NotACardsDatabase)));
+    let foreign = fs::read(e.db()).unwrap();
+
+    let fresh = e.start_fresh().unwrap();
+
+    assert_eq!(fs::read(e.replaced()).unwrap(), foreign);
+    assert_fresh(&e, fresh);
+}
+
+#[test]
+fn start_fresh_moves_an_orphaned_wal_aside() {
+    let e = Env::new();
+    let (store, _) = e.diverged();
+    let wal_bytes = crash_with_rows_in_wal(&e, store);
+    without_backups(&e);
+    fs::remove_file(e.db()).unwrap();
+    assert!(matches!(e.open(), Err(Error::OrphanedSidecar(_))));
+
+    let fresh = e.start_fresh().unwrap();
+
+    let stem = fresh.replaced.clone().unwrap();
+    assert!(!stem.exists(), "there was no main file to move");
+    assert_eq!(fs::read(with_suffix(&stem, "-wal")).unwrap(), wal_bytes);
+    assert_fresh(&e, fresh);
+}
+
+#[test]
+fn start_fresh_is_refused_while_a_validated_copy_waits() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    copy_validate_and_move_aside(&e, &backup);
+    let before = snapshot(&e.data);
+
+    match e.start_fresh() {
+        Err(Error::InterruptedRestore(path)) => assert_eq!(path, restore_partial_path(&e.data)),
+        other => panic!("expected InterruptedRestore, got {other:?}"),
+    }
+    assert_eq!(snapshot(&e.data), before, "nothing changed");
+}
+
+#[test]
+fn starting_fresh_twice_in_one_second_keeps_both_old_databases() {
+    let e = Env::new();
+    fs::create_dir_all(&e.data).unwrap();
+    fs::write(e.db(), vec![0x42; 4096]).unwrap();
+    let first = e.start_fresh().unwrap();
+    drop(first);
+    let second_old = fs::read(e.db()).unwrap();
+
+    let second = e.start_fresh().unwrap();
+
+    assert_eq!(fs::read(e.replaced()).unwrap(), vec![0x42; 4096]);
+    let expected = with_suffix(&e.replaced(), "-2");
+    assert_eq!(second.replaced.as_deref(), Some(expected.as_path()));
+    assert_eq!(fs::read(&expected).unwrap(), second_old);
+    assert_fresh(&e, second);
+}
+
+#[test]
+fn start_fresh_without_any_database_just_creates_one() {
+    let e = Env::new();
+    let fresh = e.start_fresh().unwrap();
+    assert_eq!(fresh.replaced, None);
+    assert_fresh(&e, fresh);
+}
+
+#[test]
+fn start_fresh_is_refused_while_backups_exist() {
+    let e = Env::new();
+    let (store, _) = e.diverged();
+    drop(store);
+    corrupt_btree(&e.db(), "decks");
+    let before = snapshot(&e.data);
+
+    assert!(matches!(e.start_fresh(), Err(Error::BackupsAvailable(1))));
+    assert_eq!(snapshot(&e.data), before, "nothing changed");
 }

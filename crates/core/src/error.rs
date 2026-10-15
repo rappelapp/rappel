@@ -219,6 +219,12 @@ pub enum Error {
     #[error("cannot generate an id: no randomness available: {0}")]
     Random(#[source] Box<dyn std::error::Error + Send + Sync>),
 
+    /// Starting fresh was refused because backups exist: restoring one
+    /// keeps more data, and the empty database's daily backups would
+    /// rotate them out (ADR 0016). Nothing was changed.
+    #[error("{0} backups can be restored instead of starting with an empty database")]
+    BackupsAvailable(usize),
+
     /// Every `UUIDv7` up to the year 10889 has been issued.
     #[error("no more ids can be generated")]
     IdsExhausted,

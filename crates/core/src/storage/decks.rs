@@ -3,6 +3,7 @@
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior, params};
 
+use super::review::study_input_in;
 use super::{Store, observe_max_id};
 use crate::domain::{Deck, DeckSummary, deck_name_key};
 use crate::error::{Error, Result};
@@ -75,38 +76,44 @@ impl Store {
         Ok(())
     }
 
-    /// Every live deck with its number of new cards and of cards due at
-    /// `now` (UTC milliseconds), sorted by name key ([`deck_name_key`]), then id. Daily
-    /// limits are not applied.
+    /// Every live deck with what it has to study at `now` (UTC
+    /// milliseconds), sorted by name key ([`deck_name_key`]), then id. The
+    /// counts are the lengths of [`Store::study_input`] for the study day
+    /// that began at `day_start`: due reviews and step cards (those due
+    /// within 20 minutes included), and the new cards still allowed today.
     ///
     /// # Errors
     /// SQLite errors.
-    pub fn list_decks(&self, now: i64) -> Result<Vec<DeckSummary>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT d.id, d.name, d.created_at, d.updated_at,
-                    count(c.id) FILTER (WHERE s.card_id IS NULL),
-                    count(c.id) FILTER (WHERE s.due_at <= ?1)
-             FROM decks d
-             LEFT JOIN cards c ON c.deck_id = d.id AND c.deleted_at IS NULL
-             LEFT JOIN card_schedule s ON s.card_id = c.id
-             WHERE d.deleted_at IS NULL
-             GROUP BY d.id",
-        )?;
-        let rows = stmt.query_map([now], |r| {
-            Ok(DeckSummary {
-                deck: Deck {
+    pub fn list_decks(&self, now: i64, day_start: i64) -> Result<Vec<DeckSummary>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let decks = {
+            let mut stmt = tx.prepare(
+                "SELECT id, name, created_at, updated_at FROM decks WHERE deleted_at IS NULL",
+            )?;
+            stmt.query_map([], |r| {
+                Ok(Deck {
                     id: r.get(0)?,
                     name: r.get(1)?,
                     created_at: r.get(2)?,
                     updated_at: r.get(3)?,
-                },
-                new_count: r.get(4)?,
-                due_count: r.get(5)?,
-            })
-        })?;
-        let mut decks = rows.collect::<rusqlite::Result<Vec<_>>>()?;
-        decks.sort_by_cached_key(|d| (deck_name_key(&d.deck.name), d.deck.id.clone()));
-        Ok(decks)
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut summaries = Vec::with_capacity(decks.len());
+        for deck in decks {
+            // The deck page's own rules (ADR 0014), so both always agree.
+            let input = study_input_in(&tx, &deck.id, now, day_start)?;
+            summaries.push(DeckSummary {
+                deck,
+                new_count: count_of(input.new.len()),
+                due_count: count_of(input.reviews.len() + input.steps.len()),
+            });
+        }
+        // Read only: ending it commits nothing.
+        tx.finish()?;
+        summaries.sort_by_cached_key(|d| (deck_name_key(&d.deck.name), d.deck.id.clone()));
+        Ok(summaries)
     }
 
     /// Soft-deletes deck `id` and its live cards. They all get the same
@@ -222,6 +229,11 @@ pub(super) fn ensure_live_deck(conn: &Connection, id: &str) -> Result<()> {
     )
     .optional()?
     .ok_or_else(|| Error::DeckNotFound(id.to_owned()))
+}
+
+/// A count for [`DeckSummary`]; no deck holds more than `u32::MAX` cards.
+fn count_of(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]

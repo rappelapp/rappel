@@ -21,7 +21,7 @@
 //! monotonic within a millisecond and across restarts (ADR 0008:
 //! `storage::record_review` observes the log's largest id first).
 
-mod fuzz;
+pub(crate) mod fuzz;
 pub mod session;
 
 use fsrs::{FSRS, MemoryState};
@@ -196,7 +196,7 @@ impl Scheduler {
     }
 
     /// FSRS's unrounded, unfuzzed interval in days for `stability`.
-    fn interval(&self, stability: f32) -> f32 {
+    pub(crate) fn interval(&self, stability: f32) -> f32 {
         // The rating argument is only used when stability is `None`.
         self.fsrs
             .next_interval(Some(stability), self.desired_retention, RATING_GOOD)

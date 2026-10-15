@@ -7,5 +7,5 @@ mod review_page;
 
 pub use deck_page::DeckPage;
 pub use decks_page::DecksPage;
-pub use recovery_page::RecoveryPage;
+pub use recovery_page::{Recovered, RecoveryPage};
 pub use review_page::ReviewPage;

@@ -141,6 +141,12 @@ impl DecksPage {
         let Some(view) = nav::navigation_view(self) else {
             return;
         };
+        // Key repeat on a row (Enter held) can activate it again before the
+        // push shows; never stack a second deck page (#20). A mouse double
+        // click activates once: GtkListBox activates only on n_press == 1.
+        if view.visible_page().is_some_and(|p| p.is::<DeckPage>()) {
+            return;
+        }
         match DeckPage::new(state.clone(), deck) {
             Ok(page) => {
                 self.imp().opened.replace(Some(id.to_owned()));

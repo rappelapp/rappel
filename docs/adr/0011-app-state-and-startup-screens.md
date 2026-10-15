@@ -39,5 +39,5 @@ The core can open, check, back up, migrate and restore the database (ADR 0005, 0
 - Without a data folder the app shows the error page. It used to start with a toast, but there is nothing it could do without one.
 - The single-instance assumption now covers opening too. A future command-line mode that runs without the GUI must not open a second `Store`.
 - Startup blocks the main loop for the integrity check. If a large database ever makes it noticeable, the open can move to `spawn_blocking` behind a spinner page.
-- With no backups (for example, the first day of use), the recovery page only says to leave the files alone. A better way out, such as starting a fresh database while keeping the old file, is left for later.
+- With no backups (for example, the first day of use), the recovery page only says to leave the files alone. A better way out, such as starting a fresh database while keeping the old file, is left for later. (Done: ADR 0016, Start Fresh.)
 - The backup rows are built in code (one `AdwActionRow` per backup). The page and dialog layouts are in Blueprint.

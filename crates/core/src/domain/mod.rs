@@ -173,14 +173,15 @@ pub fn deck_name_key(name: &str) -> String {
         .collect()
 }
 
-/// A deck with the number of its cards that are new and due.
+/// A deck with what it has to study, counted like the deck page's
+/// study session (`Store::study_input`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeckSummary {
     /// The deck.
     pub deck: Deck,
-    /// Cards never reviewed.
+    /// The new cards still allowed today (at most 20 a day per deck).
     pub new_count: u32,
-    /// Reviewed cards due at the time asked about.
+    /// Due reviews and step cards, those due within 20 minutes included.
     pub due_count: u32,
 }
 

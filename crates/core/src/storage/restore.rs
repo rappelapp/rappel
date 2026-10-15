@@ -84,6 +84,55 @@ pub fn restore_backup(
     restore_with(data_dir, backup.path(), now_ms(), MIGRATIONS)
 }
 
+/// Starts over with an empty database in `data_dir`, for when it cannot be
+/// opened and there is no backup to restore (ADR 0016).
+///
+/// `current` is the open store, if any; it is closed first. The current
+/// database and its `-wal`/`-shm`/`-journal` files are moved aside exactly
+/// as [`restore_backup`] does, to `cards.sqlite3.replaced-YYYYMMDD-HHMMSS`
+/// (see [`Restored::replaced`]). Nothing is deleted. Then an empty
+/// database is created and opened.
+///
+/// # Errors
+/// - [`Error::InterruptedRestore`] if a validated copy from an interrupted
+///   restore is waiting to be installed: that copy is the user's data, and
+///   starting over would hide it. Nothing was changed.
+/// - [`Error::BackupsAvailable`] if `<data_dir>/backups/` holds backups:
+///   restore one instead. Nothing was changed.
+/// - IO errors while moving files, and any error from [`Store::open`]. If
+///   the old files were already moved aside, they stay under their
+///   `replaced-…` name.
+pub fn start_fresh(data_dir: &Path, current: Option<Store>) -> Result<Restored> {
+    drop(current);
+    start_fresh_with(data_dir, now_ms(), MIGRATIONS)
+}
+
+/// [`start_fresh`] with every input explicit, for tests.
+fn start_fresh_with(data_dir: &Path, now_ms: i64, migrations: &[Migration]) -> Result<Restored> {
+    let partial = restore_partial_path(data_dir);
+    if exists(&partial)? {
+        return Err(Error::InterruptedRestore(partial));
+    }
+    let backups = super::list_backups(data_dir)?.len();
+    if backups > 0 {
+        return Err(Error::BackupsAvailable(backups));
+    }
+    ensure_data_dir(data_dir)?;
+    let db_path = data_dir.join(DB_FILE_NAME);
+    let replaced = move_aside(&db_path, now_ms)?;
+    if let Some(path) = &replaced {
+        tracing::info!(path = %path.display(), "previous database moved aside to start fresh");
+    }
+    let store = Store::open_with(
+        &db_path,
+        &data_dir.join(BACKUP_DIR_NAME),
+        now_ms,
+        migrations,
+    )?;
+    tracing::info!("started with an empty database");
+    Ok(Restored { store, replaced })
+}
+
 /// Path of the validated copy waiting to be installed.
 pub(super) fn restore_partial_path(data_dir: &Path) -> PathBuf {
     data_dir.join(format!("{DB_FILE_NAME}.restore.partial"))

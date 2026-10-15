@@ -1,0 +1,15 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Asked before the recovery page starts over with an empty database.
+Adw.AlertDialog start_fresh_dialog {
+  heading: _("Start With an Empty Database?");
+  body: _("The current database is renamed to “cards.sqlite3.replaced-” followed by the date and time, and kept in the data folder. Nothing is deleted. Cards then starts with no decks.");
+  close-response: "cancel";
+  default-response: "cancel";
+
+  responses [
+    cancel: _("_Cancel"),
+    start: _("_Start Fresh") destructive,
+  ]
+}

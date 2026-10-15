@@ -24,7 +24,7 @@ use crate::time::now_ms;
 pub use backup::{BackupInfo, list_backups};
 use backup::{KEEP_BACKUPS, check_rows, create_backup, has_backup_for_day, prune_backups};
 use migrations::{MIGRATIONS, Migration, latest, migrate};
-pub use restore::{Restored, restore_backup};
+pub use restore::{Restored, restore_backup, start_fresh};
 
 /// File name of the database inside the data directory.
 pub const DB_FILE_NAME: &str = "cards.sqlite3";

@@ -810,7 +810,9 @@ fn migration_0003_keeps_everything_live_and_unchanged() {
     // way, then use them on the data written at v2.
     drop(store);
     let mut store = e.open(DAY0 + 4 * DAY_MS).unwrap();
-    let decks = store.list_decks(DAY0 + 400 * DAY_MS).unwrap();
+    let decks = store
+        .list_decks(DAY0 + 400 * DAY_MS, DAY0 + 400 * DAY_MS)
+        .unwrap();
     assert_eq!(decks.len(), 1);
     assert_eq!((decks[0].new_count, decks[0].due_count), (1, 1));
     assert!(matches!(
@@ -958,6 +960,151 @@ fn migration_0005_rebuilds_the_schedule_cache() {
     assert_eq!(store.card_state(CARD).unwrap(), expected);
     // The sample's cache row (due at 3 ms) was replaced.
     assert_ne!(scheduled_due(&store), 3);
+}
+
+/// The log of a hard card: graduated, then eight lapses each relearned on
+/// time (difficulty up, stability down), then a Pass `late_days` after the
+/// last review. Offsets from `DAY0`, oldest first.
+fn hard_card_log(late_days: i64) -> Vec<(i64, &'static str)> {
+    let mut log = vec![(0, "pass"), (STEP, "pass")];
+    let mut t = STEP;
+    for _ in 0..8 {
+        t += DAY_MS;
+        log.push((t, "fail"));
+        t += STEP;
+        log.push((t, "pass"));
+    }
+    log.push((t + late_days * DAY_MS, "pass"));
+    log
+}
+
+/// Migration 0005 moves a due date that the pre-0005 scheduler set below
+/// the floor of ADR 0009: the cache row is what that scheduler wrote (FSRS
+/// interval, fuzzed, no floor), and after the migration the card is due at
+/// least `elapsed + 1` days after the late Pass.
+#[test]
+fn migration_0005_moves_the_due_date_of_a_late_pass() {
+    use crate::scheduling::fuzz::{floored_fuzzed_days, fuzz_factor};
+
+    const LATE_DAYS: i64 = 30;
+    let e = env();
+    let log = hard_card_log(LATE_DAYS);
+    let scheduler = Scheduler::default();
+    {
+        let v4 = e.open_with(DAY0, &MIGRATIONS[..4]).unwrap();
+        v4.conn
+            .execute_batch(&format!(
+                "INSERT INTO decks (id, name, name_key, created_at, updated_at) VALUES ('{DECK}', 'Maths', 'maths', 1, 1);
+                 INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+                     VALUES ('{CARD}', '{DECK}', 'a', 'b', 1, 1);"
+            ))
+            .unwrap();
+        insert_events(&v4.conn, CARD, 0, &log);
+        let events = v4.review_events(CARD).unwrap();
+        let (last, before_last) = events.split_last().unwrap();
+        let prev = match scheduler.rebuild_state(CARD, before_last).unwrap() {
+            CardState::Scheduled(s) => s,
+            CardState::New => panic!("expected a schedule"),
+        };
+        assert_eq!(prev.phase, Phase::Review);
+        let now = match scheduler.rebuild_state(CARD, &events).unwrap() {
+            CardState::Scheduled(s) => s,
+            CardState::New => panic!("expected a schedule"),
+        };
+        // What the scheduler wrote before ADR 0009: the same memory, and
+        // FSRS's interval fuzzed with no floor.
+        let old_days = floored_fuzzed_days(
+            f64::from(scheduler.interval(now.stability)),
+            1,
+            fuzz_factor(CARD, prev.reps),
+        );
+        let floor_days = LATE_DAYS + 1;
+        assert!(
+            i64::from(old_days) < floor_days,
+            "the fixture must be below the floor: {old_days} days"
+        );
+        let old_due = last.reviewed_at + i64::from(old_days) * DAY_MS;
+        v4.conn
+            .execute(
+                "INSERT INTO card_schedule VALUES (?1, 'review', ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    CARD,
+                    old_due,
+                    f64::from(now.stability),
+                    f64::from(now.difficulty),
+                    now.last_review_at,
+                    now.reps,
+                    now.lapses
+                ],
+            )
+            .unwrap();
+        assert_eq!(scheduled_due(&v4), old_due);
+    }
+
+    let store = e.open_with(DAY0, &MIGRATIONS[..5]).unwrap();
+
+    let events = store.review_events(CARD).unwrap();
+    let last_review = events.last().unwrap().reviewed_at;
+    let due = scheduled_due(&store);
+    assert!(
+        due >= last_review + (LATE_DAYS + 1) * DAY_MS,
+        "moved to at least the floor"
+    );
+    assert_eq!(
+        store.card_state(CARD).unwrap(),
+        scheduler.rebuild_state(CARD, &events).unwrap()
+    );
+}
+
+/// A real file-backed store, closed and opened again (a restart), keeps
+/// issuing increasing ids and keeps its cache equal to the rebuild.
+#[test]
+fn a_reopened_file_store_keeps_ids_increasing_and_the_cache_exact() {
+    use std::time::Duration;
+
+    use crate::domain::Grade;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (first, card_a, card_b) = {
+        let mut store = Store::open(tmp.path()).unwrap();
+        let deck = store.create_deck("Maths").unwrap().id;
+        let a = store.add_card(&deck, "a", "1").unwrap().id;
+        let b = store.add_card(&deck, "b", "2").unwrap().id;
+        let first = store
+            .record_review(&a, Grade::Fail, Duration::from_secs(2), DAY0)
+            .unwrap();
+        (first, a, b)
+    };
+
+    let mut store = Store::open(tmp.path()).unwrap();
+    // The clock went back across the restart: a fresh generator that did
+    // not observe the log would stamp this id before `first`'s.
+    let second = store
+        .record_review(&card_b, Grade::Pass, Duration::from_secs(2), DAY0 - 1_000)
+        .unwrap();
+    assert_eq!(
+        second.reviewed_at,
+        DAY0 - 1_000,
+        "another card: not floored"
+    );
+    let third = store
+        .record_review(&card_a, Grade::Pass, Duration::from_secs(2), DAY0 + STEP)
+        .unwrap();
+
+    assert!(
+        first.id < second.id && second.id < third.id,
+        "ids increase across the reopen"
+    );
+    let scheduler = Scheduler::default();
+    for card in [&card_a, &card_b] {
+        let events = store.review_events(card).unwrap();
+        assert_eq!(
+            store.card_state(card).unwrap(),
+            scheduler.rebuild_state(card, &events).unwrap()
+        );
+    }
+    assert_eq!(store.review_events(&card_a).unwrap(), [first, third]);
+    assert_eq!(store.review_events(&card_b).unwrap(), [second]);
 }
 
 fn scheduled_due(store: &Store) -> i64 {

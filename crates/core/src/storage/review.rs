@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use rusqlite::{TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 
 use super::cards::live_card;
 use super::decks::ensure_live_deck;
@@ -92,55 +92,98 @@ impl Store {
     /// [`Error::DeckNotFound`](crate::Error::DeckNotFound), SQLite errors.
     pub fn study_input(&self, deck_id: &str, now: i64, day_start: i64) -> Result<StudyInput> {
         let tx = self.conn.unchecked_transaction()?;
-        ensure_live_deck(&tx, deck_id)?;
-        let due = |phases: &str, until: i64| -> Result<Vec<Due>> {
-            let mut stmt = tx.prepare(&format!(
-                "SELECT c.id, s.due_at FROM cards c JOIN card_schedule s ON s.card_id = c.id
-                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.phase IN ({phases})
-                   AND s.due_at <= ?2
-                 ORDER BY s.due_at, c.seq"
-            ))?;
-            let rows = stmt.query_map(params![deck_id, until], |r| {
-                Ok(Due {
-                    card_id: r.get(0)?,
-                    due_at: r.get(1)?,
-                })
-            })?;
-            Ok(rows.collect::<rusqlite::Result<_>>()?)
-        };
-        // Phases are our own constant strings, never user input.
-        let quote = |p: Phase| format!("'{}'", p.as_str());
-        let reviews = due(&quote(Phase::Review), now)?;
-        let steps = due(
-            &format!("{}, {}", quote(Phase::Learning), quote(Phase::Relearning)),
-            now.saturating_add(EARLY_MS),
-        )?;
-        let new_today: u32 = tx.query_row(
-            "SELECT count(*) FROM (
-                 SELECT e.card_id FROM review_events e JOIN cards c ON c.id = e.card_id
-                 WHERE c.deck_id = ?1
-                 GROUP BY e.card_id HAVING min(e.reviewed_at) >= ?2)",
-            params![deck_id, day_start],
-            |r| r.get(0),
-        )?;
-        let mut stmt = tx.prepare(
-            "SELECT c.id FROM cards c LEFT JOIN card_schedule s ON s.card_id = c.id
-             WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.card_id IS NULL
-             ORDER BY c.seq LIMIT ?2",
-        )?;
-        let new = stmt
-            .query_map(params![deck_id, new_allowance(new_today)], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        drop(stmt);
+        let input = study_input_in(&tx, deck_id, now, day_start)?;
         // Read only: ending it commits nothing.
         tx.finish()?;
-        Ok(StudyInput {
-            reviews,
-            steps,
-            new,
-            new_today,
-        })
+        Ok(input)
     }
+
+    /// The first time after `now` (UTC milliseconds) at which
+    /// [`Self::study_input`] for deck `deck_id` would offer one more
+    /// reviewed card: a review card's `due_at`, or a step card's `due_at`
+    /// minus [`EARLY_MS`]. `None` if no live card of the deck will become
+    /// due. The day start, which renews the new-card budget, is the
+    /// caller's to add.
+    ///
+    /// # Errors
+    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound), SQLite errors.
+    pub fn next_study_change(&self, deck_id: &str, now: i64) -> Result<Option<i64>> {
+        let tx = self.conn.unchecked_transaction()?;
+        ensure_live_deck(&tx, deck_id)?;
+        // Phases are our own constant strings, never user input.
+        let next = tx.query_row(
+            &format!(
+                "SELECT min(CASE WHEN s.phase = '{review}' THEN s.due_at
+                                 ELSE s.due_at - ?3 END)
+                 FROM cards c JOIN card_schedule s ON s.card_id = c.id
+                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL
+                   AND (CASE WHEN s.phase = '{review}' THEN s.due_at
+                             ELSE s.due_at - ?3 END) > ?2",
+                review = Phase::Review.as_str()
+            ),
+            params![deck_id, now, EARLY_MS],
+            |r| r.get(0),
+        )?;
+        tx.finish()?;
+        Ok(next)
+    }
+}
+
+/// [`Store::study_input`] on `conn`, for callers that already hold a read
+/// transaction. [`Store::list_decks`] counts with it too, so the deck list
+/// and the deck page always agree.
+pub(super) fn study_input_in(
+    conn: &Connection,
+    deck_id: &str,
+    now: i64,
+    day_start: i64,
+) -> Result<StudyInput> {
+    ensure_live_deck(conn, deck_id)?;
+    let due = |phases: &str, until: i64| -> Result<Vec<Due>> {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT c.id, s.due_at FROM cards c JOIN card_schedule s ON s.card_id = c.id
+             WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.phase IN ({phases})
+               AND s.due_at <= ?2
+             ORDER BY s.due_at, c.seq"
+        ))?;
+        let rows = stmt.query_map(params![deck_id, until], |r| {
+            Ok(Due {
+                card_id: r.get(0)?,
+                due_at: r.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    };
+    // Phases are our own constant strings, never user input.
+    let quote = |p: Phase| format!("'{}'", p.as_str());
+    let reviews = due(&quote(Phase::Review), now)?;
+    let steps = due(
+        &format!("{}, {}", quote(Phase::Learning), quote(Phase::Relearning)),
+        now.saturating_add(EARLY_MS),
+    )?;
+    let new_today: u32 = conn.query_row(
+        "SELECT count(*) FROM (
+             SELECT e.card_id FROM review_events e JOIN cards c ON c.id = e.card_id
+             WHERE c.deck_id = ?1
+             GROUP BY e.card_id HAVING min(e.reviewed_at) >= ?2)",
+        params![deck_id, day_start],
+        |r| r.get(0),
+    )?;
+    let mut stmt = conn.prepare(
+        "SELECT c.id FROM cards c LEFT JOIN card_schedule s ON s.card_id = c.id
+         WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.card_id IS NULL
+         ORDER BY c.seq LIMIT ?2",
+    )?;
+    let new = stmt
+        .query_map(params![deck_id, new_allowance(new_today)], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+    Ok(StudyInput {
+        reviews,
+        steps,
+        new,
+        new_today,
+    })
 }
 
 #[cfg(test)]

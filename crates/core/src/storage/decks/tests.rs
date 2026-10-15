@@ -20,7 +20,7 @@ fn deleted_at(store: &Store, table: &str, id: &str) -> Option<i64> {
 
 fn counts(store: &Store, now: i64) -> Vec<(String, u32, u32)> {
     store
-        .list_decks(now)
+        .list_decks(now, now)
         .unwrap()
         .into_iter()
         .map(|d| (d.deck.id, d.new_count, d.due_count))
@@ -29,7 +29,7 @@ fn counts(store: &Store, now: i64) -> Vec<(String, u32, u32)> {
 
 fn names(store: &Store) -> Vec<String> {
     store
-        .list_decks(T0)
+        .list_decks(T0, T0)
         .unwrap()
         .into_iter()
         .map(|d| d.deck.name)
@@ -44,7 +44,7 @@ fn create_trims_the_name_and_lists_the_deck() {
     assert_eq!((deck.created_at, deck.updated_at), (T0, T0));
     assert_eq!(deck.id.len(), 36);
     assert_eq!(
-        store.list_decks(T0).unwrap(),
+        store.list_decks(T0, T0).unwrap(),
         [DeckSummary {
             deck,
             new_count: 0,
@@ -75,7 +75,7 @@ fn rename_changes_name_and_updated_at() {
     let mut store = Store::in_memory();
     let deck = store.create_deck_at("Maths", T0).unwrap();
     store.rename_deck_at(&deck.id, " Algebra ", T0 + 5).unwrap();
-    let listed = store.list_decks(T0).unwrap().remove(0).deck;
+    let listed = store.list_decks(T0, T0).unwrap().remove(0).deck;
     assert_eq!(listed.name, "Algebra");
     assert_eq!((listed.created_at, listed.updated_at), (T0, T0 + 5));
 }
@@ -85,7 +85,7 @@ fn rename_to_the_same_name_changes_nothing() {
     let mut store = Store::in_memory();
     let deck = store.create_deck_at("Maths", T0).unwrap();
     store.rename_deck_at(&deck.id, "Maths ", T0 + 5).unwrap();
-    assert_eq!(store.list_decks(T0).unwrap()[0].deck, deck);
+    assert_eq!(store.list_decks(T0, T0).unwrap()[0].deck, deck);
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn duplicate_names_are_refused_on_create_and_rename() {
         Err(Error::DuplicateDeckName(_))
     ));
     assert_eq!(names(&store), ["Maths", "Physics"]);
-    assert_eq!(store.list_decks(T0).unwrap()[0].deck, maths);
+    assert_eq!(store.list_decks(T0, T0).unwrap()[0].deck, maths);
 }
 
 const COMPOSED: &str = "\u{C9}conomie"; // "Économie", É as one code point
@@ -193,7 +193,7 @@ fn a_deck_can_be_renamed_to_another_case_of_its_own_name() {
     store
         .rename_deck_at(&deck.id, "\u{E9}CONOMIE", T0 + 1)
         .unwrap();
-    let listed = store.list_decks(T0).unwrap().remove(0).deck;
+    let listed = store.list_decks(T0, T0).unwrap().remove(0).deck;
     assert_eq!(
         (listed.name.as_str(), listed.updated_at),
         ("\u{E9}CONOMIE", T0 + 1)
@@ -266,7 +266,7 @@ fn counts_new_and_due_live_cards() {
                 .id
         })
         .collect();
-    // cards[0], cards[1] reviewed: due in 10 minutes. cards[2] deleted.
+    // cards[0], cards[1] reviewed: in the 10-minute step. cards[2] deleted.
     for c in &cards[..2] {
         store
             .record_review(c, Grade::Fail, Duration::ZERO, T0)
@@ -274,9 +274,11 @@ fn counts_new_and_due_live_cards() {
     }
     store.delete_card_at(&cards[2], T0).unwrap();
 
+    // Step cards due within 20 minutes count as due, as on the deck page
+    // (ADR 0014).
     assert_eq!(
         counts(&store, T0),
-        [(empty.id.clone(), 0, 0), (maths.id.clone(), 2, 0)]
+        [(empty.id.clone(), 0, 0), (maths.id.clone(), 2, 2)]
     );
     assert_eq!(
         counts(&store, T0 + DAY_MS),
@@ -459,4 +461,101 @@ fn undelete_of_an_unknown_deck_is_not_found() {
         store.undelete_deck("01920000-0000-7000-8000-00000000ffff"),
         Err(Error::DeckNotFound(_))
     ));
+}
+
+// --- The deck list counts like the deck page ------------------------------
+
+mod study_counts {
+    use std::time::Duration;
+
+    use super::{DAY_MS, T0};
+    use crate::domain::Grade;
+    use crate::scheduling::session::NEW_PER_DAY;
+    use crate::storage::Store;
+
+    /// "Today" began two hours before `T0`.
+    const DAY_START: i64 = T0 - 2 * 3_600_000;
+
+    fn deck_with_cards(store: &mut Store, name: &str, n: usize) -> (String, Vec<String>) {
+        let deck = store.create_deck_at(name, T0).unwrap().id;
+        let cards = (0..n)
+            .map(|i| {
+                store
+                    .add_card_at(&deck, &format!("q{i}"), "a", T0)
+                    .unwrap()
+                    .id
+            })
+            .collect();
+        (deck, cards)
+    }
+
+    fn answer(store: &mut Store, card: &str, grade: Grade, at: i64) {
+        store
+            .record_review(card, grade, Duration::from_secs(3), at)
+            .unwrap();
+    }
+
+    /// Every deck's `(new, due)` from `list_decks` equals the lengths of
+    /// its `study_input` at the same time.
+    fn assert_list_matches_study_input(store: &Store, now: i64, day_start: i64) {
+        for summary in store.list_decks(now, day_start).unwrap() {
+            let input = store.study_input(&summary.deck.id, now, day_start).unwrap();
+            assert_eq!(
+                (summary.new_count as usize, summary.due_count as usize),
+                (input.new.len(), input.reviews.len() + input.steps.len()),
+                "deck {}",
+                summary.deck.name
+            );
+        }
+    }
+
+    #[test]
+    fn list_counts_equal_the_study_session_at_any_time() {
+        let mut store = Store::in_memory();
+        let (_, maths) = deck_with_cards(&mut store, "Maths", 30);
+        let (_, physics) = deck_with_cards(&mut store, "Physics", 3);
+        // Yesterday's new cards, now in review; one failed today, in the step.
+        answer(&mut store, &maths[0], Grade::Pass, DAY_START - DAY_MS);
+        answer(
+            &mut store,
+            &maths[0],
+            Grade::Pass,
+            DAY_START - DAY_MS + 600_000,
+        );
+        answer(&mut store, &maths[1], Grade::Fail, T0);
+        // Today's first reviews use the budget; a deleted one still does.
+        answer(&mut store, &maths[2], Grade::Pass, T0);
+        answer(&mut store, &maths[3], Grade::Pass, T0);
+        store.delete_card_at(&maths[3], T0).unwrap();
+        answer(&mut store, &physics[0], Grade::Fail, T0);
+
+        for now in [T0, T0 + 5 * 60_000, T0 + DAY_MS, T0 + 40 * DAY_MS] {
+            assert_list_matches_study_input(&store, now, DAY_START);
+        }
+        assert_list_matches_study_input(&store, T0 + DAY_MS, DAY_START + DAY_MS);
+    }
+
+    #[test]
+    fn list_new_counts_are_capped_per_day_and_renew_the_next_day() {
+        let mut store = Store::in_memory();
+        let (_, cards) = deck_with_cards(&mut store, "Maths", 30);
+        let new_count =
+            |store: &Store, now, day_start| store.list_decks(now, day_start).unwrap()[0].new_count;
+        assert_eq!(new_count(&store, T0, DAY_START), NEW_PER_DAY);
+
+        for card in &cards[..5] {
+            answer(&mut store, card, Grade::Pass, T0);
+        }
+        assert_eq!(new_count(&store, T0, DAY_START), NEW_PER_DAY - 5);
+        for card in &cards[5..NEW_PER_DAY as usize] {
+            answer(&mut store, card, Grade::Pass, T0);
+        }
+        assert_eq!(
+            new_count(&store, T0, DAY_START),
+            0,
+            "today's budget is used"
+        );
+        // The next study day: 10 unreviewed cards left, all allowed.
+        assert_eq!(new_count(&store, T0 + DAY_MS, DAY_START + DAY_MS), 10);
+    }
 }

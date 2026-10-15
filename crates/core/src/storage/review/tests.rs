@@ -237,7 +237,7 @@ fn a_malformed_largest_id_refuses_the_write_and_rolls_back() {
         ),
         "{err}"
     );
-    assert_eq!(store.list_decks(T0).unwrap().len(), 2);
+    assert_eq!(store.list_decks(T0, T0).unwrap().len(), 2);
 }
 
 #[test]
@@ -306,6 +306,7 @@ fn a_failed_cache_write_rolls_back_the_event() {
 #[derive(Debug, Clone)]
 enum Step {
     Review {
+        /// Taken modulo the number of cards made so far.
         card: usize,
         pass: bool,
         clock_delta: i64,
@@ -313,6 +314,13 @@ enum Step {
     },
     /// A new process: the id generator starts from scratch.
     Restart,
+    AddCard,
+    /// Soft-deletes a card (modulo the number of cards).
+    DeleteCard(usize),
+    /// Soft-deletes the deck with its live cards.
+    DeleteDeck,
+    /// Brings the deck back with exactly the cards deleted with it.
+    UndeleteDeck,
 }
 
 fn step() -> impl Strategy<Value = Step> {
@@ -322,7 +330,7 @@ fn step() -> impl Strategy<Value = Step> {
         3 => 0..=3 * STEP_MS,
         3 => 0..=60 * DAY_MS,
     ];
-    let review = (0usize..4, any::<bool>(), delta, 0u64..120_000).prop_map(
+    let review = (0usize..64, any::<bool>(), delta, 0u64..120_000).prop_map(
         |(card, pass, clock_delta, duration_ms)| Step::Review {
             card,
             pass,
@@ -330,41 +338,111 @@ fn step() -> impl Strategy<Value = Step> {
             duration_ms,
         },
     );
-    prop_oneof![9 => review, 1 => Just(Step::Restart)]
+    prop_oneof![
+        30 => review,
+        3 => Just(Step::Restart),
+        3 => Just(Step::AddCard),
+        2 => (0usize..64).prop_map(Step::DeleteCard),
+        1 => Just(Step::DeleteDeck),
+        1 => Just(Step::UndeleteDeck),
+    ]
+}
+
+/// What the store should hold: each card's recorded events and whether it
+/// was deleted on its own, and which cards went with a deck delete.
+struct Model {
+    events: Vec<Vec<ReviewEvent>>,
+    deleted_alone: Vec<bool>,
+    deck_deleted: bool,
+}
+
+impl Model {
+    fn live(&self, card: usize) -> bool {
+        !self.deck_deleted && !self.deleted_alone[card]
+    }
 }
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
     /// The cache written review by review equals a full rebuild from the
-    /// log, whatever the clock does and however often the app restarts.
+    /// log, whatever the clock does, however often the app restarts, and
+    /// whatever cards and decks are added, deleted and brought back.
+    /// Deleted cards refuse reviews and keep their history.
     #[test]
     fn cache_equals_rebuild_after_random_reviews(
         n_cards in 1usize..=4,
         steps in prop::collection::vec(step(), 1..200),
     ) {
-        let (mut store, _, cards) = store_with_cards(n_cards);
+        let (mut store, deck, mut cards) = store_with_cards(n_cards);
         let mut clock = T0;
-        let mut recorded: Vec<Vec<ReviewEvent>> = vec![Vec::new(); n_cards];
+        let mut model = Model {
+            events: vec![Vec::new(); n_cards],
+            deleted_alone: vec![false; n_cards],
+            deck_deleted: false,
+        };
         for step in steps {
             match step {
                 Step::Restart => store.ids = IdGen::new(),
                 Step::Review { card, pass, clock_delta, duration_ms } => {
                     clock += clock_delta;
-                    let card = card % n_cards;
+                    let card = card % cards.len();
                     let grade = if pass { Grade::Pass } else { Grade::Fail };
-                    let e = store
-                        .record_review(&cards[card], grade, Duration::from_millis(duration_ms), clock)
-                        .unwrap();
-                    let floor = recorded[card].last().map_or(clock, |l| l.reviewed_at.max(clock));
-                    prop_assert_eq!(e.reviewed_at, floor);
-                    recorded[card].push(e);
+                    let result = store.record_review(
+                        &cards[card], grade, Duration::from_millis(duration_ms), clock,
+                    );
+                    if model.live(card) {
+                        let e = result.unwrap();
+                        let floor = model.events[card]
+                            .last()
+                            .map_or(clock, |l| l.reviewed_at.max(clock));
+                        prop_assert_eq!(e.reviewed_at, floor);
+                        model.events[card].push(e);
+                    } else {
+                        prop_assert!(matches!(result, Err(Error::CardNotFound(_))));
+                    }
+                }
+                Step::AddCard => {
+                    let result = store.add_card_at(&deck, "q", "a", clock);
+                    if model.deck_deleted {
+                        prop_assert!(matches!(result, Err(Error::DeckNotFound(_))));
+                    } else {
+                        cards.push(result.unwrap().id);
+                        model.events.push(Vec::new());
+                        model.deleted_alone.push(false);
+                    }
+                }
+                Step::DeleteCard(card) => {
+                    let card = card % cards.len();
+                    let result = store.delete_card_at(&cards[card], clock);
+                    if model.live(card) {
+                        result.unwrap();
+                        model.deleted_alone[card] = true;
+                    } else {
+                        prop_assert!(matches!(result, Err(Error::CardNotFound(_))));
+                    }
+                }
+                Step::DeleteDeck => {
+                    let result = store.delete_deck_at(&deck, clock);
+                    if model.deck_deleted {
+                        prop_assert!(matches!(result, Err(Error::DeckNotFound(_))));
+                    } else {
+                        result.unwrap();
+                        model.deck_deleted = true;
+                    }
+                }
+                Step::UndeleteDeck => {
+                    store.undelete_deck(&deck).unwrap();
+                    model.deck_deleted = false;
                 }
             }
         }
 
-        for (card, events) in cards.iter().zip(&recorded) {
-            // (c) The log replays in the order it was recorded.
+        for (i, (card, events)) in cards.iter().zip(&model.events).enumerate() {
+            // Liveness as the model says: a live card reads back.
+            prop_assert_eq!(store.card(card).is_ok(), model.live(i));
+            // (c) The log replays in the order it was recorded, deleted
+            // cards included.
             prop_assert_eq!(&store.review_events(card).unwrap(), events);
             // (a) The cache equals the rebuild of this card's log.
             prop_assert_eq!(store.card_state(card).unwrap(), rebuilt(&store, card));
@@ -574,5 +652,142 @@ mod study {
         assert_eq!(keys, sorted, "most overdue first, then oldest card");
         let steps: Vec<_> = input.steps.iter().map(|d| d.card_id.clone()).collect();
         assert_eq!(steps, [cards[11].clone(), cards[10].clone()]);
+    }
+}
+
+mod next_change {
+    use std::time::Duration;
+
+    use super::{T0, store_with_cards};
+    use crate::Error;
+    use crate::domain::{CardState, Grade};
+    use crate::scheduling::session::EARLY_MS;
+
+    fn due_at(store: &crate::storage::Store, card: &str) -> i64 {
+        match store.card_state(card).unwrap() {
+            CardState::Scheduled(s) => s.due_at,
+            CardState::New => panic!("expected a schedule"),
+        }
+    }
+
+    #[test]
+    fn nothing_scheduled_never_changes() {
+        let (store, deck, _) = store_with_cards(3);
+        assert_eq!(store.next_study_change(&deck, T0).unwrap(), None);
+    }
+
+    #[test]
+    fn a_step_card_counts_from_twenty_minutes_before_it_is_due() {
+        let (mut store, deck, cards) = store_with_cards(2);
+        store
+            .record_review(&cards[0], Grade::Fail, Duration::ZERO, T0)
+            .unwrap();
+        let due = due_at(&store, &cards[0]);
+        // Already within the early window at T0: offered now, not a change.
+        assert_eq!(store.next_study_change(&deck, T0).unwrap(), None);
+        // From before that window, the change is when it opens.
+        let before = due - EARLY_MS - 1;
+        assert_eq!(
+            store.next_study_change(&deck, before).unwrap(),
+            Some(due - EARLY_MS)
+        );
+        // And it is exactly when study_input starts to offer it.
+        let at = |now| store.study_input(&deck, now, T0).unwrap().steps.len();
+        assert_eq!((at(due - EARLY_MS - 1), at(due - EARLY_MS)), (0, 1));
+    }
+
+    #[test]
+    fn a_review_card_counts_from_its_due_time_and_deleted_cards_never() {
+        let (mut store, deck, cards) = store_with_cards(3);
+        for card in &cards[..2] {
+            store
+                .record_review(card, Grade::Pass, Duration::ZERO, T0)
+                .unwrap();
+            let step_due = due_at(&store, card);
+            store
+                .record_review(card, Grade::Pass, Duration::ZERO, step_due)
+                .unwrap();
+        }
+        let (first, second) = (due_at(&store, &cards[0]), due_at(&store, &cards[1]));
+        let soonest = first.min(second);
+        let now = soonest - 1;
+        assert_eq!(store.next_study_change(&deck, now).unwrap(), Some(soonest));
+        let reviews = |now| store.study_input(&deck, now, T0).unwrap().reviews.len();
+        assert_eq!(reviews(soonest - 1), 0);
+        assert!(reviews(soonest) >= 1);
+
+        // The soonest card deleted: the other one is next.
+        let soonest_card = if first <= second {
+            &cards[0]
+        } else {
+            &cards[1]
+        };
+        store.delete_card_at(soonest_card, now).unwrap();
+        assert_eq!(
+            store.next_study_change(&deck, now).unwrap(),
+            Some(first.max(second))
+        );
+    }
+
+    /// A card due exactly at `now` is offered already, so the next change
+    /// is a later one (`> now`, not `>= now`).
+    #[test]
+    fn a_card_due_exactly_now_is_not_the_next_change() {
+        let (mut store, deck, cards) = store_with_cards(2);
+        // An hour apart, so their due times differ.
+        for (card, start) in cards.iter().zip([T0, T0 + 3_600_000]) {
+            store
+                .record_review(card, Grade::Pass, Duration::ZERO, start)
+                .unwrap();
+            let step_due = due_at(&store, card);
+            store
+                .record_review(card, Grade::Pass, Duration::ZERO, step_due)
+                .unwrap();
+        }
+        let (a, b) = (due_at(&store, &cards[0]), due_at(&store, &cards[1]));
+        assert_ne!(a, b, "the fixture needs two different due times");
+        let (first, second) = (a.min(b), a.max(b));
+        assert_eq!(store.next_study_change(&deck, first).unwrap(), Some(second));
+        assert_eq!(store.next_study_change(&deck, second).unwrap(), None);
+    }
+
+    /// A review card failed goes to relearning: like a learning card, it
+    /// counts from 20 minutes before its step is due.
+    #[test]
+    fn a_relearning_card_counts_from_twenty_minutes_before_it_is_due() {
+        let (mut store, deck, cards) = store_with_cards(1);
+        let card = &cards[0];
+        store
+            .record_review(card, Grade::Pass, Duration::ZERO, T0)
+            .unwrap();
+        let step_due = due_at(&store, card);
+        store
+            .record_review(card, Grade::Pass, Duration::ZERO, step_due)
+            .unwrap();
+        let review_due = due_at(&store, card);
+        store
+            .record_review(card, Grade::Fail, Duration::ZERO, review_due)
+            .unwrap();
+        match store.card_state(card).unwrap() {
+            CardState::Scheduled(s) => assert_eq!(s.phase, crate::domain::Phase::Relearning),
+            CardState::New => panic!("expected a schedule"),
+        }
+        let due = due_at(&store, card);
+        let before = due - EARLY_MS - 1;
+        assert_eq!(
+            store.next_study_change(&deck, before).unwrap(),
+            Some(due - EARLY_MS)
+        );
+        let steps = |now| store.study_input(&deck, now, T0).unwrap().steps.len();
+        assert_eq!((steps(due - EARLY_MS - 1), steps(due - EARLY_MS)), (0, 1));
+    }
+
+    #[test]
+    fn a_missing_deck_is_reported() {
+        let (store, _, _) = store_with_cards(1);
+        assert!(matches!(
+            store.next_study_change("01920000-0000-7000-8000-00000000dead", T0),
+            Err(Error::DeckNotFound(_))
+        ));
     }
 }
