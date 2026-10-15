@@ -66,11 +66,27 @@ impl Env {
     }
 }
 
+/// Adds deck "Physics" with raw SQL, at schema v1 or later (`name_key`
+/// exists from v4).
 fn add_deck(conn: &Connection) {
-    conn.execute_batch(&format!(
-        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('{DECK2}', 'Physics', 2, 2);"
-    ))
-    .unwrap();
+    let has_key: bool = conn
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('decks') WHERE name = 'name_key'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let sql = if has_key {
+        format!(
+            "INSERT INTO decks (id, name, name_key, created_at, updated_at)
+             VALUES ('{DECK2}', 'Physics', 'physics', 2, 2);"
+        )
+    } else {
+        format!(
+            "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('{DECK2}', 'Physics', 2, 2);"
+        )
+    };
+    conn.execute_batch(&sql).unwrap();
 }
 
 fn deck_names(conn: &Connection) -> Vec<String> {

@@ -3,7 +3,7 @@
 use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior, params};
 
 use super::{Store, observe_max_id};
-use crate::domain::{Deck, DeckSummary};
+use crate::domain::{Deck, DeckSummary, deck_name_key};
 use crate::error::{Error, Result};
 use crate::time::now_ms;
 
@@ -31,8 +31,15 @@ impl Store {
             updated_at: now,
         };
         tx.execute(
-            "INSERT INTO decks (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params![deck.id, deck.name, deck.created_at, deck.updated_at],
+            "INSERT INTO decks (id, name, name_key, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                deck.id,
+                deck.name,
+                deck_name_key(name),
+                deck.created_at,
+                deck.updated_at
+            ],
         )
         .map_err(|e| duplicate_name(e, name))?;
         tx.commit()?;
@@ -55,9 +62,9 @@ impl Store {
         let changed = self
             .conn
             .execute(
-                "UPDATE decks SET name = ?2, updated_at = ?3
+                "UPDATE decks SET name = ?2, name_key = ?3, updated_at = ?4
                  WHERE id = ?1 AND deleted_at IS NULL AND name IS NOT ?2",
-                params![id, name, now],
+                params![id, name, deck_name_key(name), now],
             )
             .map_err(|e| duplicate_name(e, name))?;
         if changed == 0 {
@@ -68,7 +75,7 @@ impl Store {
     }
 
     /// Every live deck with its number of new cards and of cards due at
-    /// `now` (UTC milliseconds), sorted by lower-cased name, then id. Daily
+    /// `now` (UTC milliseconds), sorted by name key ([`deck_name_key`]), then id. Daily
     /// limits are not applied.
     ///
     /// # Errors
@@ -97,7 +104,7 @@ impl Store {
             })
         })?;
         let mut decks = rows.collect::<rusqlite::Result<Vec<_>>>()?;
-        decks.sort_by_cached_key(|d| (d.deck.name.to_lowercase(), d.deck.id.clone()));
+        decks.sort_by_cached_key(|d| (deck_name_key(&d.deck.name), d.deck.id.clone()));
         Ok(decks)
     }
 

@@ -221,7 +221,8 @@ fn a_malformed_largest_id_refuses_the_write_and_rolls_back() {
     store
         .conn
         .execute(
-            "INSERT INTO decks (id, name, created_at, updated_at) VALUES (?1, 'Bad', 1, 1)",
+            "INSERT INTO decks (id, name, name_key, created_at, updated_at)
+             VALUES (?1, 'Bad', 'bad', 1, 1)",
             [bad],
         )
         .unwrap();

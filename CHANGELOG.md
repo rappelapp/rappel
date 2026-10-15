@@ -46,8 +46,12 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
   - `record_review`: the event (dated `max(now, last review)`) and the schedule cache update in one transaction.
   - `due_cards(deck, now)` and `new_cards(deck, limit)`.
   - Property test: after random reviews, clock jumps and restarts, the schedule cache equals a full rebuild from the log.
+- Migrations can have a Rust backfill step, run in the migration's transaction (ADR 0010).
+- Dependency: `unicode-normalization` in `cards-core` (NFC for deck name keys).
 - Dependency: `getrandom` in `cards-core` (random bits for ids; already in the tree through `fsrs`).
 
 ### Changed
+- Deck names are unique ignoring case and Unicode composition ("Maths" = "maths", composed "É" = "E" + accent); accents still count. Migration 0004 adds and backfills `decks.name_key` (ADR 0010).
+- Scheduling: a Pass on a review card is scheduled at least elapsed days + 1 out, before and after fuzz, as in Anki. Migration 0005 rebuilds the schedule cache for the new rule (ADR 0009).
 - SPEC §3: ids are TEXT UUIDv7, `cards.seq` is the FTS5 rowid, and card deletion will be a soft delete.
 - `Error::CreateDataDir` renamed to `Error::CreateDir` (also used for the backups directory).

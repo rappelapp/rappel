@@ -27,7 +27,7 @@ use fsrs::{FSRS, MemoryState};
 
 use crate::domain::{CardState, Grade, Phase, ReviewEvent, Schedule};
 use crate::error::{Error, Result};
-use fuzz::{fuzz_factor, fuzzed_days};
+use fuzz::{floored_fuzzed_days, fuzz_factor};
 
 /// One day in milliseconds.
 pub const DAY_MS: i64 = 86_400_000;
@@ -92,7 +92,7 @@ impl Scheduler {
     /// |------------|-------------------------------|-----------------------|
     /// | new        | learning, +10 min             | learning, +10 min     |
     /// | learning   | learning, +10 min             | review, FSRS interval |
-    /// | review     | relearning, +10 min, lapse +1 | review, FSRS interval |
+    /// | review     | relearning, +10 min, lapse +1 | review, FSRS interval, at least elapsed + 1 days |
     /// | relearning | relearning, +10 min           | review, FSRS interval |
     ///
     /// The fuzz depends on `card_id` and the number of earlier reviews, so
@@ -146,9 +146,11 @@ impl Scheduler {
                 (Phase::Relearning, step, lapses.saturating_add(1))
             }
             (Some(Phase::Relearning), Grade::Fail) => (Phase::Relearning, step, lapses),
-            (Some(_), Grade::Pass) => {
+            (Some(from), Grade::Pass) => {
                 let interval = self.interval(memory.stability);
-                let days = fuzzed_days(f64::from(interval), fuzz_factor(card_id, reps));
+                let floor = pass_floor(from, elapsed);
+                let days =
+                    floored_fuzzed_days(f64::from(interval), floor, fuzz_factor(card_id, reps));
                 let due_at = now.saturating_add(i64::from(days).saturating_mul(DAY_MS));
                 (Phase::Review, due_at, lapses)
             }
@@ -197,6 +199,19 @@ impl Scheduler {
         // The rating argument is only used when stability is `None`.
         self.fsrs
             .next_interval(Some(stability), self.desired_retention, RATING_GOOD)
+    }
+}
+
+/// The fewest days a Pass from phase `from` may be scheduled to, given the
+/// whole days `elapsed` since the last review (ADR 0009). A review card
+/// that was recalled after `elapsed` days gets at least `elapsed + 1`
+/// (Anki's floor), so a late Pass never shortens its interval below the
+/// gap it just survived. A Pass from the 10-minute step has no floor
+/// beyond one day.
+fn pass_floor(from: Phase, elapsed: u32) -> u32 {
+    match from {
+        Phase::Review => elapsed.saturating_add(1),
+        Phase::Learning | Phase::Relearning => 1,
     }
 }
 

@@ -32,6 +32,10 @@ fsrs = "6.6"
 # through fsrs -> rand.
 getrandom = "0.4"
 
+# Deck name keys (cards-core): Unicode NFC, which std does not provide
+# (ADR 0010).
+unicode-normalization = "0.1"
+
 # Test-only: temporary directories for filesystem tests.
 tempfile = "3"
 # Test-only: property-based tests (scheduler replay).

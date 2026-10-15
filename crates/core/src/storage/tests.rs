@@ -64,7 +64,7 @@ pub(super) fn mode(path: &Path) -> u32 {
 
 pub(super) fn insert_sample(conn: &Connection) {
     conn.execute_batch(&format!(
-        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('{DECK}', 'Maths', 1, 1);
+        "INSERT INTO decks (id, name, name_key, created_at, updated_at) VALUES ('{DECK}', 'Maths', 'maths', 1, 1);
          INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
              VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1);
          INSERT INTO review_events VALUES ('{EVENT}', '{CARD}', 2, 'pass', 1500);
@@ -224,18 +224,21 @@ pub(super) const FAKE_V1: Migration = Migration {
     name: "fake v1",
     sql: "CREATE TABLE t(x INTEGER NOT NULL) STRICT;",
     rebuild_schedule: false,
+    backfill: None,
 };
 pub(super) const FAKE_V2: Migration = Migration {
     version: 2,
     name: "fake v2",
     sql: "ALTER TABLE t ADD COLUMN y INTEGER NOT NULL DEFAULT 7;",
     rebuild_schedule: false,
+    backfill: None,
 };
 pub(super) const FAILING_V2: Migration = Migration {
     version: 2,
     name: "failing v2",
     sql: "CREATE TABLE u(x INTEGER) STRICT; INSERT INTO missing VALUES (1);",
     rebuild_schedule: false,
+    backfill: None,
 };
 const FK_VIOLATING_V2: Migration = Migration {
     version: 2,
@@ -245,6 +248,7 @@ const FK_VIOLATING_V2: Migration = Migration {
           CREATE TABLE c(p INTEGER REFERENCES p(id)) STRICT;
           INSERT INTO c VALUES (99);",
     rebuild_schedule: false,
+    backfill: None,
 };
 
 fn db_at_fake_v1(e: &Env) {
@@ -444,6 +448,7 @@ fn migration_that_commits_itself_is_not_recorded() {
         name: "committing v2",
         sql: "CREATE TABLE u(x INTEGER) STRICT; COMMIT;",
         rebuild_schedule: false,
+        backfill: None,
     };
     let e = env();
     db_at_fake_v1(&e);
@@ -605,10 +610,10 @@ fn schema_rejects_bad_values() {
             "INSERT INTO review_events VALUES ('01920000-0000-7000-8000-000000000009', '{CARD}', 5, 'pass', -1)"
         ),
         // Id not a lowercase 36-character UUID.
-        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('short', 'x', 1, 1)".to_owned(),
-        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('01920000-0000-7000-8000-00000000000A', 'x', 1, 1)".to_owned(),
+        "INSERT INTO decks (id, name, name_key, created_at, updated_at) VALUES ('short', 'x', 'x', 1, 1)".to_owned(),
+        "INSERT INTO decks (id, name, name_key, created_at, updated_at) VALUES ('01920000-0000-7000-8000-00000000000A', 'x', 'x', 1, 1)".to_owned(),
         // STRICT: text in an integer column.
-        "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('01920000-0000-7000-8000-00000000000b', 'x', 'now', 1)"
+        "INSERT INTO decks (id, name, name_key, created_at, updated_at) VALUES ('01920000-0000-7000-8000-00000000000b', 'x', 'x', 'now', 1)"
             .to_owned(),
         // Unknown card.
         "INSERT INTO review_events VALUES ('01920000-0000-7000-8000-000000000009', '01920000-0000-7000-8000-0000000000ff', 5, 'pass', 0)".to_owned(),
@@ -700,6 +705,7 @@ fn failed_schedule_rebuild_rolls_back_the_migration() {
         name: "rebuilding v2",
         sql: "CREATE TABLE u(x INTEGER) STRICT;",
         rebuild_schedule: true,
+        backfill: None,
     };
     let e = env();
     db_at_fake_v1(&e);
@@ -741,7 +747,7 @@ fn migration_0003_keeps_everything_live_and_unchanged() {
         )
     };
 
-    let mut store = e.open_with(DAY0 + 4 * DAY_MS, &MIGRATIONS[..3]).unwrap();
+    let store = e.open_with(DAY0 + 4 * DAY_MS, &MIGRATIONS[..3]).unwrap();
     assert_eq!(store.schema_version().unwrap(), 3);
     let live: i64 = store
         .conn
@@ -757,6 +763,10 @@ fn migration_0003_keeps_everything_live_and_unchanged() {
     assert_eq!(store.card_state(CARD).unwrap(), state);
     assert_eq!(store.card_state(CARD2).unwrap(), CardState::New);
 
+    // The operations target the current schema: upgrade the rest of the
+    // way, then use them on the data written at v2.
+    drop(store);
+    let mut store = e.open(DAY0 + 4 * DAY_MS).unwrap();
     let decks = store.list_decks(DAY0 + 400 * DAY_MS).unwrap();
     assert_eq!(decks.len(), 1);
     assert_eq!((decks[0].new_count, decks[0].due_count), (1, 1));
@@ -793,6 +803,122 @@ fn migration_0003_with_duplicate_deck_names_rolls_back() {
     assert_eq!(count(&store.conn, "decks"), 2);
 }
 
+/// A v3 database's decks, live and deleted, get their name keys from
+/// migration 0004, which computes them in Rust (NFC + lowercase).
+#[test]
+fn migration_0004_backfills_name_keys_for_every_deck() {
+    let e = env();
+    {
+        let v3 = e.open_with(DAY0, &MIGRATIONS[..3]).unwrap();
+        v3.conn
+            .execute_batch(&format!(
+                "INSERT INTO decks (id, name, created_at, updated_at, deleted_at)
+                     VALUES ('{DECK}', 'E\u{301}conomie', 1, 1, NULL),
+                            ('{CARD}', '\u{C9}conomie', 1, 1, 5),
+                            ('{CARD2}', 'MATHS', 1, 1, NULL);"
+            ))
+            .unwrap();
+    }
+    let store = e.open_with(DAY0, &MIGRATIONS[..4]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 4);
+    let keys: Vec<(String, String)> = store
+        .conn
+        .prepare("SELECT id, name_key FROM decks ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        keys,
+        [
+            (DECK.to_owned(), "\u{E9}conomie".to_owned()),
+            (CARD.to_owned(), "\u{E9}conomie".to_owned()),
+            (CARD2.to_owned(), "maths".to_owned()),
+        ]
+    );
+    // Names themselves are kept as typed.
+    let name: String = store
+        .conn
+        .query_row("SELECT name FROM decks WHERE id = ?1", [DECK], |r| r.get(0))
+        .unwrap();
+    assert_eq!(name, "E\u{301}conomie");
+    // A key can no longer be cleared.
+    let err = store
+        .conn
+        .execute("UPDATE decks SET name_key = NULL WHERE id = ?1", [DECK])
+        .unwrap_err();
+    assert!(err.to_string().contains("name_key is required"), "{err}");
+}
+
+/// Two live decks whose names only differ in case make migration 0004 fail
+/// and roll back; the database stays at v3, and its backup is there.
+#[test]
+fn migration_0004_with_names_differing_only_in_case_rolls_back() {
+    let e = env();
+    {
+        let v3 = e.open_with(DAY0, &MIGRATIONS[..3]).unwrap();
+        v3.conn
+            .execute_batch(&format!(
+                "INSERT INTO decks (id, name, created_at, updated_at)
+                     VALUES ('{DECK}', 'Maths', 1, 1), ('{CARD}', 'maths', 1, 1);"
+            ))
+            .unwrap();
+    }
+    let err = e.open_with(DAY0, &MIGRATIONS[..4]).unwrap_err();
+    assert!(
+        matches!(err, Error::MigrationBackfill { version: 4, .. }),
+        "{err}"
+    );
+    assert_eq!(e.backups().len(), 1);
+    let store = e.open_with(DAY0, &MIGRATIONS[..3]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 3);
+    assert_eq!(count(&store.conn, "decks"), 2);
+    // The SQL half (index swap, new column, triggers) was undone too.
+    let objects = |sql: &str| -> i64 { store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(
+        objects("SELECT count(*) FROM pragma_table_info('decks') WHERE name = 'name_key'"),
+        0
+    );
+    assert_eq!(
+        objects("SELECT count(*) FROM sqlite_schema WHERE name = 'decks_live_name'"),
+        1
+    );
+    assert_eq!(
+        objects(
+            "SELECT count(*) FROM sqlite_schema
+             WHERE name IN ('decks_live_name_key', 'decks_name_key_required_on_insert',
+                            'decks_name_key_required_on_update')"
+        ),
+        0
+    );
+}
+
+/// Migration 0005 rebuilds cache rows written by the scheduler before the
+/// interval floor (here: a stale row with a too-early due date).
+#[test]
+fn migration_0005_rebuilds_the_schedule_cache() {
+    let e = env();
+    {
+        let v4 = e.open_with(DAY0, &MIGRATIONS[..4]).unwrap();
+        insert_sample(&v4.conn);
+    }
+    let store = e.open_with(DAY0, &MIGRATIONS[..5]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 5);
+    let events = store.review_events(CARD).unwrap();
+    let expected = Scheduler::default().rebuild_state(CARD, &events).unwrap();
+    assert_eq!(store.card_state(CARD).unwrap(), expected);
+    // The sample's cache row (due at 3 ms) was replaced.
+    assert_ne!(scheduled_due(&store), 3);
+}
+
+fn scheduled_due(store: &Store) -> i64 {
+    match store.card_state(CARD).unwrap() {
+        CardState::Scheduled(s) => s.due_at,
+        CardState::New => panic!("expected a schedule"),
+    }
+}
+
 #[test]
 fn rebuild_schedule_cache_matches_rebuild_state_and_is_idempotent() {
     let e = env();
@@ -800,7 +926,7 @@ fn rebuild_schedule_cache_matches_rebuild_state_and_is_idempotent() {
     store
         .conn
         .execute_batch(&format!(
-            "INSERT INTO decks (id, name, created_at, updated_at) VALUES ('{DECK}', 'Maths', 1, 1);
+            "INSERT INTO decks (id, name, name_key, created_at, updated_at) VALUES ('{DECK}', 'Maths', 'maths', 1, 1);
              INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
                  VALUES ('{CARD}', '{DECK}', 'a', 'b', 1, 1),
                         ('{CARD2}', '{DECK}', 'c', 'd', 1, 1);"

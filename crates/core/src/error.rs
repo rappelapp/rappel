@@ -170,6 +170,17 @@ pub enum Error {
         source: Box<Error>,
     },
 
+    /// A migration's Rust backfill step failed (for migration 0004: two
+    /// live decks whose names now count as the same). The migration was
+    /// rolled back.
+    #[error("migration {version} failed to fill in new values: {source}")]
+    MigrationBackfill {
+        /// The migration that was rolled back.
+        version: u32,
+        /// What went wrong.
+        source: Box<Error>,
+    },
+
     /// A value read from the database is not valid for its column.
     #[error("invalid value in {column}: {value}")]
     InvalidColumn {
@@ -215,7 +226,8 @@ pub enum Error {
     #[error("a deck name cannot be empty")]
     EmptyDeckName,
 
-    /// Another deck that is not deleted already has this name.
+    /// Another deck that is not deleted already has this name, ignoring
+    /// case and Unicode composition ([`crate::domain::deck_name_key`]).
     #[error("a deck named {0:?} already exists")]
     DuplicateDeckName(String),
 

@@ -1,7 +1,7 @@
 use fsrs::{FSRSItem, FSRSReview};
 use proptest::prelude::*;
 
-use super::fuzz::{MAX_INTERVAL_DAYS, fuzz_range};
+use super::fuzz::{MAX_INTERVAL_DAYS, floored_range, fuzz_factor, fuzz_range, fuzzed_days};
 use super::*;
 
 const CARD: &str = "01929d4e-7a3c-7b12-8f00-0123456789ab";
@@ -279,11 +279,70 @@ fn fuzz_depends_on_card_and_review_count() {
     assert_ne!(walk(CARD), walk("01929d4e-7a3c-7b12-8f00-000000000001"));
 }
 
+/// A review card recalled long after it was due, whose new FSRS interval
+/// is shorter than the gap it survived: the Pass is scheduled at least
+/// elapsed + 1 days out, whatever the fuzz (ADR 0009).
+#[test]
+fn late_review_pass_is_at_least_elapsed_plus_one_day() {
+    let s = Scheduler::default();
+    let hard = Schedule {
+        phase: Phase::Review,
+        stability: 0.5,
+        difficulty: 10.0,
+        due_at: T0 + DAY_MS,
+        last_review_at: T0,
+        reps: 5,
+        lapses: 3,
+    };
+    let elapsed = 30;
+    let now = T0 + i64::from(elapsed) * DAY_MS;
+    for i in 0..500 {
+        let card = format!("01929d4e-7a3c-7b12-8f00-{i:012x}");
+        let st = scheduled(
+            s.schedule(&card, &CardState::Scheduled(hard), Grade::Pass, now)
+                .unwrap(),
+        );
+        // The floor matters here: FSRS alone would give less.
+        assert!(f64::from(s.interval(st.stability)) < f64::from(elapsed + 1));
+        let days = (st.due_at - now) / DAY_MS;
+        assert!(days > i64::from(elapsed), "{card}: {days} days");
+        let (lo, hi) = floored_range(f64::from(s.interval(st.stability)), elapsed + 1);
+        assert!((i64::from(lo)..=i64::from(hi)).contains(&days));
+    }
+}
+
+/// A Pass on time, where FSRS's interval is above the floor, is not
+/// affected by it.
+#[test]
+fn on_time_review_pass_ignores_the_floor() {
+    let s = Scheduler::default();
+    let mut state = run(&s, &[(T0, Grade::Pass), (T0 + STEP_MS, Grade::Pass)]);
+    for _ in 0..4 {
+        let st = scheduled(state);
+        state = s.schedule(CARD, &state, Grade::Pass, st.due_at).unwrap();
+    }
+    let prev = scheduled(state);
+    let now = prev.due_at;
+    let next = scheduled(s.schedule(CARD, &state, Grade::Pass, now).unwrap());
+    let elapsed = elapsed_days(prev.last_review_at, now);
+    let interval = f64::from(s.interval(next.stability));
+    assert!(interval > f64::from(elapsed + 1) + 10.0, "{interval}");
+    assert_eq!(floored_range(interval, elapsed + 1), fuzz_range(interval));
+    let days = u32::try_from((next.due_at - now) / DAY_MS).unwrap();
+    assert_eq!(days, fuzzed_days(interval, fuzz_factor(CARD, prev.reps)));
+}
+
 // --- Property tests ---
 
-/// Time between two reviews: mostly same-session gaps or up to 400 days.
+/// Time between two reviews: mostly same-session gaps or up to 400 days,
+/// rarely up to 110 years (beyond the 100-year interval cap).
 fn gap() -> impl Strategy<Value = i64> {
-    prop_oneof![0..3 * STEP_MS, 0..2 * DAY_MS, 0..400 * DAY_MS]
+    prop_oneof![
+        10 => 0..3 * STEP_MS,
+        10 => 0..2 * DAY_MS,
+        10 => 0..400 * DAY_MS,
+        1 => 0..40_000 * DAY_MS,
+    ]
 }
 
 fn grade() -> impl Strategy<Value = Grade> {
@@ -350,16 +409,26 @@ proptest! {
             prop_assert!((1.0..=10.0).contains(&st.difficulty), "D = {}", st.difficulty);
 
             // Due date: the 10-minute step, or whole days within the fuzz
-            // range of FSRS's interval.
+            // range of FSRS's interval raised to the floor (ADR 0009). A
+            // Pass on a review card is never shorter than the gap + 1 day.
             let wait = st.due_at - e.reviewed_at;
+            let (prev_phase, elapsed) = match prev {
+                CardState::New => (None, 0),
+                CardState::Scheduled(p) => (Some(p.phase), elapsed_days(p.last_review_at, e.reviewed_at)),
+            };
             match st.phase {
                 Phase::Learning | Phase::Relearning => prop_assert_eq!(wait, STEP_MS),
                 Phase::Review => {
                     prop_assert_eq!(wait % DAY_MS, 0);
                     let days = u32::try_from(wait / DAY_MS).unwrap();
-                    let (lo, hi) = fuzz_range(f64::from(s.interval(st.stability)));
+                    let floor = prev_phase.map_or(1, |p| pass_floor(p, elapsed));
+                    let (lo, hi) = floored_range(f64::from(s.interval(st.stability)), floor);
                     prop_assert!((lo..=hi).contains(&days), "{days} not in {lo}..={hi}");
                     prop_assert!((1..=MAX_INTERVAL_DAYS).contains(&days));
+                    if prev_phase == Some(Phase::Review) {
+                        let min = elapsed.saturating_add(1).min(MAX_INTERVAL_DAYS);
+                        prop_assert!(days >= min, "{days} < {min}");
+                    }
                 }
             }
 

@@ -69,13 +69,40 @@ pub(crate) fn fuzz_range(interval: f64) -> (u32, u32) {
     (lower, upper)
 }
 
-/// The fuzzed interval in days, in `1..=MAX_INTERVAL_DAYS`. `factor` is in
-/// `[0, 1)` (from [`fuzz_factor`]); each day of the range is equally likely.
+/// The fuzzed interval in days, in `1..=MAX_INTERVAL_DAYS`, with no floor.
+/// `factor` is in `[0, 1)` (from [`fuzz_factor`]); each day of the range is
+/// equally likely. The scheduler always uses [`floored_fuzzed_days`] (a
+/// floor of 1 gives the same result); this is the reference the tests
+/// compare it with.
+#[cfg(test)]
 pub(crate) fn fuzzed_days(interval: f64, factor: f64) -> u32 {
-    let (lower, upper) = fuzz_range(interval);
+    pick(fuzz_range(interval), factor)
+}
+
+/// The day of `lower..=upper` that `factor` (in `[0, 1)`) selects; each
+/// day is equally likely.
+fn pick((lower, upper): (u32, u32), factor: f64) -> u32 {
     let span = f64::from(upper - lower + 1);
     let offset = to_days((factor.clamp(0.0, 1.0) * span).floor());
     (lower + offset).min(upper)
+}
+
+/// The days a Pass may be scheduled to when the interval must be at least
+/// `floor` days (ADR 0009): the fuzz range of `max(interval, floor)`, with
+/// both ends raised to `floor`. `floor` is capped at [`MAX_INTERVAL_DAYS`];
+/// a floor of 1 changes nothing.
+pub(crate) fn floored_range(interval: f64, floor: u32) -> (u32, u32) {
+    let floor = floor.min(MAX_INTERVAL_DAYS);
+    let (lower, upper) = fuzz_range(interval.max(f64::from(floor)));
+    (lower.max(floor), upper.max(floor))
+}
+
+/// The fuzzed interval of a Pass that must be at least `floor` days: a
+/// day of [`floored_range`], each equally likely, as Anki does (it clamps
+/// the fuzz bounds, then picks within them). With a floor of 1 this is
+/// the plain fuzz (`fuzzed_days`, kept for tests).
+pub(crate) fn floored_fuzzed_days(interval: f64, floor: u32, factor: f64) -> u32 {
+    pick(floored_range(interval, floor), factor)
 }
 
 /// A whole, non-negative day count that fits in `u32` to `u32`.
@@ -91,6 +118,59 @@ fn to_days(days: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn floor_raises_the_interval_before_and_the_result_after_fuzz() {
+        // Without a floor (1), nothing changes.
+        assert_eq!(floored_range(10.0, 1), fuzz_range(10.0));
+        assert_eq!(floored_range(f64::NAN, 1), (1, 1));
+        // An interval below the floor is fuzzed around the floor, and the
+        // lower end is clamped back up to it: 10 days -> (8, 12) -> (10, 12).
+        assert_eq!(floored_range(3.0, 10), (10, 12));
+        // A floor below the interval only clamps the fuzz range.
+        assert_eq!(floored_range(10.0, 9), (9, 12));
+        assert_eq!(floored_range(10.0, 5), (8, 12));
+        // The floor is capped at the longest interval.
+        assert_eq!(
+            floored_range(1.0, u32::MAX),
+            (MAX_INTERVAL_DAYS, MAX_INTERVAL_DAYS)
+        );
+        for i in 0..1000 {
+            let factor = f64::from(i) / 1000.0;
+            for (interval, floor) in [(3.0, 10), (10.0, 9), (50.0, 2), (0.5, 4)] {
+                let days = floored_fuzzed_days(interval, floor, factor);
+                let (lo, hi) = floored_range(interval, floor);
+                assert!(
+                    days >= floor && (lo..=hi).contains(&days),
+                    "{interval} {floor} {factor}"
+                );
+            }
+        }
+    }
+
+    /// The point of picking inside the floored range: results spread over
+    /// it instead of piling up on the floor day.
+    #[test]
+    fn floored_results_spread_over_the_range() {
+        let mut seen = std::collections::BTreeSet::new();
+        for i in 0..1000 {
+            seen.insert(floored_fuzzed_days(3.0, 10, f64::from(i) / 1000.0));
+        }
+        assert_eq!(seen.into_iter().collect::<Vec<_>>(), [10, 11, 12]);
+    }
+
+    #[test]
+    fn floor_of_one_is_plain_fuzz() {
+        for i in 0..1000 {
+            let factor = f64::from(i) / 1000.0;
+            for interval in [0.3, 2.0, 3.0, 10.0, 100.0, f64::NAN] {
+                assert_eq!(
+                    floored_fuzzed_days(interval, 1, factor),
+                    fuzzed_days(interval, factor)
+                );
+            }
+        }
+    }
 
     #[test]
     fn short_intervals_are_not_fuzzed() {

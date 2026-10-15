@@ -130,10 +130,102 @@ fn duplicate_names_are_refused_on_create_and_rename() {
         store.rename_deck_at(&physics.id, "Maths", T0),
         Err(Error::DuplicateDeckName(_))
     ));
-    // Exact comparison: a different case is a different name.
-    store.create_deck_at("maths", T0).unwrap();
-    assert_eq!(names(&store), ["Maths", "maths", "Physics"]);
+    assert_eq!(names(&store), ["Maths", "Physics"]);
     assert_eq!(store.list_decks(T0).unwrap()[0].deck, maths);
+}
+
+const COMPOSED: &str = "\u{C9}conomie"; // "Économie", É as one code point
+const DECOMPOSED: &str = "E\u{301}conomie"; // E + combining acute accent
+
+#[test]
+fn names_differing_only_in_case_collide() {
+    let mut store = Store::in_memory();
+    store.create_deck_at("Maths", T0).unwrap();
+    for name in ["maths", "MATHS", " mAtHs "] {
+        assert!(
+            matches!(
+                store.create_deck_at(name, T0),
+                Err(Error::DuplicateDeckName(_))
+            ),
+            "{name}"
+        );
+    }
+    let physics = store.create_deck_at("Physics", T0).unwrap();
+    assert!(matches!(
+        store.rename_deck_at(&physics.id, "maths", T0),
+        Err(Error::DuplicateDeckName(_))
+    ));
+    assert_eq!(names(&store), ["Maths", "Physics"]);
+}
+
+#[test]
+fn composed_and_decomposed_accents_collide_in_any_case() {
+    let mut store = Store::in_memory();
+    store.create_deck_at(COMPOSED, T0).unwrap();
+    for name in [
+        DECOMPOSED,
+        "\u{E9}conomie",
+        "e\u{301}conomie",
+        "\u{C9}CONOMIE",
+    ] {
+        assert!(
+            matches!(
+                store.create_deck_at(name, T0),
+                Err(Error::DuplicateDeckName(_))
+            ),
+            "{name:?}"
+        );
+    }
+    let other = store.create_deck_at("Other", T0).unwrap();
+    assert!(matches!(
+        store.rename_deck_at(&other.id, "e\u{301}conomie", T0),
+        Err(Error::DuplicateDeckName(_))
+    ));
+    // Accents still count: "Economie" is another name.
+    store.create_deck_at("Economie", T0).unwrap();
+    assert_eq!(names(&store), ["Economie", "Other", COMPOSED]);
+}
+
+#[test]
+fn a_deck_can_be_renamed_to_another_case_of_its_own_name() {
+    let mut store = Store::in_memory();
+    let deck = store.create_deck_at(DECOMPOSED, T0).unwrap();
+    store
+        .rename_deck_at(&deck.id, "\u{E9}CONOMIE", T0 + 1)
+        .unwrap();
+    let listed = store.list_decks(T0).unwrap().remove(0).deck;
+    assert_eq!(
+        (listed.name.as_str(), listed.updated_at),
+        ("\u{E9}CONOMIE", T0 + 1)
+    );
+}
+
+#[test]
+fn a_deleted_decks_name_is_reusable_in_any_case_or_form() {
+    let mut store = Store::in_memory();
+    let old = store.create_deck_at(COMPOSED, T0).unwrap();
+    store.delete_deck_at(&old.id, T0).unwrap();
+    let new = store.create_deck_at("e\u{301}conomie", T0).unwrap();
+    store.delete_deck_at(&new.id, T0).unwrap();
+    let other = store.create_deck_at("Other", T0).unwrap();
+    store
+        .rename_deck_at(&other.id, "\u{C9}CONOMIE", T0)
+        .unwrap();
+    assert_eq!(names(&store), ["\u{C9}CONOMIE"]);
+}
+
+#[test]
+fn a_deck_without_a_name_key_is_refused() {
+    let store = Store::in_memory();
+    let err = store
+        .conn
+        .execute(
+            "INSERT INTO decks (id, name, created_at, updated_at)
+             VALUES ('01920000-0000-7000-8000-000000000001', 'Maths', 1, 1)",
+            [],
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("name_key is required"), "{err}");
 }
 
 #[test]

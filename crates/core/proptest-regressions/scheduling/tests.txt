@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 743bbff02935c7a33c3b8c6f355b310b488a58153cb923894dff57a4e8984926 # shrinks to (card, events, retention) = ("00a00aaa-a0aa-70a0-aa0a-00aaaa000aaa", [ReviewEvent { id: "01929d4e-0000-7000-8000-000000000000", card_id: "00a00aaa-a0aa-70a0-aa0a-00aaaa000aaa", reviewed_at: 1792067696789, grade: Fail, duration_ms: 1000 }, ReviewEvent { id: "01929d4e-0000-7000-8000-000000000001", card_id: "00a00aaa-a0aa-70a0-aa0a-00aaaa000aaa", reviewed_at: 1792067696789, grade: Pass, duration_ms: 1000 }, ReviewEvent { id: "01929d4e-0000-7000-8000-000000000002", card_id: "00a00aaa-a0aa-70a0-aa0a-00aaaa000aaa", reviewed_at: 1793320496789, grade: Pass, duration_ms: 1000 }], 0.8)

@@ -3,6 +3,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use unicode_normalization::UnicodeNormalization;
+
 /// The answer to a review. Cards has exactly two grades (SPEC §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Grade {
@@ -141,12 +143,34 @@ pub struct Schedule {
 pub struct Deck {
     /// Deck id (`UUIDv7` string).
     pub id: String,
-    /// The name, trimmed, unique among decks that are not deleted.
+    /// The name, trimmed, unique among decks that are not deleted by its
+    /// [`deck_name_key`].
     pub name: String,
     /// When the deck was created, UTC milliseconds.
     pub created_at: i64,
     /// When the deck was last renamed (or created), UTC milliseconds.
     pub updated_at: i64,
+}
+
+/// The key under which deck names must be unique (ADR 0010): the trimmed
+/// name in Unicode NFC, lower-cased, and in NFC again. NFC makes a composed "É" (U+00C9) and
+/// "E" + combining acute (U+0301) equal; lower-casing makes "Maths" and
+/// "maths" equal. Accents still count ("Économie" ≠ "Economie"), and this
+/// is lower-casing, not full case folding ("STRASSE" ≠ "straße").
+///
+/// Migration 0004 stored keys computed with this function, so changing
+/// its result for any name needs a new migration that recomputes them.
+#[must_use]
+pub fn deck_name_key(name: &str) -> String {
+    // NFC again after lower-casing: case mapping does not promise NFC
+    // output (Unicode's recommended caseless matching normalises on both
+    // sides).
+    name.trim()
+        .nfc()
+        .collect::<String>()
+        .to_lowercase()
+        .nfc()
+        .collect()
 }
 
 /// A deck with the number of its cards that are new and due.
@@ -189,6 +213,21 @@ mod tests {
         }
         assert!("Pass".parse::<Grade>().is_err());
         assert!("again".parse::<Grade>().is_err());
+    }
+
+    #[test]
+    fn deck_name_key_ignores_case_and_unicode_composition() {
+        let composed = "\u{C9}conomie";
+        let decomposed = "E\u{301}conomie";
+        assert_ne!(composed, decomposed);
+        assert_eq!(deck_name_key(composed), "\u{E9}conomie");
+        assert_eq!(deck_name_key(decomposed), "\u{E9}conomie");
+        assert_eq!(deck_name_key("  \u{E9}conomie\n"), "\u{E9}conomie");
+        assert_eq!(deck_name_key("Maths"), deck_name_key("maths"));
+        assert_eq!(deck_name_key("MATHS"), "maths");
+        // Accents count; this is lower-casing, not case folding.
+        assert_ne!(deck_name_key(composed), deck_name_key("Economie"));
+        assert_ne!(deck_name_key("STRASSE"), deck_name_key("stra\u{DF}e"));
     }
 
     #[test]

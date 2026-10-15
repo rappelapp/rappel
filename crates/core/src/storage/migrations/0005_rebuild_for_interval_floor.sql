@@ -1,0 +1,7 @@
+-- Migration 0005: no schema change. NEVER EDIT THIS FILE; add a new
+-- migration.
+--
+-- The scheduler now keeps a review Pass at least elapsed days + 1 (ADR
+-- 0009), so cache rows written by the old rule no longer equal a rebuild.
+-- The migration runner rebuilds card_schedule from review_events in this
+-- migration's transaction (rebuild_schedule).

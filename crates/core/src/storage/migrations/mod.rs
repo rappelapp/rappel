@@ -13,8 +13,9 @@
 //! transaction first; add that to the framework when the first one is
 //! written, together with a test.
 
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
+use crate::domain::deck_name_key;
 use crate::error::{Error, Result};
 use crate::scheduling::Scheduler;
 use crate::storage::schedule::write_schedule_cache;
@@ -32,9 +33,18 @@ pub(crate) struct Migration {
     /// before that point stays committed.
     pub sql: &'static str,
     /// Rebuild the `card_schedule` cache from `review_events` after the
-    /// SQL, in the same transaction. For migrations that reshape the cache.
+    /// SQL (and the backfill), in the same transaction. For migrations that
+    /// reshape the cache or change the scheduler's output (ADR 0009).
     pub rebuild_schedule: bool,
+    /// Rust code run after the SQL, in the same transaction, for values
+    /// SQL cannot compute (e.g. Unicode normalization). Its error rolls the
+    /// migration back. Like the SQL, it must never change once merged: a
+    /// different result needs a new migration.
+    pub backfill: Option<Backfill>,
 }
+
+/// A migration's Rust step; see [`Migration::backfill`].
+pub(crate) type Backfill = fn(&Transaction<'_>) -> Result<()>;
 
 /// All migrations, in order.
 pub(crate) const MIGRATIONS: &[Migration] = &[
@@ -43,20 +53,53 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "initial",
         sql: include_str!("0001_initial.sql"),
         rebuild_schedule: false,
+        backfill: None,
     },
     Migration {
         version: 2,
         name: "card_schedule phase",
         sql: include_str!("0002_card_schedule_phase.sql"),
         rebuild_schedule: true,
+        backfill: None,
     },
     Migration {
         version: 3,
         name: "soft delete",
         sql: include_str!("0003_soft_delete.sql"),
         rebuild_schedule: false,
+        backfill: None,
+    },
+    Migration {
+        version: 4,
+        name: "deck name key",
+        sql: include_str!("0004_deck_name_key.sql"),
+        rebuild_schedule: false,
+        backfill: Some(backfill_deck_name_keys),
+    },
+    Migration {
+        version: 5,
+        name: "rebuild for interval floor",
+        sql: include_str!("0005_rebuild_for_interval_floor.sql"),
+        rebuild_schedule: true,
+        backfill: None,
     },
 ];
+
+/// Migration 0004: `decks.name_key` for every deck, deleted ones included.
+/// Two live decks whose names now share a key violate the unique index, so
+/// the migration fails and rolls back.
+fn backfill_deck_name_keys(tx: &Transaction<'_>) -> Result<()> {
+    let decks: Vec<(String, String)> = {
+        let mut stmt = tx.prepare("SELECT id, name FROM decks")?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let mut update = tx.prepare("UPDATE decks SET name_key = ?2 WHERE id = ?1")?;
+    for (id, name) in decks {
+        update.execute(params![id, deck_name_key(&name)])?;
+    }
+    Ok(())
+}
 
 /// The schema version a database has after all of `migrations`.
 pub(crate) fn latest(migrations: &[Migration]) -> u32 {
@@ -84,6 +127,13 @@ pub(crate) fn migrate(conn: &mut Connection, migrations: &[Migration], current: 
             // Whatever it committed cannot be undone here, but the version
             // is not bumped, so the migration is not recorded as done.
             return Err(Error::MigrationEndedTransaction { version: m.version });
+        }
+        if let Some(backfill) = m.backfill {
+            // An error drops `tx`, which rolls the migration back.
+            backfill(&tx).map_err(|e| Error::MigrationBackfill {
+                version: m.version,
+                source: Box::new(e),
+            })?;
         }
         if m.rebuild_schedule {
             // Default retention: there is no settings table yet. When there
@@ -153,6 +203,8 @@ mod tests {
             (1, 2_537_882_282_965_863_491),
             (2, 11_540_844_169_458_386_709),
             (3, 12_700_174_011_840_410_413),
+            (4, 274_116_458_028_196_935),
+            (5, 16_265_802_780_356_427_840),
         ];
         assert_eq!(
             MIGRATIONS.len(),
