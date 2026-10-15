@@ -28,7 +28,7 @@
 ## Quality gate
 `scripts/check.sh` runs, in order:
 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo deny --locked check`.
-A slice is not done until `scripts/check.sh` passes. It also runs as the git pre-commit hook and in CI (CI not set up yet).
+A slice is not done until `scripts/check.sh` passes. It also runs as the git pre-commit hook and in CI (`.github/workflows/ci.yml`, required check `check`).
 
 ## Workflow for each slice
 1. Short plan: files to create or change, migrations, new dependencies. Wait for approval in plan mode.

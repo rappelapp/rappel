@@ -32,7 +32,7 @@ cards/
 ├── LICENSE                    # GPL-3.0-or-later
 ├── scripts/check.sh           # the single quality gate (see CLAUDE.md)
 ├── scripts/pre-commit.sh  scripts/install-hooks.sh
-├── .github/workflows/ci.yml   # (next slice)
+├── .github/workflows/ci.yml   # runs scripts/check.sh (ADR 0003)
 ├── .claude/agents/reviewer.md
 └── crates/
     ├── core/                  # cards-core — no gtk/glib/adw

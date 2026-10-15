@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The single quality gate. A slice is not done until this passes.
-# Runs as the git pre-commit hook (scripts/pre-commit.sh) and, later, in CI.
+# Runs as the git pre-commit hook (scripts/pre-commit.sh) and in CI (.github/workflows/ci.yml).
 set -euo pipefail
 
 cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"

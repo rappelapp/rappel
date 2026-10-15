@@ -13,3 +13,4 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - Docs skeleton: README, ARCHITECTURE, this changelog, ADR 0001.
 - `reviewer` Claude Code agent for independent slice review.
 - ADR 0002: GTK/libadwaita minimum versions and the Blueprint build pipeline.
+- CI: GitHub Actions workflow running `scripts/check.sh` on pull requests and pushes to `main` in an Ubuntu 26.04 container, with cargo caching (ADR 0003).
