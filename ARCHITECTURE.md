@@ -19,13 +19,19 @@ Dependency direction: `cards` → `cards-core`, never the reverse. `cards-core` 
 - `src/error.rs`: the crate-wide `Error` enum (`thiserror`) and `Result` alias.
 - `src/data_dir.rs`: `resolve_data_dir` (pure; takes a `DataDirEnv` and a `BuildProfile`) and `ensure_data_dir` (creates a directory with mode `0700`). Debug builds refuse the release directory. See ADR 0004.
 - `src/time.rs`: `now_ms` (UTC milliseconds) and `utc_parts` (calendar fields from milliseconds).
+- `src/domain/`: shared types: `Grade` (Fail/Pass), `ReviewEvent`, `Phase`, `CardState` (`New` or `Scheduled(Schedule)`).
+- `src/scheduling/`: FSRS scheduling (ADR 0006), using the `fsrs` crate.
+  - `mod.rs`: `Scheduler` (desired retention, default FSRS-6 parameters). `schedule(card_id, state, grade, now)` gives the state after one review; `rebuild_state(card_id, events)` replays a card's log by folding `schedule`. 10-minute step for new and failed cards; elapsed days are rounded 24-hour periods.
+  - `fuzz.rs`: deterministic interval fuzz (Anki's ranges, seeded from card id + review count).
+  - `tests.rs`: FSRS reference values and property tests (rebuild = review-by-review).
 - `src/storage/`: SQLite storage (ADR 0005).
   - `mod.rs`: `Store::open(data_dir)` opens `<data_dir>/cards.sqlite3`. It checks integrity, sets WAL/FK, backs up and migrates.
   - `migrations/`: `MIGRATIONS` (numbered `NNNN_*.sql` files embedded with `include_str!`) and `migrate`. Merged migrations are hash-pinned by a test.
   - `backup.rs`: online-backup copies into `<data_dir>/backups/` (keeps 14).
+  - `schedule.rs`: `Store::review_events`, `Store::card_state` (reads the `card_schedule` cache) and `Store::rebuild_schedule_cache`. A migration with `rebuild_schedule: true` rebuilds the cache inside its own transaction.
   - `tests.rs`: store-level tests.
 
-  The schema is in `migrations/0001_initial.sql`.
+  The schema is in `migrations/0001_initial.sql`; `0002_card_schedule_phase.sql` reshapes the `card_schedule` cache (adds `phase`).
 
 ### `cards` today
 

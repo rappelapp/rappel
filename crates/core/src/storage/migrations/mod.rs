@@ -16,6 +16,8 @@
 use rusqlite::{Connection, TransactionBehavior};
 
 use crate::error::{Error, Result};
+use crate::scheduling::Scheduler;
+use crate::storage::schedule::write_schedule_cache;
 
 /// One schema migration.
 #[derive(Debug, Clone, Copy)]
@@ -29,14 +31,26 @@ pub(crate) struct Migration {
     /// as [`Error::MigrationEndedTransaction`], but whatever it committed
     /// before that point stays committed.
     pub sql: &'static str,
+    /// Rebuild the `card_schedule` cache from `review_events` after the
+    /// SQL, in the same transaction. For migrations that reshape the cache.
+    pub rebuild_schedule: bool,
 }
 
 /// All migrations, in order.
-pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: include_str!("0001_initial.sql"),
-}];
+pub(crate) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial",
+        sql: include_str!("0001_initial.sql"),
+        rebuild_schedule: false,
+    },
+    Migration {
+        version: 2,
+        name: "card_schedule phase",
+        sql: include_str!("0002_card_schedule_phase.sql"),
+        rebuild_schedule: true,
+    },
+];
 
 /// The schema version a database has after all of `migrations`.
 pub(crate) fn latest(migrations: &[Migration]) -> u32 {
@@ -44,7 +58,8 @@ pub(crate) fn latest(migrations: &[Migration]) -> u32 {
 }
 
 /// Applies every migration newer than `current`, each in its own
-/// transaction that also sets `user_version` and checks foreign keys. On the
+/// transaction that also sets `user_version` and checks foreign keys (and
+/// rebuilds the schedule cache if the migration asks for it). On the
 /// first failure that migration is rolled back and the error returned; the
 /// database stays at the last migration that succeeded.
 pub(crate) fn migrate(conn: &mut Connection, migrations: &[Migration], current: u32) -> Result<()> {
@@ -63,6 +78,18 @@ pub(crate) fn migrate(conn: &mut Connection, migrations: &[Migration], current: 
             // Whatever it committed cannot be undone here, but the version
             // is not bumped, so the migration is not recorded as done.
             return Err(Error::MigrationEndedTransaction { version: m.version });
+        }
+        if m.rebuild_schedule {
+            // Default retention: there is no settings table yet. When there
+            // is, the stored desired retention must be used here (ADR 0006).
+            // An error drops `tx`, which rolls the migration back.
+            let cards = write_schedule_cache(&tx, &Scheduler::default()).map_err(|e| {
+                Error::MigrationRebuild {
+                    version: m.version,
+                    source: Box::new(e),
+                }
+            })?;
+            tracing::info!(cards, "schedule cache rebuilt");
         }
         tx.pragma_update(None, "user_version", m.version)
             .map_err(as_migration_err)?;
@@ -116,7 +143,10 @@ mod tests {
     /// append to this list, when adding a migration.
     #[test]
     fn migrations_are_unchanged() {
-        const PINNED: &[(u32, u64)] = &[(1, 2_537_882_282_965_863_491)];
+        const PINNED: &[(u32, u64)] = &[
+            (1, 2_537_882_282_965_863_491),
+            (2, 11_540_844_169_458_386_709),
+        ];
         assert_eq!(
             MIGRATIONS.len(),
             PINNED.len(),

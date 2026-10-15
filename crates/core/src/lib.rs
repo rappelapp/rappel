@@ -3,7 +3,9 @@
 //! This crate must never depend on gtk4, glib, gio, libadwaita or anything UI.
 
 pub mod data_dir;
+pub mod domain;
 mod error;
+pub mod scheduling;
 pub mod storage;
 pub mod time;
 

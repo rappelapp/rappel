@@ -132,6 +132,52 @@ pub enum Error {
         /// What SQLite reported.
         messages: Vec<String>,
     },
+
+    /// A desired retention outside the allowed range (0.80–0.97).
+    #[error("desired retention must be between 0.80 and 0.97, got {0}")]
+    InvalidRetention(f32),
+
+    /// FSRS could not compute a memory state (non-finite input state).
+    #[error("scheduler error: {0}")]
+    Fsrs(#[from] fsrs::FSRSError),
+
+    /// A review event of another card was passed to a card's rebuild.
+    #[error("review event {event_id} does not belong to card {card_id}")]
+    EventForOtherCard {
+        /// The stray event.
+        event_id: String,
+        /// The card being rebuilt.
+        card_id: String,
+    },
+
+    /// A review is dated before the card's last review (the clock went
+    /// backwards). Recording code stores `max(now, last_review_at)`.
+    #[error("review at {reviewed_at} is before the card's last review at {last_review_at}")]
+    ReviewBeforeLastReview {
+        /// The rejected review time, UTC milliseconds.
+        reviewed_at: i64,
+        /// The card's last review, UTC milliseconds.
+        last_review_at: i64,
+    },
+
+    /// Rebuilding the schedule cache during a migration failed. The
+    /// migration was rolled back.
+    #[error("migration {version} failed to rebuild the schedule cache: {source}")]
+    MigrationRebuild {
+        /// The migration that was rolled back.
+        version: u32,
+        /// What went wrong.
+        source: Box<Error>,
+    },
+
+    /// A value read from the database is not valid for its column.
+    #[error("invalid value in {column}: {value}")]
+    InvalidColumn {
+        /// `table.column`.
+        column: &'static str,
+        /// What was found.
+        value: String,
+    },
 }
 
 /// `Result` with [`Error`] as the error type.

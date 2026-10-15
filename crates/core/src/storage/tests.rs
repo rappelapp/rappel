@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use super::*;
+use crate::domain::{CardState, Phase, Schedule};
+use crate::scheduling::Scheduler;
 
 /// 2026-10-15T12:34:56.789Z
 const DAY0: i64 = 1_792_067_696_789;
@@ -66,7 +68,7 @@ fn insert_sample(conn: &Connection) {
          INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
              VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1);
          INSERT INTO review_events VALUES ('{EVENT}', '{CARD}', 2, 'pass', 1500);
-         INSERT INTO card_schedule VALUES ('{CARD}', 3, 1.5, 5.0, 2, 1, 0);"
+         INSERT INTO card_schedule VALUES ('{CARD}', 'learning', 3, 1.5, 5.0, 2, 1, 0);"
     ))
     .unwrap();
 }
@@ -213,7 +215,7 @@ fn migration_0001_applies_to_an_existing_empty_file() {
     assert_eq!(fs::metadata(&e.db).unwrap().len(), 0);
 
     let store = e.open(DAY0).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 1);
+    assert_eq!(store.schema_version().unwrap(), latest(MIGRATIONS));
     insert_sample(&store.conn);
 }
 
@@ -221,16 +223,19 @@ const FAKE_V1: Migration = Migration {
     version: 1,
     name: "fake v1",
     sql: "CREATE TABLE t(x INTEGER NOT NULL) STRICT;",
+    rebuild_schedule: false,
 };
 const FAKE_V2: Migration = Migration {
     version: 2,
     name: "fake v2",
     sql: "ALTER TABLE t ADD COLUMN y INTEGER NOT NULL DEFAULT 7;",
+    rebuild_schedule: false,
 };
 const FAILING_V2: Migration = Migration {
     version: 2,
     name: "failing v2",
     sql: "CREATE TABLE u(x INTEGER) STRICT; INSERT INTO missing VALUES (1);",
+    rebuild_schedule: false,
 };
 const FK_VIOLATING_V2: Migration = Migration {
     version: 2,
@@ -239,6 +244,7 @@ const FK_VIOLATING_V2: Migration = Migration {
           CREATE TABLE p(id INTEGER PRIMARY KEY) STRICT;
           CREATE TABLE c(p INTEGER REFERENCES p(id)) STRICT;
           INSERT INTO c VALUES (99);",
+    rebuild_schedule: false,
 };
 
 fn db_at_fake_v1(e: &Env) {
@@ -334,8 +340,8 @@ fn newer_database_is_refused_untouched() {
             err,
             Error::UnsupportedVersion {
                 found: 99,
-                supported: 1
-            }
+                supported
+            } if supported == latest(MIGRATIONS)
         ),
         "{err}"
     );
@@ -437,6 +443,7 @@ fn migration_that_commits_itself_is_not_recorded() {
         version: 2,
         name: "committing v2",
         sql: "CREATE TABLE u(x INTEGER) STRICT; COMMIT;",
+        rebuild_schedule: false,
     };
     let e = env();
     db_at_fake_v1(&e);
@@ -576,7 +583,7 @@ fn deleting_a_card_without_reviews_drops_its_cached_schedule() {
         .execute_batch(&format!(
             "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
                  VALUES ('{CARD2}', '{DECK}', 'f', 'b', 1, 1);
-             INSERT INTO card_schedule VALUES ('{CARD2}', 3, 1.0, 5.0, 2, 1, 0);
+             INSERT INTO card_schedule VALUES ('{CARD2}', 'learning', 3, 1.0, 5.0, 2, 1, 0);
              DELETE FROM cards WHERE id = '{CARD2}';"
         ))
         .unwrap();
@@ -606,6 +613,160 @@ fn schema_rejects_bad_values() {
         // Unknown card.
         "INSERT INTO review_events VALUES ('01920000-0000-7000-8000-000000000009', '01920000-0000-7000-8000-0000000000ff', 5, 'pass', 0)".to_owned(),
     ] {
+        assert!(store.conn.execute(&sql, []).is_err(), "{sql}");
+    }
+}
+
+// --- Schedule cache ---------------------------------------------------------
+
+/// Inserts review events for `card` at `DAY0 + offsets`, ids from `first_id`.
+fn insert_events(conn: &Connection, card: &str, first_id: u32, reviews: &[(i64, &str)]) {
+    for (i, (offset, grade)) in (first_id..).zip(reviews) {
+        conn.execute(
+            "INSERT INTO review_events VALUES (?1, ?2, ?3, ?4, 1000)",
+            rusqlite::params![
+                format!("01920000-0000-7000-8000-1{i:011}"),
+                card,
+                DAY0 + offset,
+                grade
+            ],
+        )
+        .unwrap();
+    }
+}
+
+const STEP: i64 = crate::scheduling::STEP_MS;
+const REVIEWS: [(i64, &str); 4] = [
+    (0, "fail"),
+    (STEP, "pass"),
+    (3 * DAY_MS, "fail"),
+    (3 * DAY_MS + STEP, "pass"),
+];
+
+/// A database written by v1 of the schema (cards, review events and a
+/// cache row in the old shape) upgrades to v2: the log is kept and the
+/// cache is rebuilt from it in the new shape.
+#[test]
+fn migration_0002_rebuilds_the_schedule_cache_from_the_log() {
+    let e = env();
+    {
+        let v1 = e.open_with(DAY0, &MIGRATIONS[..1]).unwrap();
+        v1.conn
+            .execute_batch(&format!(
+                "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+                 INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+                     VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1),
+                            ('{CARD2}', '{DECK}', 'new card', 'back', 1, 1);
+                 INSERT INTO card_schedule VALUES ('{CARD}', 3, 1.5, 5.0, 2, 1, 0);"
+            ))
+            .unwrap();
+        insert_events(&v1.conn, CARD, 0, &REVIEWS);
+    }
+
+    let store = e.open_with(DAY0 + 4 * DAY_MS, &MIGRATIONS[..2]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(count(&store.conn, "cards"), 2);
+    assert_eq!(count(&store.conn, "review_events"), 4);
+
+    let events = store.review_events(CARD).unwrap();
+    let expected = Scheduler::default().rebuild_state(CARD, &events).unwrap();
+    assert!(matches!(
+        expected,
+        CardState::Scheduled(Schedule {
+            phase: Phase::Review,
+            reps: 4,
+            lapses: 1,
+            ..
+        })
+    ));
+    assert_eq!(store.card_state(CARD).unwrap(), expected);
+    let CardState::Scheduled(cached) = expected else {
+        unreachable!("matched above")
+    };
+    let last = DAY0 + 3 * DAY_MS + STEP;
+    assert_eq!(cached.last_review_at, last);
+    assert_eq!((cached.due_at - last) % DAY_MS, 0);
+    assert!(cached.due_at >= last + DAY_MS);
+    assert_eq!(store.card_state(CARD2).unwrap(), CardState::New);
+    assert_eq!(count(&store.conn, "card_schedule"), 1);
+}
+
+/// A migration whose cache rebuild fails is rolled back as a whole.
+#[test]
+fn failed_schedule_rebuild_rolls_back_the_migration() {
+    // Fake v1 has no review_events table, so the rebuild cannot run.
+    const REBUILDING_V2: Migration = Migration {
+        version: 2,
+        name: "rebuilding v2",
+        sql: "CREATE TABLE u(x INTEGER) STRICT;",
+        rebuild_schedule: true,
+    };
+    let e = env();
+    db_at_fake_v1(&e);
+    let err = e.open_with(DAY0, &[FAKE_V1, REBUILDING_V2]).unwrap_err();
+    assert!(
+        matches!(err, Error::MigrationRebuild { version: 2, .. }),
+        "{err}"
+    );
+    let conn = Connection::open(&e.db).unwrap();
+    let v: u32 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, 1);
+    assert_eq!(tables(&conn), ["t"], "u was rolled back");
+}
+
+#[test]
+fn rebuild_schedule_cache_matches_rebuild_state_and_is_idempotent() {
+    let e = env();
+    let mut store = e.open(DAY0).unwrap();
+    store
+        .conn
+        .execute_batch(&format!(
+            "INSERT INTO decks VALUES ('{DECK}', 'Maths', 1, 1);
+             INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+                 VALUES ('{CARD}', '{DECK}', 'a', 'b', 1, 1),
+                        ('{CARD2}', '{DECK}', 'c', 'd', 1, 1);"
+        ))
+        .unwrap();
+    // Interleaved, inserted out of time order.
+    insert_events(&store.conn, CARD, 0, &REVIEWS[2..]);
+    insert_events(&store.conn, CARD2, 10, &[(DAY_MS, "pass"), (0, "pass")]);
+    insert_events(&store.conn, CARD, 20, &REVIEWS[..2]);
+
+    let events = store.review_events(CARD).unwrap();
+    let times: Vec<i64> = events.iter().map(|e| e.reviewed_at - DAY0).collect();
+    assert_eq!(times, REVIEWS.map(|r| r.0), "oldest first");
+
+    let scheduler = Scheduler::new(0.85).unwrap();
+    assert_eq!(store.rebuild_schedule_cache(&scheduler).unwrap(), 2);
+    let first = [
+        store.card_state(CARD).unwrap(),
+        store.card_state(CARD2).unwrap(),
+    ];
+    for (card, cached) in [CARD, CARD2].iter().zip(&first) {
+        let events = store.review_events(card).unwrap();
+        assert_eq!(*cached, scheduler.rebuild_state(card, &events).unwrap());
+    }
+
+    assert_eq!(store.rebuild_schedule_cache(&scheduler).unwrap(), 2);
+    let second = [
+        store.card_state(CARD).unwrap(),
+        store.card_state(CARD2).unwrap(),
+    ];
+    assert_eq!(first, second);
+}
+
+#[test]
+fn schedule_cache_rejects_bad_values() {
+    let e = env();
+    let store = e.open(DAY0).unwrap();
+    insert_sample(&store.conn);
+    store.conn.execute("DELETE FROM card_schedule", []).unwrap();
+    for (phase, reps, lapses) in [("new", 1, 0), ("review", 0, 0), ("review", 1, -1)] {
+        let sql = format!(
+            "INSERT INTO card_schedule VALUES ('{CARD}', '{phase}', 3, 1.0, 5.0, 2, {reps}, {lapses})"
+        );
         assert!(store.conn.execute(&sql, []).is_err(), "{sql}");
     }
 }
