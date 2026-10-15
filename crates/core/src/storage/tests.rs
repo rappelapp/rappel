@@ -410,9 +410,52 @@ fn failed_daily_backup_still_opens_a_healthy_database() {
     drop(store);
     fs::write(&e.backups, b"").unwrap();
 
-    let store = e.open(DAY0 + DAY_MS).unwrap();
+    let mut store = e.open(DAY0 + DAY_MS).unwrap();
     assert_eq!(count(&store.conn, "review_events"), 1);
     assert_eq!(store.schema_version().unwrap(), latest(MIGRATIONS));
+    let warnings = store.take_open_warnings();
+    assert!(
+        matches!(warnings.as_slice(), [OpenWarning::DailyBackupFailed(_)]),
+        "one warning for the failed backup, not a second for the prune: {warnings:?}"
+    );
+    assert!(store.take_open_warnings().is_empty(), "taken once");
+}
+
+#[test]
+fn healthy_opens_have_no_warnings() {
+    let e = env();
+    let mut store = e.open(DAY0).unwrap();
+    assert!(store.take_open_warnings().is_empty(), "new database");
+    drop(store);
+    let mut store = e.open(DAY0 + DAY_MS).unwrap();
+    assert!(store.take_open_warnings().is_empty(), "daily backup made");
+    assert_eq!(e.backups().len(), 1);
+}
+
+#[test]
+fn failed_prune_is_a_warning() {
+    let e = env();
+    drop(e.open(DAY0).unwrap());
+    drop(e.open(DAY0 + DAY_MS).unwrap());
+    // Today's backup exists, so none is attempted; a stale partial backup
+    // that cannot be removed (a non-empty directory) makes the prune fail.
+    let stuck = e.backups.join("cards-20261001-000000.sqlite3.partial");
+    fs::create_dir(&stuck).unwrap();
+    fs::write(stuck.join("x"), b"").unwrap();
+
+    let mut store = e.open(DAY0 + DAY_MS + 1000).unwrap();
+    let warnings = store.take_open_warnings();
+    assert!(
+        matches!(warnings.as_slice(), [OpenWarning::PruneFailed(_)]),
+        "{warnings:?}"
+    );
+}
+
+/// The app restores on a worker thread and sends the new store back.
+#[test]
+fn store_can_move_between_threads() {
+    fn assert_send<T: Send>() {}
+    assert_send::<Store>();
 }
 
 #[test]

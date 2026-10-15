@@ -49,8 +49,15 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - Migrations can have a Rust backfill step, run in the migration's transaction (ADR 0010).
 - Dependency: `unicode-normalization` in `cards-core` (NFC for deck name keys).
 - Dependency: `getrandom` in `cards-core` (random bits for ids; already in the tree through `fsrs`).
+- The app opens the database at startup through `AppState` (ADR 0011):
+  - The main window shows the empty state "No Decks Yet", or a "N Decks" placeholder if the database already has decks; deck features come later.
+  - A damaged database, a missing database file next to its journal, an interrupted restore, or another application's database shows a recovery page. It lists the backups newest first and restores the chosen one after an `AdwAlertDialog` confirmation, then the app continues.
+  - A database from a newer Cards shows a page that explains this and offers no restore.
+  - Any other startup failure shows a page with the message, the full error and the data folder.
+  - A failed daily backup (or prune) is shown as a toast, not only logged: `Store::open` keeps it as an `OpenWarning` (`Store::take_open_warnings`).
 
 ### Changed
+- Without a usable data folder the app shows an error page instead of starting with a toast.
 - Deck names are unique ignoring case and Unicode composition ("Maths" = "maths", composed "É" = "E" + accent); accents still count. Migration 0004 adds and backfills `decks.name_key` (ADR 0010).
 - Scheduling: a Pass on a review card is scheduled at least elapsed days + 1 out, before and after fuzz, as in Anki. Migration 0005 rebuilds the schedule cache for the new rule (ADR 0009).
 - SPEC §3: ids are TEXT UUIDv7, `cards.seq` is the FTS5 rowid, and card deletion will be a soft delete.

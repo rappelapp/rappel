@@ -13,10 +13,65 @@ template $CardsWindow: Adw.ApplicationWindow {
       [top]
       Adw.HeaderBar {}
 
-      content: Adw.StatusPage {
-        icon-name: "accessories-dictionary-symbolic";
-        title: _("Cards");
-        description: _("Nothing here yet");
+      // One page per startup outcome; window.rs picks the visible one.
+      content: Gtk.Stack stack {
+        transition-type: crossfade;
+
+        Gtk.StackPage {
+          name: "main";
+
+          child: Adw.StatusPage main_page {
+            icon-name: "accessories-dictionary-symbolic";
+            title: _("No Decks Yet");
+            description: _("Decks you create will appear here");
+          };
+        }
+
+        Gtk.StackPage {
+          name: "recovery";
+
+          child: $CardsRecoveryPage recovery_page {};
+        }
+
+        Gtk.StackPage {
+          name: "too-new";
+
+          child: Adw.StatusPage too_new_page {
+            icon-name: "software-update-available-symbolic";
+            title: _("Update Cards to Continue");
+
+            child: Gtk.Label too_new_path {
+              wrap: true;
+              wrap-mode: word_char;
+              selectable: true;
+              justify: center;
+
+              styles [
+                "dim-label",
+              ]
+            };
+          };
+        }
+
+        Gtk.StackPage {
+          name: "error";
+
+          child: Adw.StatusPage error_page {
+            icon-name: "dialog-error-symbolic";
+            title: _("Cards Could Not Start");
+
+            child: Gtk.Label error_details {
+              wrap: true;
+              wrap-mode: word_char;
+              selectable: true;
+              justify: center;
+
+              styles [
+                "dim-label",
+              ]
+            };
+          };
+        }
       };
     };
   };

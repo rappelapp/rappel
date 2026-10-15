@@ -1,0 +1,283 @@
+//! Startup: resolve the data directory, open the database, and when that
+//! fails, decide which screen explains it. No GTK here, so the mapping from
+//! error to screen is unit-tested (ADR 0011).
+
+use std::path::{Path, PathBuf};
+
+use cards_core::Error;
+use cards_core::data_dir::{self, BuildProfile, DataDirEnv};
+
+use crate::state::AppState;
+
+/// Why the database needs a backup restored before the app can continue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryReason {
+    /// The integrity check found damage (or the file is not a database).
+    Damaged,
+    /// The file is some other application's database.
+    NotCards,
+    /// The database file is missing but its journal is there.
+    MissingFile,
+    /// A restore moved the old database aside and did not finish.
+    InterruptedRestore,
+}
+
+impl RecoveryReason {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Damaged => "Database Is Damaged",
+            Self::NotCards => "Not a Cards Database",
+            Self::MissingFile => "Database File Is Missing",
+            Self::InterruptedRestore => "Restore Did Not Finish",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Damaged => {
+                "Cards found damage in its database and did not open it, so nothing in it was \
+                 changed. Restore a backup to continue. The damaged database is kept in the \
+                 data folder, not deleted."
+            }
+            Self::NotCards => {
+                "The database file was not made by Cards, so Cards did not open it. Restore a \
+                 backup to continue. The file is kept in the data folder, not deleted."
+            }
+            Self::MissingFile => {
+                "The database file is missing but its journal is still there, so Cards did not \
+                 start an empty database. Restore a backup to continue. The journal is kept in \
+                 the data folder, not deleted."
+            }
+            Self::InterruptedRestore => {
+                "A restore was interrupted before it finished. Restore a backup again to \
+                 continue. The previous database is kept in the data folder, not deleted."
+            }
+        }
+    }
+}
+
+/// Why the app cannot show its main page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Problem {
+    /// The database must be replaced by a backup.
+    Recovery {
+        reason: RecoveryReason,
+        data_dir: PathBuf,
+    },
+    /// The database comes from a newer Cards. Nothing to restore: the file
+    /// is fine, this build is too old.
+    TooNew {
+        found: i64,
+        supported: u32,
+        data_dir: PathBuf,
+    },
+    /// Anything else: a short message, the full error, and the data folder
+    /// when it is known.
+    Failed {
+        message: String,
+        details: String,
+        data_dir: Option<PathBuf>,
+    },
+}
+
+/// Resolves and creates the data directory and opens the database in it.
+pub fn start() -> Result<AppState, Problem> {
+    let dir = prepare_data_dir().map_err(|err| {
+        tracing::error!("data directory unavailable: {err}");
+        data_dir_problem(&err)
+    })?;
+    AppState::open(dir.clone()).map_err(|err| {
+        tracing::error!("cannot open the database: {err}");
+        open_problem(&err, &dir)
+    })
+}
+
+/// Resolves and creates the data directory.
+fn prepare_data_dir() -> cards_core::Result<PathBuf> {
+    let profile = if cfg!(debug_assertions) {
+        BuildProfile::Debug
+    } else {
+        BuildProfile::Release
+    };
+    let env = DataDirEnv::from_process();
+    if profile == BuildProfile::Debug
+        && env
+            .cards_data_dir
+            .as_ref()
+            .is_some_and(|dir| !dir.as_os_str().is_empty())
+    {
+        // The guard only knows the default release locations; real data kept
+        // in a custom CARDS_DATA_DIR inherited from the session is not caught.
+        tracing::warn!("debug build is using CARDS_DATA_DIR; make sure it is not real data");
+    }
+    let dir = data_dir::resolve_data_dir(&env, profile)?;
+    data_dir::ensure_data_dir(&dir)?;
+    tracing::info!(path = %dir.display(), ?profile, "data directory");
+    Ok(dir)
+}
+
+/// The screen for a data directory that could not be resolved or created.
+pub fn data_dir_problem(err: &Error) -> Problem {
+    let (message, data_dir) = match err {
+        Error::DebugUsesReleaseDir { path, .. } => (
+            "This debug build refused to use the data folder of the installed Cards.",
+            Some(path.clone()),
+        ),
+        Error::CreateDir { path, .. } => {
+            ("The data folder could not be created.", Some(path.clone()))
+        }
+        Error::NotADirectory(path) => (
+            "The data folder path points to a file, not a folder.",
+            Some(path.clone()),
+        ),
+        Error::RelativeDataDir(_) => ("CARDS_DATA_DIR must be an absolute path.", None),
+        Error::NoHomeDir => ("The data folder could not be found.", None),
+        _ => ("The data folder could not be used.", None),
+    };
+    Problem::Failed {
+        message: message.to_owned(),
+        details: err.to_string(),
+        data_dir,
+    }
+}
+
+/// The screen for a database in `data_dir` that [`AppState::open`] refused.
+pub fn open_problem(err: &Error, data_dir: &Path) -> Problem {
+    let data_dir = data_dir.to_path_buf();
+    let reason = match err {
+        Error::IntegrityCheckFailed { .. } => RecoveryReason::Damaged,
+        Error::NotACardsDatabase => RecoveryReason::NotCards,
+        Error::OrphanedSidecar(_) => RecoveryReason::MissingFile,
+        Error::InterruptedRestore(_) => RecoveryReason::InterruptedRestore,
+        Error::UnsupportedVersion { found, supported } => {
+            return Problem::TooNew {
+                found: *found,
+                supported: *supported,
+                data_dir,
+            };
+        }
+        _ => {
+            return Problem::Failed {
+                message: "The database could not be opened.".to_owned(),
+                details: err.to_string(),
+                data_dir: Some(data_dir),
+            };
+        }
+    };
+    Problem::Recovery { reason, data_dir }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir() -> PathBuf {
+        PathBuf::from("/data/cards-dev")
+    }
+
+    fn recovery(reason: RecoveryReason) -> Problem {
+        Problem::Recovery {
+            reason,
+            data_dir: dir(),
+        }
+    }
+
+    #[test]
+    fn damaged_databases_offer_recovery() {
+        let err = Error::IntegrityCheckFailed {
+            messages: vec!["page 2 is never used".into()],
+        };
+        assert_eq!(
+            open_problem(&err, &dir()),
+            recovery(RecoveryReason::Damaged)
+        );
+        assert_eq!(
+            open_problem(&Error::NotACardsDatabase, &dir()),
+            recovery(RecoveryReason::NotCards)
+        );
+    }
+
+    #[test]
+    fn interrupted_restores_offer_recovery() {
+        let wal = dir().join("cards.sqlite3-wal");
+        assert_eq!(
+            open_problem(&Error::OrphanedSidecar(wal), &dir()),
+            recovery(RecoveryReason::MissingFile)
+        );
+        let partial = dir().join("cards.sqlite3.restore.partial");
+        assert_eq!(
+            open_problem(&Error::InterruptedRestore(partial), &dir()),
+            recovery(RecoveryReason::InterruptedRestore)
+        );
+    }
+
+    #[test]
+    fn newer_database_does_not_offer_recovery() {
+        let err = Error::UnsupportedVersion {
+            found: 99,
+            supported: 5,
+        };
+        assert_eq!(
+            open_problem(&err, &dir()),
+            Problem::TooNew {
+                found: 99,
+                supported: 5,
+                data_dir: dir(),
+            }
+        );
+    }
+
+    #[test]
+    fn other_open_errors_show_the_error_and_the_path() {
+        let err = Error::Io {
+            path: dir().join("cards.sqlite3"),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+        let Problem::Failed {
+            details, data_dir, ..
+        } = open_problem(&err, &dir())
+        else {
+            panic!("expected Failed");
+        };
+        assert_eq!(details, err.to_string());
+        assert_eq!(data_dir, Some(dir()));
+    }
+
+    #[test]
+    fn data_dir_errors_show_the_path_when_known() {
+        let err = Error::NotADirectory(dir());
+        let Problem::Failed { data_dir, .. } = data_dir_problem(&err) else {
+            panic!("expected Failed");
+        };
+        assert_eq!(data_dir, Some(dir()));
+
+        let Problem::Failed { data_dir, .. } = data_dir_problem(&Error::NoHomeDir) else {
+            panic!("expected Failed");
+        };
+        assert_eq!(data_dir, None);
+    }
+
+    fn failed_dir(err: &Error) -> Option<PathBuf> {
+        match data_dir_problem(err) {
+            Problem::Failed { data_dir, .. } => data_dir,
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_data_dir_error_maps_to_the_error_page() {
+        let release = PathBuf::from("/data/cards");
+        let debug_err = Error::DebugUsesReleaseDir {
+            path: release.clone(),
+            release: release.clone(),
+        };
+        assert_eq!(failed_dir(&debug_err), Some(release));
+        let create_err = Error::CreateDir {
+            path: dir(),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+        assert_eq!(failed_dir(&create_err), Some(dir()));
+        let relative = Error::RelativeDataDir(PathBuf::from("cards"));
+        assert_eq!(failed_dir(&relative), None);
+    }
+}

@@ -26,7 +26,7 @@ Dependency direction: `cards` → `cards-core`, never the reverse. `cards-core` 
   - `fuzz.rs`: deterministic interval fuzz (Anki's ranges, seeded from card id + review count).
   - `tests.rs`: FSRS reference values and property tests (rebuild = review-by-review).
 - `src/storage/`: SQLite storage (ADR 0005).
-  - `mod.rs`: `Store::open(data_dir)` opens `<data_dir>/cards.sqlite3`. It checks integrity, sets WAL/FK, backs up and migrates. `Store` owns the connection, an `IdGen` and a `Scheduler`. `observe_max_id` raises the generator above a table's largest id before each write that issues one.
+  - `mod.rs`: `Store::open(data_dir)` opens `<data_dir>/cards.sqlite3`. It checks integrity, sets WAL/FK, backs up and migrates. A failed daily backup or prune does not stop it. It is kept as an `OpenWarning` for `take_open_warnings`. `Store` owns the connection, an `IdGen` and a `Scheduler`. `observe_max_id` raises the generator above a table's largest id before each write that issues one.
   - `decks.rs`: `create_deck`, `rename_deck` (trimmed, unique among live decks), `list_decks(now)` with new/due counts, `delete_deck` (soft; the deck and its live cards share one `deleted_at`).
   - `cards.rs`: `add_card`, `edit_card`, `card`, `list_cards`, `delete_card` (soft).
   - `review.rs`: `record_review` (event + cache in one transaction, time `max(now, last review)`), `due_cards(deck, now)`, `new_cards(deck, limit)`.
@@ -42,9 +42,13 @@ Dependency direction: `cards` → `cards-core`, never the reverse. `cards-core` 
 
 ### `cards` today
 
-- `src/main.rs`: sets up `tracing` (level from `RUST_LOG`), registers the embedded gresource, resolves and creates the data directory (logs the path at `info`; on failure logs an error and the first window shows a toast), creates the `adw::Application` and shows the main window.
-- `src/window.rs`: `CardsWindow`, an `adw::ApplicationWindow` subclass using a composite template; `add_toast` shows an `AdwToast`.
-- `data/window.blp`: the window layout in Blueprint (`AdwToastOverlay` around header bar + empty `AdwStatusPage`).
+- `src/main.rs`: sets up `tracing` (level from `RUST_LOG`), registers the embedded gresource and creates the `adw::Application`. The first `activate` runs `startup::start` and shows the main page or the page for the problem. Later activations only present the window. The database is opened there and not in `main()`, so a second launch, which only forwards `activate`, never opens it (ADR 0011).
+- `src/state.rs`: `AppState`, a cheap-to-clone `Rc<RefCell<Store>>` handle and the UI's only way to the database. No method holds a borrow past its return. The associated functions `list_backups` and `restore_unopened` serve the recovery page, which runs before any database is open. It also provides `warning_message` (the toast text for an `OpenWarning`).
+- `src/startup.rs`: resolves and creates the data directory, opens `AppState`, and maps a failure to a `Problem` (recovery, too new, other), unit-tested and without GTK.
+- `src/window.rs`: `CardsWindow`, an `adw::ApplicationWindow` subclass using a composite template. It holds the `AppState` (`OnceCell`, set once). `show_main` turns open warnings into toasts and shows the main page; `show_problem` shows a startup problem page. `persistent_toast` makes a plain-text toast that stays until dismissed.
+- `src/pages/recovery_page.rs`: `RecoveryPage` explains why a backup is needed, lists backups newest first, confirms with an `AdwAlertDialog` (`data/restore_dialog.blp`) and restores on a worker thread.
+- `data/window.blp`: `AdwToastOverlay` around a header bar and a `GtkStack` with the pages `main` (empty state "No Decks Yet"), `recovery`, `too-new` and `error`.
+- `data/recovery_page.blp`, `data/restore_dialog.blp`: the recovery page and the restore confirmation.
 
 ## UI build pipeline
 

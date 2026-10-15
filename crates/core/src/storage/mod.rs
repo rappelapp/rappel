@@ -43,6 +43,18 @@ pub struct Store {
     /// Schedules recorded reviews. Default retention until settings exist;
     /// then the stored desired retention must be used here (ADR 0006).
     scheduler: Scheduler,
+    /// Problems [`Store::open`] met that did not stop it, for the UI.
+    open_warnings: Vec<OpenWarning>,
+}
+
+/// A problem met by [`Store::open`] that did not stop it from opening the
+/// database. Each one is also logged as a warning.
+#[derive(Debug)]
+pub enum OpenWarning {
+    /// Today's backup could not be made. The database opened normally.
+    DailyBackupFailed(Error),
+    /// Old backups could not be pruned.
+    PruneFailed(Error),
 }
 
 impl Store {
@@ -129,6 +141,7 @@ impl Store {
             });
         }
 
+        let mut warnings = Vec::new();
         if !is_new {
             let fresh_backup = if current < supported {
                 // No migration without a backup: failure aborts the open.
@@ -140,16 +153,24 @@ impl Store {
                 // healthy database.
                 daily_backup(&conn, backup_dir, now_ms).unwrap_or_else(|err| {
                     tracing::warn!("daily backup failed: {err}");
+                    warnings.push(OpenWarning::DailyBackupFailed(err));
                     None
                 })
             };
             if let Err(err) = prune_backups(backup_dir, KEEP_BACKUPS, fresh_backup.as_deref()) {
                 tracing::warn!("pruning old backups failed: {err}");
+                // A failed backup and a failed prune almost always share one
+                // cause (the backup directory), so the user hears it once.
+                if warnings.is_empty() {
+                    warnings.push(OpenWarning::PruneFailed(err));
+                }
             }
         }
 
         migrate(&mut conn, migrations, current)?;
-        Ok(Self::from_connection(conn))
+        let mut store = Self::from_connection(conn);
+        store.open_warnings = warnings;
+        Ok(store)
     }
 
     /// A store around an open, migrated connection.
@@ -158,7 +179,14 @@ impl Store {
             conn,
             ids: IdGen::new(),
             scheduler: Scheduler::default(),
+            open_warnings: Vec::new(),
         }
+    }
+
+    /// Takes the warnings from opening this store (empty after the first
+    /// call). See [`OpenWarning`].
+    pub fn take_open_warnings(&mut self) -> Vec<OpenWarning> {
+        std::mem::take(&mut self.open_warnings)
     }
 
     /// A migrated in-memory store, for tests of the store's operations.

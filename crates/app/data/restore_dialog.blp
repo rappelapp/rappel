@@ -1,0 +1,13 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Heading and body are set in pages/recovery_page.rs (they name the backup).
+Adw.AlertDialog restore_dialog {
+  close-response: "cancel";
+  default-response: "cancel";
+
+  responses [
+    cancel: _("_Cancel"),
+    restore: _("_Restore") destructive,
+  ]
+}

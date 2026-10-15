@@ -1,0 +1,39 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $CardsRecoveryPage: Adw.Bin {
+  child: Adw.StatusPage status {
+    icon-name: "dialog-warning-symbolic";
+
+    child: Adw.Clamp {
+      maximum-size: 480;
+
+      child: Gtk.Box {
+        orientation: vertical;
+        spacing: 18;
+
+        Gtk.ListBox backup_list {
+          selection-mode: none;
+          accessibility {
+            label: _("Backups");
+          }
+
+          styles [
+            "boxed-list",
+          ]
+        }
+
+        Gtk.Label path_label {
+          wrap: true;
+          wrap-mode: word_char;
+          selectable: true;
+          justify: center;
+
+          styles [
+            "dim-label",
+          ]
+        }
+      };
+    };
+  };
+}
