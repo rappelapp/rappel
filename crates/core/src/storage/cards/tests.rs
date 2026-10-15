@@ -84,7 +84,7 @@ fn deleted_cards_are_hidden_and_refuse_changes_but_keep_history() {
     let card = store.add_card_at(&deck, "q", "a", T0).unwrap();
     let other = store.add_card_at(&deck, "q", "a", T0).unwrap();
     store
-        .record_review_at(&card.id, Grade::Pass, Duration::ZERO, T0)
+        .record_review(&card.id, Grade::Pass, Duration::ZERO, T0)
         .unwrap();
 
     store.delete_card_at(&card.id, T0 + 1).unwrap();
@@ -128,7 +128,7 @@ fn undelete_restores_the_card_in_place_with_its_history() {
     let b = store.add_card_at(&deck, "b", "back", T0).unwrap();
     let c = store.add_card_at(&deck, "c", "", T0).unwrap();
     store
-        .record_review_at(&b.id, Grade::Pass, Duration::ZERO, T0)
+        .record_review(&b.id, Grade::Pass, Duration::ZERO, T0)
         .unwrap();
     let events = store.review_events(&b.id).unwrap();
     let state = store.card_state(&b.id).unwrap();

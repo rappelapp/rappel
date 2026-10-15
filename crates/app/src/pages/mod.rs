@@ -3,7 +3,9 @@
 mod deck_page;
 mod decks_page;
 mod recovery_page;
+mod review_page;
 
 pub use deck_page::DeckPage;
 pub use decks_page::DecksPage;
 pub use recovery_page::RecoveryPage;
+pub use review_page::ReviewPage;

@@ -8,34 +8,27 @@ use super::cards::{CARD_COLUMNS, card_from_row, live_card};
 use super::decks::ensure_live_deck;
 use super::schedule::{read_card_state, write_card_state};
 use super::{Store, observe_max_id};
-use crate::domain::{Card, Grade, ReviewEvent};
+use crate::domain::{Card, Grade, Phase, ReviewEvent};
 use crate::error::Result;
-use crate::time::now_ms;
+use crate::scheduling::session::{Due, EARLY_MS, StudyInput, new_allowance};
 
 impl Store {
     /// Records that card `card_id` was answered with `grade` after
-    /// `duration`, and updates its cached schedule, in one transaction.
+    /// `duration` at time `now` (UTC milliseconds), and updates its cached
+    /// schedule, in one transaction.
     ///
-    /// The event is dated `max(now, last review)`, so a clock that went
-    /// backwards cannot put it before the card's last review, and its id is
-    /// greater than every event id in the log. Replaying the log therefore applies
-    /// it last, and the cache stays equal to a rebuild (ADR 0008).
+    /// The caller passes `now` so one clock serves the queue, the duration
+    /// and the record (ADR 0014). The event is dated `max(now, last
+    /// review)`, so a clock that went backwards cannot put it before the
+    /// card's last review, and its id is greater than every event id in the
+    /// log. Replaying the log therefore applies it last, and the cache stays
+    /// equal to a rebuild (ADR 0008).
     ///
     /// # Errors
     /// [`Error::CardNotFound`](crate::Error::CardNotFound) for a missing or
     /// deleted card; scheduler, id and SQLite errors. On error nothing is
     /// written.
     pub fn record_review(
-        &mut self,
-        card_id: &str,
-        grade: Grade,
-        duration: Duration,
-    ) -> Result<ReviewEvent> {
-        self.record_review_at(card_id, grade, duration, now_ms())
-    }
-
-    /// [`Self::record_review`] at time `now` (UTC milliseconds).
-    pub(super) fn record_review_at(
         &mut self,
         card_id: &str,
         grade: Grade,
@@ -82,6 +75,71 @@ impl Store {
         write_card_state(&tx, card_id, &next)?;
         tx.commit()?;
         Ok(event)
+    }
+
+    /// What deck `deck_id` has to study at `now`, for a
+    /// [`Session`](crate::scheduling::session::Session). `day_start` is
+    /// when "today" began (UTC milliseconds; the app computes 4 a.m. local
+    /// time). Read in one transaction, so the parts agree (ADR 0014):
+    /// - due cards in review, most overdue first;
+    /// - cards in the 10-minute step due within
+    ///   [`EARLY_MS`], earliest first;
+    /// - how many cards of the deck had their first review today, deleted
+    ///   ones included (they used today's budget);
+    /// - the new cards still allowed today, oldest first.
+    ///
+    /// # Errors
+    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound), SQLite errors.
+    pub fn study_input(&self, deck_id: &str, now: i64, day_start: i64) -> Result<StudyInput> {
+        let tx = self.conn.unchecked_transaction()?;
+        ensure_live_deck(&tx, deck_id)?;
+        let due = |phases: &str, until: i64| -> Result<Vec<Due>> {
+            let mut stmt = tx.prepare(&format!(
+                "SELECT c.id, s.due_at FROM cards c JOIN card_schedule s ON s.card_id = c.id
+                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.phase IN ({phases})
+                   AND s.due_at <= ?2
+                 ORDER BY s.due_at, c.seq"
+            ))?;
+            let rows = stmt.query_map(params![deck_id, until], |r| {
+                Ok(Due {
+                    card_id: r.get(0)?,
+                    due_at: r.get(1)?,
+                })
+            })?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        };
+        // Phases are our own constant strings, never user input.
+        let quote = |p: Phase| format!("'{}'", p.as_str());
+        let reviews = due(&quote(Phase::Review), now)?;
+        let steps = due(
+            &format!("{}, {}", quote(Phase::Learning), quote(Phase::Relearning)),
+            now.saturating_add(EARLY_MS),
+        )?;
+        let new_today: u32 = tx.query_row(
+            "SELECT count(*) FROM (
+                 SELECT e.card_id FROM review_events e JOIN cards c ON c.id = e.card_id
+                 WHERE c.deck_id = ?1
+                 GROUP BY e.card_id HAVING min(e.reviewed_at) >= ?2)",
+            params![deck_id, day_start],
+            |r| r.get(0),
+        )?;
+        let mut stmt = tx.prepare(
+            "SELECT c.id FROM cards c LEFT JOIN card_schedule s ON s.card_id = c.id
+             WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.card_id IS NULL
+             ORDER BY c.seq LIMIT ?2",
+        )?;
+        let new = stmt
+            .query_map(params![deck_id, new_allowance(new_today)], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        drop(stmt);
+        // Read only: ending it commits nothing.
+        tx.finish()?;
+        Ok(StudyInput {
+            reviews,
+            steps,
+            new,
+            new_today,
+        })
     }
 
     /// The live cards of deck `deck_id` that have been reviewed and are due

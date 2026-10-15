@@ -69,8 +69,18 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
   - Ctrl+N makes a new card on a deck page and a new deck on the deck list.
 - `Store::undelete_card` in `cards-core`: restores a deleted card with its history; refuses, changing nothing, while its deck is deleted.
 - `cards-core` example `fill_scratch_db`: fills a scratch data directory with 5,000 cards to try the card list.
+- Studying (ADR 0014):
+  - The deck page has a Study button, disabled when nothing is due and no new card is left for today, and says what there is to study ("3 due · 20 new").
+  - The review page shows the front, then the back (Space or Enter), then Fail (1) or Pass (2 or Space). Card text is shown as plain text.
+  - Due reviews come first in overdue order, with up to 20 new cards per deck per day spread among them. The study day starts at 4 a.m. local time.
+  - Cards in the 10-minute step come back in the same session, and up to 20 minutes early once nothing else is left.
+  - Each answer is saved at once, with the time from showing the card to the answer, capped at 60 s.
+  - At the end, a summary (cards, pass rate, time) and Back to Deck.
+- `cards-core`: `Store::study_input` and the pure `scheduling::session` (queue, interleaving, session, summary).
+- `fill_scratch_db --due N`: makes N scratch cards due now, through the real scheduler, to try studying.
 
 ### Changed
+- `Store::record_review` takes the time of the answer (`now`) from the caller, like the other time-dependent operations.
 - Without a usable data folder the app shows an error page instead of starting with a toast.
 - Deck names are unique ignoring case and Unicode composition ("Maths" = "maths", composed "É" = "E" + accent); accents still count. Migration 0004 adds and backfills `decks.name_key` (ADR 0010).
 - Scheduling: a Pass on a review card is scheduled at least elapsed days + 1 out, before and after fuzz, as in Anki. Migration 0005 rebuilds the schedule cache for the new rule (ADR 0009).

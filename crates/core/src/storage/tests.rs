@@ -819,7 +819,12 @@ fn migration_0003_keeps_everything_live_and_unchanged() {
     ));
     // New events sort after the ones written before the upgrade.
     let e = store
-        .record_review(CARD, crate::domain::Grade::Pass, std::time::Duration::ZERO)
+        .record_review(
+            CARD,
+            crate::domain::Grade::Pass,
+            std::time::Duration::ZERO,
+            crate::time::now_ms(),
+        )
         .unwrap();
     assert_eq!(store.review_events(CARD).unwrap().last(), Some(&e));
 }

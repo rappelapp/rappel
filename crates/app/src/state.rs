@@ -5,8 +5,10 @@ use std::cell::RefCell;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
 
-use cards_core::domain::{Card, Deck, DeckSummary};
+use cards_core::domain::{Card, CardState, Deck, DeckSummary, Grade, ReviewEvent};
+use cards_core::scheduling::session::StudyInput;
 use cards_core::storage::{self, BackupInfo, OpenWarning, Restored, Store};
 
 /// A cheap-to-clone handle on the open database, shared by the window and
@@ -104,6 +106,40 @@ impl AppState {
     /// [`Store::edit_card`]).
     pub fn edit_card(&self, id: &str, front: &str, back: &str) -> cards_core::Result<Card> {
         self.0.store.borrow_mut().edit_card(id, front, back)
+    }
+
+    /// Card `id` (see [`Store::card`]).
+    pub fn card(&self, id: &str) -> cards_core::Result<Card> {
+        self.0.store.borrow().card(id)
+    }
+
+    /// What a deck has to study (see [`Store::study_input`]).
+    pub fn study_input(
+        &self,
+        deck_id: &str,
+        now: i64,
+        day_start: i64,
+    ) -> cards_core::Result<StudyInput> {
+        self.0.store.borrow().study_input(deck_id, now, day_start)
+    }
+
+    /// Records an answer (see [`Store::record_review`]).
+    pub fn record_review(
+        &self,
+        card_id: &str,
+        grade: Grade,
+        duration: Duration,
+        now: i64,
+    ) -> cards_core::Result<ReviewEvent> {
+        self.0
+            .store
+            .borrow_mut()
+            .record_review(card_id, grade, duration, now)
+    }
+
+    /// A card's scheduling state (see [`Store::card_state`]).
+    pub fn card_state(&self, card_id: &str) -> cards_core::Result<CardState> {
+        self.0.store.borrow().card_state(card_id)
     }
 
     /// Soft-deletes a card (see [`Store::delete_card`]).

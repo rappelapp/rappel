@@ -11,9 +11,12 @@ use std::cmp::Ordering;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use cards_core::domain::{Card, Deck};
+use cards_core::scheduling::session::StudyInput;
 use gtk::{gio, glib};
 
+use crate::clock::local_day_start_ms;
 use crate::dialogs::card_editor::{CardEditor, Saved};
+use crate::pages::ReviewPage;
 use crate::state::AppState;
 use crate::widgets::{CardObject, CardRow};
 use crate::window::{CardsWindow, persistent_toast, show_toast_from};
@@ -21,6 +24,7 @@ use crate::window::{CardsWindow, persistent_toast, show_toast_from};
 mod imp {
     use std::cell::{Cell, OnceCell, RefCell};
 
+    use adw::prelude::*;
     use adw::subclass::prelude::*;
     use cards_core::domain::Deck;
     use gtk::{gio, glib};
@@ -30,6 +34,8 @@ mod imp {
     #[derive(Debug, Default, gtk::CompositeTemplate)]
     #[template(resource = "/io/github/rsmirke/Cards/deck_page.ui")]
     pub struct DeckPage {
+        #[template_child]
+        pub window_title: TemplateChild<adw::WindowTitle>,
         #[template_child]
         pub content_stack: TemplateChild<gtk::Stack>,
         #[template_child]
@@ -57,6 +63,9 @@ mod imp {
             klass.install_action("deck.new-card", None, |page, _, _| {
                 page.new_card();
             });
+            klass.install_action("deck.study", None, |page, _, _| {
+                page.study();
+            });
             // Activated by the card rows' menus with the card id.
             klass.install_action(
                 "deck.edit-card",
@@ -83,7 +92,13 @@ mod imp {
         }
     }
 
-    impl ObjectImpl for DeckPage {}
+    impl ObjectImpl for DeckPage {
+        fn constructed(&self) {
+            self.parent_constructed();
+            // Back from studying: what is left to study changed.
+            self.obj().connect_shown(super::DeckPage::update_study);
+        }
+    }
     impl WidgetImpl for DeckPage {}
     impl NavigationPageImpl for DeckPage {}
 }
@@ -105,6 +120,7 @@ impl DeckPage {
         let cards = state.list_cards(&deck.id)?;
         // Deck names are untrusted; NavigationPage:title is plain text.
         page.set_title(&deck.name);
+        imp.window_title.set_title(&deck.name);
 
         let store = gio::ListStore::new::<CardObject>();
         let items: Vec<CardObject> = cards.into_iter().map(CardObject::new).collect();
@@ -112,7 +128,10 @@ impl DeckPage {
         store.connect_items_changed(glib::clone!(
             #[weak]
             page,
-            move |_, _, _, _| page.update_empty_state()
+            move |_, _, _, _| {
+                page.update_empty_state();
+                page.update_study();
+            }
         ));
         imp.card_list
             .set_model(Some(&gtk::NoSelection::new(Some(store.clone()))));
@@ -132,7 +151,55 @@ impl DeckPage {
         let _ = imp.deck.set(deck);
         let _ = imp.cards.set(store);
         page.update_empty_state();
+        page.update_study();
         Ok(page)
+    }
+
+    /// Recomputes what there is to study: the subtitle and whether Study
+    /// is enabled.
+    fn update_study(&self) {
+        let imp = self.imp();
+        let (Some(state), Some(deck)) = (imp.state.get(), imp.deck.get()) else {
+            return;
+        };
+        let now = cards_core::time::now_ms();
+        match state.study_input(&deck.id, now, local_day_start_ms(now)) {
+            Ok(input) => {
+                imp.window_title.set_subtitle(&study_subtitle(&input));
+                self.action_set_enabled("deck.study", !input.is_empty());
+            }
+            Err(err) => {
+                imp.window_title.set_subtitle("");
+                self.action_set_enabled("deck.study", false);
+                self.error_toast(&format!("What to study could not be read: {err}"));
+            }
+        }
+    }
+
+    /// Pushes a review page for this deck.
+    fn study(&self) {
+        let imp = self.imp();
+        let (Some(state), Some(deck)) = (imp.state.get(), imp.deck.get()) else {
+            return;
+        };
+        let Some(view) = self
+            .ancestor(adw::NavigationView::static_type())
+            .and_downcast::<adw::NavigationView>()
+        else {
+            tracing::error!("the deck page is not inside a navigation view");
+            return;
+        };
+        // A double click or key repeat must not push two sessions.
+        if view.visible_page().is_some_and(|p| p.is::<ReviewPage>()) {
+            return;
+        }
+        match ReviewPage::new(state.clone(), deck.clone()) {
+            Ok(page) => {
+                self.action_set_enabled("deck.study", false);
+                view.push(&page);
+            }
+            Err(err) => self.error_toast(&format!("The session could not start: {err}")),
+        }
     }
 
     /// Opens the editor for a new card in this deck.
@@ -320,6 +387,18 @@ impl DeckPage {
     }
 }
 
+/// The deck page's subtitle: "3 due · 20 new", or "Nothing to study".
+fn study_subtitle(input: &StudyInput) -> String {
+    let due = input.reviews.len() + input.steps.len();
+    let new = input.new.len();
+    match (due, new) {
+        (0, 0) => "Nothing to study".to_owned(),
+        (due, 0) => format!("{due} due"),
+        (0, new) => format!("{new} new"),
+        (due, new) => format!("{due} due · {new} new"),
+    }
+}
+
 /// Inserts `item` where its creation order puts it and returns that
 /// position. Card ids increase with creation (ADR 0008), the same order as
 /// `list_cards`. `insert_sorted` searches by halves, so it relies on that:
@@ -367,4 +446,31 @@ fn row_factory() -> gtk::SignalListItemFactory {
         }
     });
     factory
+}
+
+#[cfg(test)]
+mod tests {
+    use cards_core::scheduling::session::Due;
+
+    use super::*;
+
+    fn due(id: &str) -> Due {
+        Due {
+            card_id: id.to_owned(),
+            due_at: 0,
+        }
+    }
+
+    #[test]
+    fn subtitle_names_what_is_left() {
+        let mut input = StudyInput::default();
+        assert_eq!(study_subtitle(&input), "Nothing to study");
+        input.new = vec!["n".to_owned(); 20];
+        assert_eq!(study_subtitle(&input), "20 new");
+        input.reviews = vec![due("r1"), due("r2")];
+        input.steps = vec![due("s")];
+        assert_eq!(study_subtitle(&input), "3 due · 20 new");
+        input.new.clear();
+        assert_eq!(study_subtitle(&input), "3 due");
+    }
 }

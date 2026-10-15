@@ -269,7 +269,7 @@ fn counts_new_and_due_live_cards() {
     // cards[0], cards[1] reviewed: due in 10 minutes. cards[2] deleted.
     for c in &cards[..2] {
         store
-            .record_review_at(c, Grade::Fail, Duration::ZERO, T0)
+            .record_review(c, Grade::Fail, Duration::ZERO, T0)
             .unwrap();
     }
     store.delete_card_at(&cards[2], T0).unwrap();
@@ -299,7 +299,7 @@ fn deleting_a_deck_hides_it_and_its_cards_and_keeps_their_history() {
     let card = store.add_card_at(&maths.id, "q", "a", T0).unwrap();
     let kept = store.add_card_at(&other.id, "q", "a", T0).unwrap();
     store
-        .record_review_at(&card.id, Grade::Pass, Duration::from_secs(3), T0)
+        .record_review(&card.id, Grade::Pass, Duration::from_secs(3), T0)
         .unwrap();
 
     store.delete_deck_at(&maths.id, T0 + 1).unwrap();
@@ -323,7 +323,7 @@ fn deleting_a_deck_hides_it_and_its_cards_and_keeps_their_history() {
         Err(Error::DeckNotFound(_))
     ));
     assert!(matches!(
-        store.record_review_at(&card.id, Grade::Pass, Duration::ZERO, T0 + 2),
+        store.record_review(&card.id, Grade::Pass, Duration::ZERO, T0 + 2),
         Err(Error::CardNotFound(_))
     ));
     // History kept; the other deck untouched.
@@ -380,7 +380,7 @@ fn undelete_restores_the_deck_and_exactly_its_batch() {
     let b = store.add_card_at(&maths.id, "b", "", T0).unwrap();
     let earlier = store.add_card_at(&maths.id, "c", "", T0).unwrap();
     store
-        .record_review_at(&a.id, Grade::Pass, Duration::from_secs(2), T0)
+        .record_review(&a.id, Grade::Pass, Duration::from_secs(2), T0)
         .unwrap();
     let state_before = store.card_state(&a.id).unwrap();
     // Deleted on its own before the deck, with a clock that then went

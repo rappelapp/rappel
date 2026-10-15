@@ -64,16 +64,16 @@ mod imp {
                 window.imp().decks_page.new_deck();
             });
             // Ctrl+N (set in main.rs): a new card on a deck page, a new
-            // deck on the deck list.
+            // deck on the deck list, nothing while studying.
             klass.install_action("win.new", None, |window, _, _| {
                 let imp = window.imp();
-                match imp
-                    .navigation_view
-                    .visible_page()
-                    .and_downcast::<DeckPage>()
-                {
-                    Some(deck_page) => deck_page.new_card(),
-                    None => imp.decks_page.new_deck(),
+                let Some(page) = imp.navigation_view.visible_page() else {
+                    return;
+                };
+                if let Some(deck_page) = page.downcast_ref::<DeckPage>() {
+                    deck_page.new_card();
+                } else if page.is::<DecksPage>() {
+                    imp.decks_page.new_deck();
                 }
             });
         }

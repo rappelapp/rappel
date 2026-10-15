@@ -1,5 +1,6 @@
 //! Cards: a native GNOME flashcard app.
 
+mod clock;
 mod dialogs;
 mod pages;
 mod startup;

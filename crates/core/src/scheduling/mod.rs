@@ -22,6 +22,7 @@
 //! `storage::record_review` observes the log's largest id first).
 
 mod fuzz;
+pub mod session;
 
 use fsrs::{FSRS, MemoryState};
 

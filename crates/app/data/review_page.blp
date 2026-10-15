@@ -1,0 +1,163 @@
+using Gtk 4.0;
+using Adw 1;
+
+// A study session of one deck. Texts are set in pages/review_page.rs.
+// Card content is untrusted: every label has markup off (plain text until
+// Markdown rendering comes).
+template $CardsReviewPage: Adw.NavigationPage {
+  title: _("Study");
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Adw.WindowTitle window_title {};
+    }
+
+    content: Gtk.Stack stack {
+      transition-type: crossfade;
+
+      Gtk.StackPage {
+        name: "card";
+
+        child: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 600;
+            margin-top: 36;
+            margin-bottom: 36;
+            margin-start: 18;
+            margin-end: 18;
+
+            // Focusable, so the keyboard focus can rest here and Space,
+            // Enter, 1 and 2 reach the page's shortcuts.
+            child: Gtk.Box card_area {
+              orientation: vertical;
+              spacing: 24;
+              focusable: true;
+
+              // Screen readers read the front, and the back once shown.
+              accessibility {
+                labelled-by: front_label;
+                described-by: back_label;
+              }
+
+              Gtk.Label front_label {
+                use-markup: false;
+                wrap: true;
+                wrap-mode: word_char;
+                justify: center;
+
+                styles [
+                  "title-2",
+                ]
+              }
+
+              Gtk.Separator back_separator {
+                visible: false;
+              }
+
+              Gtk.Label back_label {
+                visible: false;
+                use-markup: false;
+                wrap: true;
+                wrap-mode: word_char;
+                justify: center;
+
+                styles [
+                  "title-3",
+                ]
+              }
+            };
+          };
+        };
+      }
+
+      Gtk.StackPage {
+        name: "summary";
+
+        child: Adw.StatusPage summary_page {
+          icon-name: "emblem-ok-symbolic";
+          title: _("Session Complete");
+
+          child: Gtk.Button done_button {
+            label: _("_Back to Deck");
+            use-underline: true;
+            action-name: "review.done";
+            halign: center;
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          };
+        };
+      }
+    };
+
+    [bottom]
+    Gtk.Stack buttons {
+      transition-type: crossfade;
+      margin-top: 12;
+      margin-bottom: 18;
+      margin-start: 18;
+      margin-end: 18;
+
+      Gtk.StackPage {
+        name: "reveal";
+
+        child: Gtk.Button reveal_button {
+          label: _("_Show Answer");
+          use-underline: true;
+          action-name: "review.reveal";
+          tooltip-text: _("Show Answer (Space)");
+          halign: center;
+
+          styles [
+            "pill",
+            "suggested-action",
+          ]
+        };
+      }
+
+      Gtk.StackPage {
+        name: "grade";
+
+        child: Gtk.Box {
+          spacing: 12;
+          halign: center;
+          homogeneous: true;
+
+          Gtk.Button {
+            label: _("_Fail");
+            use-underline: true;
+            action-name: "review.fail";
+            tooltip-text: _("Fail (1)");
+
+            styles [
+              "pill",
+            ]
+          }
+
+          Gtk.Button {
+            label: _("_Pass");
+            use-underline: true;
+            action-name: "review.pass";
+            tooltip-text: _("Pass (2 or Space)");
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          }
+        };
+      }
+
+      Gtk.StackPage {
+        name: "none";
+
+        child: Gtk.Box {};
+      }
+    }
+  };
+}
