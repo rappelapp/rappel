@@ -1,0 +1,33 @@
+using Gtk 4.0;
+
+// One card in the deck page's list. The label is set in
+// widgets/card_row.rs; card content is untrusted, so markup is off.
+template $CardsCardRow: Gtk.Box {
+  spacing: 12;
+
+  Gtk.Label front_label {
+    use-markup: false;
+    single-line-mode: true;
+    ellipsize: end;
+    xalign: 0;
+    hexpand: true;
+  }
+
+  Gtk.MenuButton menu_button {
+    icon-name: "view-more-symbolic";
+    tooltip-text: _("Card Actions");
+    valign: center;
+    menu-model: card_menu;
+
+    styles [
+      "flat",
+    ]
+  }
+}
+
+menu card_menu {
+  section {
+    item (_("_Edit…"), "row.edit")
+    item (_("_Delete"), "row.delete")
+  }
+}

@@ -1,0 +1,30 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One deck in the deck list. Title and subtitle are set in
+// widgets/deck_row.rs; deck names are untrusted, so markup is off.
+template $CardsDeckRow: Adw.ActionRow {
+  use-markup: false;
+  title-lines: 1;
+  // Activating the row opens the deck (ADR 0013).
+  activatable: true;
+
+  [suffix]
+  Gtk.MenuButton menu_button {
+    icon-name: "view-more-symbolic";
+    tooltip-text: _("Deck Actions");
+    valign: center;
+    menu-model: deck_menu;
+
+    styles [
+      "flat",
+    ]
+  }
+}
+
+menu deck_menu {
+  section {
+    item (_("_Rename…"), "row.rename")
+    item (_("_Delete"), "row.delete")
+  }
+}

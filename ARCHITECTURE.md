@@ -27,8 +27,8 @@ Dependency direction: `cards` → `cards-core`, never the reverse. `cards-core` 
   - `tests.rs`: FSRS reference values and property tests (rebuild = review-by-review).
 - `src/storage/`: SQLite storage (ADR 0005).
   - `mod.rs`: `Store::open(data_dir)` opens `<data_dir>/cards.sqlite3`. It checks integrity, sets WAL/FK, backs up and migrates. A failed daily backup or prune does not stop it. It is kept as an `OpenWarning` for `take_open_warnings`. `Store` owns the connection, an `IdGen` and a `Scheduler`. `observe_max_id` raises the generator above a table's largest id before each write that issues one.
-  - `decks.rs`: `create_deck`, `rename_deck` (trimmed, unique among live decks), `list_decks(now)` with new/due counts, `delete_deck` (soft; the deck and its live cards share one `deleted_at`).
-  - `cards.rs`: `add_card`, `edit_card`, `card`, `list_cards`, `delete_card` (soft).
+  - `decks.rs`: `create_deck`, `rename_deck` (trimmed, unique among live decks), `list_decks(now)` with new/due counts, `delete_deck` (soft; the deck and its live cards share one `deleted_at`), `undelete_deck` (brings back exactly that batch, ADR 0012).
+  - `cards.rs`: `add_card`, `edit_card` (returns the stored card), `card`, `list_cards`, `delete_card` (soft), `undelete_card` (refused while the card's deck is deleted, ADR 0013).
   - `review.rs`: `record_review` (event + cache in one transaction, time `max(now, last review)`), `due_cards(deck, now)`, `new_cards(deck, limit)`.
   - Every public write has a private `*_at(now)` twin for tests; `decks/`, `cards/`, `review/` hold their `tests.rs` (the review one has the cache-equals-rebuild property test). Deleted rows are hidden from every deck, card and queue operation; a deleted card's history and cache stay readable by card id (`review_events`, `card_state`) (ADR 0008).
   - `migrations/`: `MIGRATIONS` (numbered `NNNN_*.sql` files embedded with `include_str!`) and `migrate`. A migration may also have a Rust `backfill` step (run after its SQL, in its transaction) and ask for a schedule cache rebuild. Merged migrations are hash-pinned by a test.
@@ -39,6 +39,7 @@ Dependency direction: `cards` → `cards-core`, never the reverse. `cards-core` 
   - `tests.rs`: store-level tests.
 
   The schema is in `migrations/0001_initial.sql`; `0002_card_schedule_phase.sql` reshapes the `card_schedule` cache (adds `phase`); `0003_soft_delete.sql` adds `deleted_at` to `decks` and `cards` and the live-unique deck name index. `0004_deck_name_key.sql` moves that uniqueness onto `decks.name_key` (NFC + lowercase, filled in by the migration's Rust backfill step, ADR 0010). `0005_rebuild_for_interval_floor.sql` only rebuilds the schedule cache after the scheduler change of ADR 0009.
+- `examples/fill_scratch_db.rs`: fills a scratch data directory with one deck of many cards (default 5,000) through the public `Store` API, to check the card list's speed. It refuses the app's own release and debug data directories and any path with `..`.
 
 ### `cards` today
 
@@ -47,7 +48,15 @@ Dependency direction: `cards` → `cards-core`, never the reverse. `cards-core` 
 - `src/startup.rs`: resolves and creates the data directory, opens `AppState`, and maps a failure to a `Problem` (recovery, too new, other), unit-tested and without GTK.
 - `src/window.rs`: `CardsWindow`, an `adw::ApplicationWindow` subclass using a composite template. It holds the `AppState` (`OnceCell`, set once). `show_main` turns open warnings into toasts and shows the main page; `show_problem` shows a startup problem page. `persistent_toast` makes a plain-text toast that stays until dismissed.
 - `src/pages/recovery_page.rs`: `RecoveryPage` explains why a backup is needed, lists backups newest first, confirms with an `AdwAlertDialog` (`data/restore_dialog.blp`) and restores on a worker thread.
-- `data/window.blp`: `AdwToastOverlay` around a header bar and a `GtkStack` with the pages `main` (empty state "No Decks Yet"), `recovery`, `too-new` and `error`.
+- `src/pages/decks_page.rs`: `DecksPage`, the root `AdwNavigationPage`. It shows the deck list (or the "No Decks Yet" empty state) and handles create, rename, and delete with an Undo toast, through `AppState`. Its class actions `decks.rename` / `decks.delete` take a deck id. Activating a deck pushes its `DeckPage`; coming back reloads the counts. See ADR 0012.
+- `src/pages/deck_page.rs`: `DeckPage`, one deck's `AdwNavigationPage`, built per open. Its cards are a `GtkListView` over a `gio::ListStore` of `CardObject` in creation order, updated item by item (add, edit, delete, Undo). Class actions `deck.new-card`, `deck.edit-card` / `deck.delete-card` (card id). See ADR 0013.
+- `src/widgets/card_object.rs`: `CardObject`, a list item holding a `Card` and its one-line preview (`front_preview`, unit-tested).
+- `src/widgets/card_row.rs`: `CardRow`, the recycled row widget (preview label and a menu); `bind`/`unbind` point it at a card, and its `row.*` actions forward to the page.
+- `src/widgets/deck_row.rs`: `DeckRow`, an `AdwActionRow` with the name, the new/due counts and a menu. Its `row.*` actions forward to the page with the row's deck id.
+- `src/dialogs/card_editor.rs`: `CardEditor`, an `AdwDialog` with plain-text front and back. Ctrl+Enter saves, Ctrl+Shift+Enter saves and starts a new card; a blank front disables saving; closing with changes asks first (`data/discard_dialog.blp`). Reports each save to the deck page as `Saved`.
+- `src/dialogs/deck_name_dialog.rs`: the create/rename `AdwAlertDialog` (`ask`). Its pure name check `check_deck_name` (empty / duplicate by `deck_name_key` / valid) gives the inline error.
+- `data/window.blp`: `AdwToastOverlay` around a `GtkStack` with the pages `main` (an `AdwNavigationView` holding `DecksPage`), `recovery`, `too-new` and `error`, each with its own header bar. The window action `win.new-deck` opens the name dialog; `win.new` (Ctrl+N) opens the card editor on a deck page and the name dialog on the deck list. Both are enabled only on the main page.
+- `data/decks_page.blp`, `data/deck_row.blp`, `data/deck_name_dialog.blp`, `data/deck_page.blp`, `data/card_row.blp`, `data/card_editor.blp`, `data/discard_dialog.blp`: the layouts of the above.
 - `data/recovery_page.blp`, `data/restore_dialog.blp`: the recovery page and the restore confirmation.
 
 ## UI build pipeline

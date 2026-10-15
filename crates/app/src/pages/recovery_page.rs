@@ -13,7 +13,7 @@ use gtk::{gio, glib};
 
 use crate::startup::RecoveryReason;
 use crate::state::AppState;
-use crate::window::persistent_toast;
+use crate::window::{persistent_toast, show_toast_from};
 
 /// Called with the data directory and the restored store.
 type OnRestored = Rc<dyn Fn(PathBuf, Restored)>;
@@ -237,18 +237,7 @@ impl RecoveryPage {
             }
         };
         self.reload();
-        self.show_toast(persistent_toast(&message));
-    }
-
-    fn show_toast(&self, toast: adw::Toast) {
-        if let Some(overlay) = self
-            .ancestor(adw::ToastOverlay::static_type())
-            .and_downcast::<adw::ToastOverlay>()
-        {
-            overlay.add_toast(toast);
-        } else {
-            tracing::error!("recovery page is not inside a toast overlay");
-        }
+        show_toast_from(self, persistent_toast(&message));
     }
 }
 

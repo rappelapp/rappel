@@ -369,3 +369,98 @@ fn deck_delete_stamp_is_after_earlier_card_deletes_in_the_same_millisecond() {
     assert_eq!(deleted_at(&store, "cards", &card.id), Some(stamp));
     assert_eq!(deleted_at(&store, "cards", &earlier.id), Some(T0 + 10));
 }
+
+// --- Undelete -------------------------------------------------------------
+
+#[test]
+fn undelete_restores_the_deck_and_exactly_its_batch() {
+    let mut store = Store::in_memory();
+    let maths = store.create_deck_at("Maths", T0).unwrap();
+    let a = store.add_card_at(&maths.id, "a", "", T0).unwrap();
+    let b = store.add_card_at(&maths.id, "b", "", T0).unwrap();
+    let earlier = store.add_card_at(&maths.id, "c", "", T0).unwrap();
+    store
+        .record_review_at(&a.id, Grade::Pass, Duration::from_secs(2), T0)
+        .unwrap();
+    let state_before = store.card_state(&a.id).unwrap();
+    // Deleted on its own before the deck, with a clock that then went
+    // backwards: the deck's stamp is still later, so not part of its batch.
+    store.delete_card_at(&earlier.id, T0 + 10).unwrap();
+    store.delete_deck_at(&maths.id, T0 + 5).unwrap();
+
+    let restored = store.undelete_deck(&maths.id).unwrap();
+
+    assert_eq!(restored, maths, "same deck, updated_at unchanged");
+    assert_eq!(names(&store), ["Maths"]);
+    assert_eq!(deleted_at(&store, "decks", &maths.id), None);
+    assert_eq!(deleted_at(&store, "cards", &a.id), None);
+    assert_eq!(deleted_at(&store, "cards", &b.id), None);
+    assert_eq!(deleted_at(&store, "cards", &earlier.id), Some(T0 + 10));
+    let live: Vec<String> = store
+        .list_cards(&maths.id)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(live, [a.id.clone(), b.id.clone()]);
+    // History, schedule and counts are back as they were.
+    assert_eq!(store.review_events(&a.id).unwrap().len(), 1);
+    assert_eq!(store.card_state(&a.id).unwrap(), state_before);
+    assert_eq!(counts(&store, T0 + DAY_MS * 365), [(maths.id, 1, 1)]);
+}
+
+#[test]
+fn undelete_after_a_second_delete_restores_the_second_batch() {
+    let mut store = Store::in_memory();
+    let maths = store.create_deck_at("Maths", T0).unwrap();
+    let a = store.add_card_at(&maths.id, "a", "", T0).unwrap();
+    store.delete_deck_at(&maths.id, T0 + 1).unwrap();
+    store.undelete_deck(&maths.id).unwrap();
+    let b = store.add_card_at(&maths.id, "b", "", T0 + 2).unwrap();
+    store.delete_card_at(&a.id, T0 + 3).unwrap();
+    store.delete_deck_at(&maths.id, T0 + 4).unwrap();
+
+    store.undelete_deck(&maths.id).unwrap();
+
+    assert_eq!(deleted_at(&store, "cards", &a.id), Some(T0 + 3));
+    assert_eq!(deleted_at(&store, "cards", &b.id), None);
+}
+
+#[test]
+fn undelete_refuses_a_name_taken_meanwhile_and_changes_nothing() {
+    let mut store = Store::in_memory();
+    let maths = store.create_deck_at("Maths", T0).unwrap();
+    let card = store.add_card_at(&maths.id, "a", "", T0).unwrap();
+    store.delete_deck_at(&maths.id, T0 + 1).unwrap();
+    let other = store.create_deck_at("MATHS", T0 + 2).unwrap();
+
+    let err = store.undelete_deck(&maths.id).unwrap_err();
+
+    assert!(
+        matches!(&err, Error::DuplicateDeckName(n) if n == "Maths"),
+        "{err:?}"
+    );
+    assert_eq!(deleted_at(&store, "decks", &maths.id), Some(T0 + 1));
+    assert_eq!(deleted_at(&store, "cards", &card.id), Some(T0 + 1));
+    assert_eq!(names(&store), [other.name]);
+}
+
+#[test]
+fn undelete_of_a_live_deck_changes_nothing() {
+    let mut store = Store::in_memory();
+    let maths = store.create_deck_at("Maths", T0).unwrap();
+    let earlier = store.add_card_at(&maths.id, "a", "", T0).unwrap();
+    store.delete_card_at(&earlier.id, T0 + 1).unwrap();
+
+    assert_eq!(store.undelete_deck(&maths.id).unwrap(), maths);
+    assert_eq!(deleted_at(&store, "cards", &earlier.id), Some(T0 + 1));
+}
+
+#[test]
+fn undelete_of_an_unknown_deck_is_not_found() {
+    let mut store = Store::in_memory();
+    assert!(matches!(
+        store.undelete_deck("01920000-0000-7000-8000-00000000ffff"),
+        Err(Error::DeckNotFound(_))
+    ));
+}

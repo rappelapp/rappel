@@ -1,8 +1,10 @@
 //! Cards: a native GNOME flashcard app.
 
+mod dialogs;
 mod pages;
 mod startup;
 mod state;
+mod widgets;
 mod window;
 
 use adw::prelude::*;
@@ -29,6 +31,7 @@ fn main() -> glib::ExitCode {
     let app = adw::Application::builder()
         .application_id(cards_core::APP_ID)
         .build();
+    app.set_accels_for_action("win.new", &["<Control>n"]);
     app.connect_activate(|app| {
         if let Some(window) = app.active_window() {
             window.present();

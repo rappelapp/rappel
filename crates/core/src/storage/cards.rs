@@ -1,4 +1,4 @@
-//! Cards: add, edit, list, soft delete (ADR 0008).
+//! Cards: add, edit, list, soft delete (ADR 0008) and its undo (ADR 0013).
 
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
@@ -72,11 +72,12 @@ impl Store {
         Ok(card)
     }
 
-    /// Replaces the front and back of card `id`.
+    /// Replaces the front and back of card `id` and returns the card as
+    /// stored.
     ///
     /// # Errors
     /// [`Error::EmptyCardFront`], [`Error::CardNotFound`], SQLite errors.
-    pub fn edit_card(&mut self, id: &str, front_md: &str, back_md: &str) -> Result<()> {
+    pub fn edit_card(&mut self, id: &str, front_md: &str, back_md: &str) -> Result<Card> {
         self.edit_card_at(id, front_md, back_md, now_ms())
     }
 
@@ -87,17 +88,21 @@ impl Store {
         front_md: &str,
         back_md: &str,
         now: i64,
-    ) -> Result<()> {
+    ) -> Result<Card> {
         check_front(front_md)?;
-        let changed = self.conn.execute(
-            "UPDATE cards SET front_md = ?2, back_md = ?3, updated_at = ?4
-             WHERE id = ?1 AND deleted_at IS NULL",
-            params![id, front_md, back_md, now],
-        )?;
-        if changed == 0 {
-            return Err(Error::CardNotFound(id.to_owned()));
-        }
-        Ok(())
+        // One statement, so the returned card is exactly what was written.
+        self.conn
+            .query_row(
+                // RETURNING takes no table-qualified names; same order as
+                // CARD_COLUMNS.
+                "UPDATE cards SET front_md = ?2, back_md = ?3, updated_at = ?4
+                 WHERE id = ?1 AND deleted_at IS NULL
+                 RETURNING id, deck_id, front_md, back_md, created_at, updated_at",
+                params![id, front_md, back_md, now],
+                card_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| Error::CardNotFound(id.to_owned()))
     }
 
     /// Card `id`.
@@ -140,6 +145,38 @@ impl Store {
             return Err(Error::CardNotFound(id.to_owned()));
         }
         Ok(())
+    }
+
+    /// Undoes [`Self::delete_card`]: card `id` is live again, with its
+    /// content, review history and place in creation order. A live card is
+    /// returned unchanged, so a second Undo is harmless. `updated_at` is
+    /// not touched, as delete did not touch it.
+    ///
+    /// A card never comes back into a deleted deck: that fails with
+    /// [`Error::DeckNotFound`] and changes nothing (ADR 0013).
+    ///
+    /// # Errors
+    /// [`Error::CardNotFound`] for an unknown id, [`Error::DeckNotFound`],
+    /// SQLite errors.
+    pub fn undelete_card(&mut self, id: &str) -> Result<Card> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (card, deleted_at): (Card, Option<i64>) = tx
+            .query_row(
+                &format!("SELECT {CARD_COLUMNS}, c.deleted_at FROM cards c WHERE c.id = ?1"),
+                [id],
+                |r| Ok((card_from_row(r)?, r.get(6)?)),
+            )
+            .optional()?
+            .ok_or_else(|| Error::CardNotFound(id.to_owned()))?;
+        if deleted_at.is_none() {
+            return Ok(card);
+        }
+        ensure_live_deck(&tx, &card.deck_id)?;
+        tx.execute("UPDATE cards SET deleted_at = NULL WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(card)
     }
 }
 

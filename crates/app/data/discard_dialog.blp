@@ -1,0 +1,15 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Asked when the card editor is closed with unsaved changes.
+Adw.AlertDialog discard_dialog {
+  heading: _("Discard Changes?");
+  body: _("The text you typed will be lost");
+  close-response: "keep";
+  default-response: "keep";
+
+  responses [
+    keep: _("_Keep Editing"),
+    discard: _("_Discard") destructive,
+  ]
+}

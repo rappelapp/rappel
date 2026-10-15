@@ -1,4 +1,5 @@
-//! Decks: create, rename, list with counts, soft delete (ADR 0008).
+//! Decks: create, rename, list with counts, soft delete and its undo
+//! (ADR 0008, ADR 0012).
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior, params};
 
@@ -141,6 +142,51 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Undoes [`Self::delete_deck`]: deck `id` and exactly the cards deleted
+    /// with it (those sharing the deck's `deleted_at` stamp) become live
+    /// again. Cards deleted on their own before the deck have an earlier
+    /// stamp and stay deleted (ADR 0008, ADR 0012). Returns the deck.
+    /// A deck that is already live is returned unchanged.
+    ///
+    /// # Errors
+    /// [`Error::DeckNotFound`] if no deck has this id,
+    /// [`Error::DuplicateDeckName`] if a live deck took its name meanwhile
+    /// (nothing is changed), SQLite errors.
+    pub fn undelete_deck(&mut self, id: &str) -> Result<Deck> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (deck, stamp): (Deck, Option<i64>) = tx
+            .query_row(
+                "SELECT id, name, created_at, updated_at, deleted_at FROM decks WHERE id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        Deck {
+                            id: r.get(0)?,
+                            name: r.get(1)?,
+                            created_at: r.get(2)?,
+                            updated_at: r.get(3)?,
+                        },
+                        r.get(4)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| Error::DeckNotFound(id.to_owned()))?;
+        let Some(stamp) = stamp else {
+            return Ok(deck);
+        };
+        tx.execute("UPDATE decks SET deleted_at = NULL WHERE id = ?1", [id])
+            .map_err(|e| duplicate_name(e, &deck.name))?;
+        tx.execute(
+            "UPDATE cards SET deleted_at = NULL WHERE deck_id = ?1 AND deleted_at = ?2",
+            params![id, stamp],
+        )?;
+        tx.commit()?;
+        Ok(deck)
     }
 }
 

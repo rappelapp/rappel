@@ -50,11 +50,25 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - Dependency: `unicode-normalization` in `cards-core` (NFC for deck name keys).
 - Dependency: `getrandom` in `cards-core` (random bits for ids; already in the tree through `fsrs`).
 - The app opens the database at startup through `AppState` (ADR 0011):
-  - The main window shows the empty state "No Decks Yet", or a "N Decks" placeholder if the database already has decks; deck features come later.
+  - The main window shows the empty state "No Decks Yet".
   - A damaged database, a missing database file next to its journal, an interrupted restore, or another application's database shows a recovery page. It lists the backups newest first and restores the chosen one after an `AdwAlertDialog` confirmation, then the app continues.
   - A database from a newer Cards shows a page that explains this and offers no restore.
   - Any other startup failure shows a page with the message, the full error and the data folder.
   - A failed daily backup (or prune) is shown as a toast, not only logged: `Store::open` keeps it as an `OpenWarning` (`Store::take_open_warnings`).
+- Deck list on the main page (ADR 0012):
+  - Each deck shows its name and new/due counts. With no decks, the empty state has a "New Deck" button.
+  - New Deck (header button, empty state, Ctrl+N) and Rename open a dialog. An empty name or a duplicate name (ignoring case and accent composition) disables the button, and a duplicate is explained under the entry.
+  - Delete removes the deck at once and offers Undo in a toast.
+  - Icon-only buttons have tooltips and accessible labels; the row menu's label names the deck.
+- `Store::undelete_deck` in `cards-core`: restores a deleted deck and exactly the cards deleted with it; refuses, changing nothing, if a live deck took its name meanwhile.
+- Deck page (ADR 0013):
+  - Clicking a deck opens its page, titled with the deck name, with Back, swipe and Alt+← to return. The deck list's counts update on return.
+  - The cards are listed by their front on one ellipsised line, in a list view that stays smooth with thousands of cards. With no cards, the empty state has an "Add Card" button.
+  - Card editor with plain-text front and back: Ctrl+Enter saves, Ctrl+Shift+Enter saves and starts a new card in the same deck, a blank front disables saving, and closing with unsaved changes asks first.
+  - Activating a card edits it; its row menu has Edit and Delete. Delete offers Undo in a toast, which also works after going back to the deck list.
+  - Ctrl+N makes a new card on a deck page and a new deck on the deck list.
+- `Store::undelete_card` in `cards-core`: restores a deleted card with its history; refuses, changing nothing, while its deck is deleted.
+- `cards-core` example `fill_scratch_db`: fills a scratch data directory with 5,000 cards to try the card list.
 
 ### Changed
 - Without a usable data folder the app shows an error page instead of starting with a toast.

@@ -1,0 +1,43 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Heading and the confirm label are set in dialogs/deck_name_dialog.rs
+// ("New Deck"/"Create" or "Rename Deck"/"Rename").
+Adw.AlertDialog deck_name_dialog {
+  close-response: "cancel";
+  default-response: "confirm";
+
+  responses [
+    cancel: _("_Cancel"),
+    confirm: _("_Create") suggested,
+  ]
+
+  extra-child: Gtk.Box {
+    orientation: vertical;
+    spacing: 6;
+
+    Gtk.ListBox {
+      selection-mode: none;
+
+      styles [
+        "boxed-list",
+      ]
+
+      Adw.EntryRow name_entry {
+        title: _("Name");
+        activates-default: true;
+      }
+    }
+
+    Gtk.Label error_label {
+      visible: false;
+      wrap: true;
+      xalign: 0;
+
+      styles [
+        "error",
+        "caption",
+      ]
+    }
+  };
+}

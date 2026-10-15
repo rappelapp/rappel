@@ -1,0 +1,79 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One deck: its cards, or an empty state. The title (the deck name) is
+// set in pages/deck_page.rs; NavigationPage:title is plain text.
+template $CardsDeckPage: Adw.NavigationPage {
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [end]
+      Gtk.Button {
+        icon-name: "list-add-symbolic";
+        action-name: "deck.new-card";
+        tooltip-text: _("New Card");
+
+        accessibility {
+          label: _("New Card");
+        }
+      }
+    }
+
+    content: Gtk.Stack content_stack {
+      Gtk.StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          icon-name: "document-new-symbolic";
+          title: _("No Cards Yet");
+          description: _("Add a card to start learning");
+
+          child: Gtk.Button empty_add_button {
+            label: _("_Add Card");
+            use-underline: true;
+            action-name: "deck.new-card";
+            halign: center;
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          };
+        };
+      }
+
+      Gtk.StackPage {
+        name: "list";
+
+        // A GtkListView with a model, not a boxed list: it only creates
+        // rows for what is on screen, so thousands of cards stay smooth
+        // (ADR 0013). `.boxed-list` styles only GtkListBox; these are the
+        // list styles libadwaita has for a list view.
+        child: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+
+          styles [
+            "view",
+          ]
+
+          child: Adw.ClampScrollable {
+            maximum-size: 600;
+
+            child: Gtk.ListView card_list {
+              single-click-activate: true;
+
+              accessibility {
+                label: _("Cards");
+              }
+
+              styles [
+                "rich-list",
+                "separators",
+              ]
+            };
+          };
+        };
+      }
+    };
+  };
+}

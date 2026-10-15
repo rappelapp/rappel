@@ -1,0 +1,174 @@
+//! The dialog that asks for a deck name, to create or rename a deck.
+//! Layout in `data/deck_name_dialog.blp`.
+//!
+//! The name is checked as it is typed, with the core's own name key, so an
+//! empty or duplicate name disables the confirm button and a duplicate is
+//! explained under the entry. The store still has the final say.
+
+use adw::prelude::*;
+use cards_core::domain::{Deck, deck_name_key};
+use gtk::glib;
+
+/// What the dialog is for.
+#[derive(Debug, Clone)]
+pub enum Purpose {
+    Create,
+    Rename(Deck),
+}
+
+/// Result of checking a typed name against the live decks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameCheck {
+    /// Empty or only whitespace.
+    Empty,
+    /// Another live deck has this name, ignoring case and Unicode
+    /// composition; holds that deck's name as shown.
+    Duplicate(String),
+    Valid,
+}
+
+/// Checks `input` against `decks`, skipping the deck with id `exclude`
+/// (the deck being renamed). Same rule as the store (ADR 0010).
+pub fn check_deck_name(input: &str, decks: &[Deck], exclude: Option<&str>) -> NameCheck {
+    if input.trim().is_empty() {
+        return NameCheck::Empty;
+    }
+    let key = deck_name_key(input);
+    decks
+        .iter()
+        .filter(|deck| Some(deck.id.as_str()) != exclude)
+        .find(|deck| deck_name_key(&deck.name) == key)
+        .map_or(NameCheck::Valid, |deck| {
+            NameCheck::Duplicate(deck.name.clone())
+        })
+}
+
+/// Shows the dialog over `parent` and returns the name typed, or `None`
+/// if it was cancelled. `decks` are the live decks, for the duplicate check.
+pub async fn ask(
+    parent: &impl IsA<gtk::Widget>,
+    purpose: Purpose,
+    decks: Vec<Deck>,
+) -> Option<String> {
+    let builder = gtk::Builder::from_resource("/io/github/rsmirke/Cards/deck_name_dialog.ui");
+    let (Some(dialog), Some(entry), Some(error_label)) = (
+        builder.object::<adw::AlertDialog>("deck_name_dialog"),
+        builder.object::<adw::EntryRow>("name_entry"),
+        builder.object::<gtk::Label>("error_label"),
+    ) else {
+        tracing::error!("deck_name_dialog.ui is missing an object");
+        return None;
+    };
+
+    let exclude = match &purpose {
+        Purpose::Create => {
+            dialog.set_heading(Some("New Deck"));
+            None
+        }
+        Purpose::Rename(deck) => {
+            dialog.set_heading(Some("Rename Deck"));
+            dialog.set_response_label("confirm", "_Rename");
+            entry.set_text(&deck.name);
+            Some(deck.id.clone())
+        }
+    };
+    // Screen readers read the error with the entry.
+    // libadwaita-rs lists `Accessible` for `AdwEntryRow` only with its
+    // `gtk_v4_10` feature, which we do not enable; every widget is one.
+    entry
+        .upcast_ref::<gtk::Widget>()
+        .update_relation(&[gtk::accessible::Relation::DescribedBy(&[
+            error_label.upcast_ref()
+        ])]);
+
+    let update = glib::clone!(
+        #[weak]
+        dialog,
+        #[weak]
+        error_label,
+        move |entry: &adw::EntryRow| {
+            let check = check_deck_name(&entry.text(), &decks, exclude.as_deref());
+            dialog.set_response_enabled("confirm", check == NameCheck::Valid);
+            match check {
+                NameCheck::Duplicate(name) => {
+                    let message = format!("A deck named “{name}” already exists");
+                    if !error_label.is_visible() || error_label.label() != message {
+                        // Screen readers hear the error when it appears.
+                        entry
+                            .upcast_ref::<gtk::Widget>()
+                            .announce(&message, gtk::AccessibleAnnouncementPriority::Medium);
+                    }
+                    error_label.set_label(&message);
+                    error_label.set_visible(true);
+                    entry.add_css_class("error");
+                }
+                NameCheck::Empty | NameCheck::Valid => {
+                    error_label.set_visible(false);
+                    entry.remove_css_class("error");
+                }
+            }
+        }
+    );
+    update(&entry);
+    entry.connect_changed(update);
+    dialog.set_focus(Some(&entry));
+
+    let response = dialog.choose_future(Some(parent)).await;
+    (response == "confirm").then(|| entry.text().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deck(id: &str, name: &str) -> Deck {
+        Deck {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn decks() -> Vec<Deck> {
+        vec![deck("1", "Maths"), deck("2", "\u{C9}conomie")]
+    }
+
+    #[test]
+    fn empty_and_blank_names_are_empty() {
+        assert_eq!(check_deck_name("", &decks(), None), NameCheck::Empty);
+        assert_eq!(check_deck_name(" \t ", &decks(), None), NameCheck::Empty);
+    }
+
+    #[test]
+    fn duplicates_ignore_case_spaces_and_composition() {
+        let dup = |name: &str| NameCheck::Duplicate(name.to_owned());
+        assert_eq!(check_deck_name("maths", &decks(), None), dup("Maths"));
+        assert_eq!(check_deck_name("  MATHS ", &decks(), None), dup("Maths"));
+        // E + combining acute accent equals the precomposed É.
+        assert_eq!(
+            check_deck_name("e\u{301}conomie", &decks(), None),
+            dup("\u{C9}conomie")
+        );
+    }
+
+    #[test]
+    fn accents_still_count() {
+        assert_eq!(
+            check_deck_name("Economie", &decks(), None),
+            NameCheck::Valid
+        );
+    }
+
+    #[test]
+    fn rename_skips_the_deck_itself() {
+        assert_eq!(
+            check_deck_name("MATHS", &decks(), Some("1")),
+            NameCheck::Valid
+        );
+        assert_eq!(
+            check_deck_name("économie", &decks(), Some("1")),
+            NameCheck::Duplicate("\u{C9}conomie".to_owned())
+        );
+    }
+}

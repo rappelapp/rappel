@@ -1,0 +1,76 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $CardsDecksPage: Adw.NavigationPage {
+  title: _("Cards");
+  tag: "decks";
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [start]
+      Gtk.Button {
+        icon-name: "list-add-symbolic";
+        action-name: "win.new-deck";
+        tooltip-text: _("New Deck");
+
+        accessibility {
+          label: _("New Deck");
+        }
+      }
+    }
+
+    content: Gtk.Stack content_stack {
+      Gtk.StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          icon-name: "accessories-dictionary-symbolic";
+          title: _("No Decks Yet");
+          description: _("Create a deck to start adding cards");
+
+          child: Gtk.Button empty_new_button {
+            label: _("_New Deck");
+            use-underline: true;
+            action-name: "win.new-deck";
+            halign: center;
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          };
+        };
+      }
+
+      Gtk.StackPage {
+        name: "list";
+
+        child: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 600;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 12;
+            margin-end: 12;
+
+            child: Gtk.ListBox deck_list {
+              selection-mode: none;
+              valign: start;
+
+              accessibility {
+                label: _("Decks");
+              }
+
+              styles [
+                "boxed-list",
+              ]
+            };
+          };
+        };
+      }
+    };
+  };
+}

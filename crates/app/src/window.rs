@@ -2,10 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
+use adw::prelude::*;
 use adw::subclass::prelude::*;
+use cards_core::domain::Card;
 use cards_core::storage::Restored;
 use gtk::{gio, glib};
 
+use crate::pages::DeckPage;
 use crate::startup::Problem;
 use crate::state::{AppState, warning_message};
 
@@ -16,7 +19,7 @@ mod imp {
     use gtk::glib;
     use gtk::prelude::*;
 
-    use crate::pages::RecoveryPage;
+    use crate::pages::{DeckPage, DecksPage, RecoveryPage};
     use crate::state::AppState;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
@@ -27,7 +30,9 @@ mod imp {
         #[template_child]
         pub stack: TemplateChild<gtk::Stack>,
         #[template_child]
-        pub main_page: TemplateChild<adw::StatusPage>,
+        pub navigation_view: TemplateChild<adw::NavigationView>,
+        #[template_child]
+        pub decks_page: TemplateChild<DecksPage>,
         #[template_child]
         pub recovery_page: TemplateChild<RecoveryPage>,
         #[template_child]
@@ -50,9 +55,27 @@ mod imp {
         type ParentType = adw::ApplicationWindow;
 
         fn class_init(klass: &mut Self::Class) {
-            // The template uses this type, so it must be registered first.
+            // The template uses these types, so they must be registered first.
+            DecksPage::ensure_type();
             RecoveryPage::ensure_type();
             klass.bind_template();
+            // Enabled once the deck list is shown.
+            klass.install_action("win.new-deck", None, |window, _, _| {
+                window.imp().decks_page.new_deck();
+            });
+            // Ctrl+N (set in main.rs): a new card on a deck page, a new
+            // deck on the deck list.
+            klass.install_action("win.new", None, |window, _, _| {
+                let imp = window.imp();
+                match imp
+                    .navigation_view
+                    .visible_page()
+                    .and_downcast::<DeckPage>()
+                {
+                    Some(deck_page) => deck_page.new_card(),
+                    None => imp.decks_page.new_deck(),
+                }
+            });
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -60,7 +83,13 @@ mod imp {
         }
     }
 
-    impl ObjectImpl for CardsWindow {}
+    impl ObjectImpl for CardsWindow {
+        fn constructed(&self) {
+            self.parent_constructed();
+            self.obj().action_set_enabled("win.new-deck", false);
+            self.obj().action_set_enabled("win.new", false);
+        }
+    }
     impl WidgetImpl for CardsWindow {}
     impl WindowImpl for CardsWindow {}
     impl ApplicationWindowImpl for CardsWindow {}
@@ -91,27 +120,16 @@ impl CardsWindow {
         for warning in state.take_open_warnings() {
             self.add_toast(persistent_toast(&warning_message(&warning)));
         }
-        match state.list_decks() {
-            Ok(decks) if decks.is_empty() => {}
-            Ok(decks) => {
-                // Placeholder until the deck list exists.
-                let title = match decks.len() {
-                    1 => "1 Deck".to_owned(),
-                    n => format!("{n} Decks"),
-                };
-                imp.main_page.set_title(&title);
-                imp.main_page
-                    .set_description(Some("Deck features are not available yet"));
-            }
-            Err(err) => {
-                tracing::error!("cannot list decks: {err}");
-                self.show_problem(Problem::Failed {
-                    message: "The decks could not be read.".to_owned(),
-                    details: err.to_string(),
-                    data_dir: Some(state.data_dir().to_path_buf()),
-                });
-                return;
-            }
+        // Checked before keeping the state, so a failure leaves the window
+        // without one (and a later retry could still call this).
+        if let Err(err) = state.list_decks() {
+            tracing::error!("cannot list decks: {err}");
+            self.show_problem(Problem::Failed {
+                message: "The decks could not be read.".to_owned(),
+                details: err.to_string(),
+                data_dir: Some(state.data_dir().to_path_buf()),
+            });
+            return;
         }
         if imp.state.set(state).is_err() {
             // Only reachable if startup and a restore both succeeded, but
@@ -119,8 +137,36 @@ impl CardsWindow {
             tracing::error!("the window already has an open database");
             return;
         }
+        if let Some(state) = imp.state.get()
+            && let Err(err) = imp.decks_page.set_state(state.clone())
+        {
+            // Never show "No Decks Yet" for decks that could not be read.
+            tracing::error!("cannot list decks: {err}");
+            self.show_problem(Problem::Failed {
+                message: "The decks could not be read.".to_owned(),
+                details: err.to_string(),
+                data_dir: Some(state.data_dir().to_path_buf()),
+            });
+            return;
+        }
         tracing::debug!("showing the main page");
         imp.stack.set_visible_child_name("main");
+        self.action_set_enabled("win.new-deck", true);
+        self.action_set_enabled("win.new", true);
+    }
+
+    /// After an Undo from a toast brought `card` back: shows it on the
+    /// visible deck page if that is its deck, and updates the deck counts.
+    pub fn card_restored(&self, card: &Card) {
+        let imp = self.imp();
+        if let Some(page) = imp
+            .navigation_view
+            .visible_page()
+            .and_downcast::<DeckPage>()
+        {
+            page.restored(card);
+        }
+        imp.decks_page.refresh();
     }
 
     /// Shows the full-window page that explains `problem`.
@@ -191,6 +237,18 @@ pub fn persistent_toast(text: &str) -> adw::Toast {
         .use_markup(false)
         .timeout(0)
         .build()
+}
+
+/// Shows `toast` in the toast overlay that contains `widget`.
+pub fn show_toast_from(widget: &impl IsA<gtk::Widget>, toast: adw::Toast) {
+    if let Some(overlay) = widget
+        .ancestor(adw::ToastOverlay::static_type())
+        .and_downcast::<adw::ToastOverlay>()
+    {
+        overlay.add_toast(toast);
+    } else {
+        tracing::error!("widget is not inside a toast overlay");
+    }
 }
 
 /// Escapes text for a markup property such as `AdwStatusPage:description`.
