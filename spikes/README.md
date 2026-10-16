@@ -9,7 +9,7 @@ its `Cargo.lock` and `scripts/check.sh`.
 - `math/`: path 1, RaTeX as published (`ratex-gtk4` needs gtk4 0.9, cairo 0.20).
   Inline A (TextView child anchors), inline B (Pango `AttrShape`, `src/inline.rs`),
   the 11 display formulas, invalid LaTeX, `--bench`, `--errors`, `--count N`, `--screenshot`.
-- `math-gtk011/`: path 2, Cards' versions (gtk4 0.11, cairo 0.22) with `ratex-cairo`
+- `math-gtk011/`: path 2, Rappel's versions (gtk4 0.11, cairo 0.22) with `ratex-cairo`
   bumped to cairo 0.22 (`math/vendor/ratex-cairo`, a one-line change: `version = "0.22"`).
 - `math/screenshots/`: light/dark at 760 and 360 px, light at scale 2, path 2 light/dark.
   Taken offscreen through the Broadway backend and a `gsk::CairoRenderer`.
