@@ -2,7 +2,7 @@
 
 A native GNOME flashcard app. Two grades only (Fail and Pass), Markdown cards with LaTeX math, FSRS scheduling. Everything stays on your computer: no network access, no accounts.
 
-**Status:** early development (v0 in progress). You can create decks, add plain-text cards and study them with Fail and Pass on an FSRS schedule. Markdown and math rendering are not there yet. See [SPEC.md](SPEC.md) for what is planned.
+**Status:** early development (0.1.0 released). You can create decks, add plain-text cards and study them with Fail and Pass on an FSRS schedule. Markdown and math rendering are not there yet. See [SPEC.md](SPEC.md) for what is planned.
 
 ## Building
 

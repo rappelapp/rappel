@@ -7,6 +7,22 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Recovery page with no backups: **Start Fresh**, after a confirmation, moves the database aside (never deleting it) and starts an empty one (ADR 0016, #16). Not offered, and refused by core, while backups exist (`Error::BackupsAvailable`) or an interrupted restore's copy waits.
+- `cards-core`: `storage::start_fresh` and `Store::next_study_change`.
+- Tests: the cache property test also adds, deletes and undeletes cards and decks; a file-backed store is reopened; a v2 backup is restored; migration 0005 moves the due date of a late Pass (#13).
+
+### Changed
+- The deck list's "N new · N due" counts like the deck page: new cards still allowed today (20 a day), and due reviews plus step cards due within 20 minutes. `Store::list_decks` takes the study day's start.
+- The deck page's subtitle and Study button update by themselves when a card becomes due or a new study day begins.
+- Docs: CLAUDE.md and README say v0 is released as 0.1.0.
+
+### Fixed
+- Closing the window with unsaved text in the card editor asks "Discard Changes?" first, as Escape does.
+- The deck list cannot push a second page of the same deck when a row is activated again before the first push shows (#20).
+
+## [0.1.0] — 2026-10-15
+
+### Added
 - Project skeleton: Cargo workspace with `cards-core` and `cards` crates, shared lints (`unsafe_code` forbidden), rustfmt, clippy and cargo-deny configuration.
 - Minimal libadwaita window ("Cards", empty status page) built from a Blueprint template.
 - Quality gate `scripts/check.sh`, pre-commit hook refusing commits on `main`, hook installer.
@@ -79,10 +95,6 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - `cards-core`: `Store::study_input` and the pure `scheduling::session` (queue, interleaving, session, summary).
 - `fill_scratch_db --due N`: makes N scratch cards due now, through the real scheduler, to try studying.
 
-- Recovery page with no backups: **Start Fresh**, after a confirmation, moves the database aside (never deleting it) and starts an empty one (ADR 0016, #16). Not offered, and refused by core, while backups exist (`Error::BackupsAvailable`) or an interrupted restore's copy waits.
-- `cards-core`: `storage::start_fresh` and `Store::next_study_change`.
-- Tests: the cache property test also adds, deletes and undeletes cards and decks; a file-backed store is reopened; a v2 backup is restored; migration 0005 moves the due date of a late Pass (#13).
-
 ### Changed
 - `Store::record_review` takes the time of the answer (`now`) from the caller, like the other time-dependent operations.
 - Without a usable data folder the app shows an error page instead of starting with a toast.
@@ -95,12 +107,8 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - Lints are silenced only with `#[expect(.., reason = "..")]` (workspace lints `allow_attributes`, `allow_attributes_without_reason`).
 - Docs: README, CLAUDE.md and SPEC say what v0 already does; CLAUDE.md has rules on focus, stacked PRs and UI that cannot be seen.
 
-- The deck list's "N new · N due" counts like the deck page: new cards still allowed today (20 a day), and due reviews plus step cards due within 20 minutes. `Store::list_decks` takes the study day's start.
-- The deck page's subtitle and Study button update by themselves when a card becomes due or a new study day begins.
-
-### Fixed
-- Closing the window with unsaved text in the card editor asks "Discard Changes?" first, as Escape does.
-- The deck list cannot push a second page of the same deck when a row is activated again before the first push shows (#20).
-
 ### Removed
 - `Store::due_cards` and `Store::new_cards` in `cards-core`: unused since `Store::study_input`.
+
+[Unreleased]: https://github.com/rsmirke/cards/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/rsmirke/cards/releases/tag/v0.1.0

@@ -6,7 +6,7 @@
 - App name **Cards**, app ID `io.github.rsmirke.Cards`, licence GPL-3.0-or-later.
 - Crates: `cards-core` in `crates/core` (no UI), `cards` in `crates/app` (GTK binary).
 - Data dir `~/.local/share/cards/`; debug builds use `~/.local/share/cards-dev/`. `CARDS_DATA_DIR` overrides both. Never point development at the real data dir.
-- Status: v0 in progress (decks, plain-text cards, studying with FSRS; Markdown rendering not yet). Build order and scope are in `SPEC.md`.
+- Status: v0 released as 0.1.0 (decks, plain-text cards, studying with FSRS). Markdown rendering moved to v0.2. Build order and scope are in `SPEC.md`.
 
 ## About me
 - Strong in maths and algorithms, not a Rust or GTK developer, and I do **not** read most diffs. You are responsible for quality. The automated gate and the reviewer agent are how quality is checked, so never weaken them to make a task pass.
