@@ -40,7 +40,7 @@ Cards can be written (ADR 0013) and reviews can be recorded and scheduled (ADR 0
 **Duration** runs from the moment the front is shown to the grade. It is capped at 60 s (`MAX_DURATION`), so a card left on screen does not count as an hour of study. The reveal does not reset it.
 
 **Review page** (`AdwNavigationPage`, pushed from the deck page).
-- The front and back are plain text: labels with markup off, until Markdown rendering comes (Phase 3).
+- The front and back are plain text: labels with markup off, until Markdown rendering comes (Phase 3). *Superseded by ADR 0019: both sides are rendered Markdown.*
 - The bottom bar has Show Answer, then Fail (plain) and Pass (suggested). Fail is not a destructive action, so it does not use the destructive style.
 - **Keys** are in a bubble-phase shortcut controller on the page:
   - before the reveal, Space or Enter shows the answer;

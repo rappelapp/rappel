@@ -2,7 +2,7 @@
 
 A native GNOME flashcard app. Two grades only (Fail and Pass), Markdown cards with LaTeX math, FSRS scheduling. Everything stays on your computer: no network access, no accounts.
 
-**Status:** early development (0.1.0 released). You can create decks, add plain-text cards and study them with Fail and Pass on an FSRS schedule. Markdown and math rendering are not there yet. See [SPEC.md](SPEC.md) for what is planned.
+**Status:** early development (0.1.0 released). You can create decks, add Markdown cards and study them with Fail and Pass on an FSRS schedule. Math is shown as LaTeX source and images as placeholders for now. See [SPEC.md](SPEC.md) for what is planned.
 
 ## Building
 
@@ -28,6 +28,8 @@ To try the app on scratch data instead of your own (60 cards, 30 of them due now
 cargo run -p cards-core --example fill_scratch_db -- /tmp/cards-scratch 60 --due 30
 CARDS_DATA_DIR=/tmp/cards-scratch cargo run -p cards
 ```
+
+Add `--markdown` for a deck with one card per Markdown construct (`… fill_scratch_db -- /tmp/cards-md 0 --markdown` adds only that deck).
 
 ## Recovering your data
 

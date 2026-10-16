@@ -12,11 +12,13 @@ use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use cards_core::content::{self, Document};
 use cards_core::domain::{CardState, Deck, Grade};
 use cards_core::scheduling::session::{Session, Summary, capped};
 use gtk::glib;
 
 use crate::clock::local_day_start_ms;
+use crate::render::{self, Side, back_shown};
 use crate::state::AppState;
 use crate::ui::toast::{log_failure, persistent_toast, show_toast_from};
 use crate::ui::{init_once, nav};
@@ -27,6 +29,7 @@ mod imp {
 
     use adw::prelude::*;
     use adw::subclass::prelude::*;
+    use cards_core::content::Document;
     use cards_core::domain::Deck;
     use cards_core::scheduling::session::Session;
     use gtk::glib;
@@ -43,11 +46,11 @@ mod imp {
         #[template_child]
         pub card_area: TemplateChild<gtk::Box>,
         #[template_child]
-        pub front_label: TemplateChild<gtk::Label>,
+        pub front_box: TemplateChild<gtk::Box>,
         #[template_child]
         pub back_separator: TemplateChild<gtk::Separator>,
         #[template_child]
-        pub back_label: TemplateChild<gtk::Label>,
+        pub back_box: TemplateChild<gtk::Box>,
         #[template_child]
         pub buttons: TemplateChild<gtk::Stack>,
         #[template_child]
@@ -59,6 +62,8 @@ mod imp {
         pub session: RefCell<Option<Session>>,
         /// The card on screen.
         pub current: RefCell<Option<String>>,
+        /// Its back, parsed, until it is shown.
+        pub back: RefCell<Document>,
         /// When the current card's front was shown.
         pub shown_at: Cell<Option<Instant>>,
         pub revealed: Cell<bool>,
@@ -244,10 +249,19 @@ impl ReviewPage {
                 return;
             }
         };
-        imp.front_label.set_label(&card.front_md);
-        imp.back_label.set_label(&card.back_md);
-        imp.back_label.set_visible(false);
+        let front = content::parse(&card.front_md);
+        fill(&imp.front_box, &front, Side::Front);
+        clear(&imp.back_box);
+        imp.back_box.set_visible(false);
         imp.back_separator.set_visible(false);
+        // Screen readers read the front when the card area has the focus.
+        imp.card_area
+            .update_property(&[gtk::accessible::Property::Label(&content::plain_text(
+                &front,
+            ))]);
+        imp.card_area
+            .reset_property(gtk::AccessibleProperty::Description);
+        imp.back.replace(content::parse(&card.back_md));
         imp.revealed.set(false);
         imp.revealed_at.set(None);
         imp.current.replace(Some(id));
@@ -265,8 +279,17 @@ impl ReviewPage {
             return;
         }
         imp.revealed_at.set(Some(Instant::now()));
-        imp.back_separator.set_visible(true);
-        imp.back_label.set_visible(true);
+        let back = imp.back.take();
+        // An empty back shows nothing: only the grade buttons appear.
+        if back_shown(&back) {
+            fill(&imp.back_box, &back, Side::Back);
+            imp.back_separator.set_visible(true);
+            imp.back_box.set_visible(true);
+            imp.card_area
+                .update_property(&[gtk::accessible::Property::Description(
+                    &content::plain_text(&back),
+                )]);
+        }
         self.set_controls(Controls::Grade);
         imp.card_area.grab_focus();
     }
@@ -349,6 +372,18 @@ impl ReviewPage {
             old.dismiss();
         }
         show_toast_from(self, toast);
+    }
+}
+
+/// Replaces what `container` shows with `doc`.
+fn fill(container: &gtk::Box, doc: &Document, side: Side) {
+    clear(container);
+    container.append(&render::render(doc, side));
+}
+
+fn clear(container: &gtk::Box) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
     }
 }
 

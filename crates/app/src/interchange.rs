@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use adw::prelude::*;
 use cards_core::Error;
+use cards_core::content;
 use cards_core::interchange::{Conflict, FILE_EXTENSION, ImportPlan, ImportReport, ImportSummary};
 use gtk::{gio, glib};
 
@@ -16,7 +17,6 @@ use crate::state::AppState;
 use crate::ui::dialog;
 use crate::ui::text::{count, decks_cards_reviews};
 use crate::ui::toast::{log_failure, persistent_toast};
-use crate::widgets::front_preview;
 use crate::window::CardsWindow;
 
 /// How many conflicts the "Cannot Import" dialog lists by name.
@@ -296,11 +296,12 @@ fn card_lookup(state: &AppState, id: &str) -> Lookup {
 /// How many characters of a card front a conflict line shows.
 const FRONT_CHARS: usize = 60;
 
-/// The front on one line (as the card list shows it), cut to
-/// [`FRONT_CHARS`] with "…" when anything was left out.
+/// The front on one line, without Markdown syntax (as the card list shows
+/// it), cut to [`FRONT_CHARS`] with "…" when anything was left out.
 fn short_front(front: &str) -> String {
-    let preview = front_preview(front);
-    let words: Vec<&str> = front.split_whitespace().collect();
+    let text = content::plain_text(&content::parse(front));
+    let preview = content::one_line_summary(&text);
+    let words: Vec<&str> = text.split_whitespace().collect();
     let whole: usize =
         words.iter().map(|w| w.chars().count()).sum::<usize>() + words.len().saturating_sub(1);
     let shown: String = preview.chars().take(FRONT_CHARS).collect();
@@ -632,6 +633,7 @@ mod tests {
     #[test]
     fn a_cut_front_ends_with_an_ellipsis() {
         assert_eq!(short_front("2 +\n 2 ?"), "2 + 2 ?");
+        assert_eq!(short_front("**What** is `x`?"), "What is x?");
         let long = "word ".repeat(200);
         let short = short_front(&long);
         assert!(short.ends_with('…'));

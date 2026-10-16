@@ -4,6 +4,7 @@ mod clock;
 mod dialogs;
 mod interchange;
 mod pages;
+mod render;
 mod startup;
 mod state;
 mod ui;

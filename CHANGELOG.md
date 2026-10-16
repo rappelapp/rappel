@@ -7,6 +7,9 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Markdown cards (ADR 0019). Studying shows both sides rendered: paragraphs, headings, nested lists, code blocks, block quotes, rules, tables, emphasis, strong, strikethrough and inline code. Math (`$…$`, `$$…$$`) is shown as monospace source for now, and dollars used as prices (`$5-$10`, `\$`) stay text. Links are underlined and show their URL when hovered; they cannot be clicked. Images are a placeholder, and remote images are shown as text, never fetched. Raw HTML is shown as typed. A card whose back is empty shows only Fail and Pass after Show Answer. The card list shows each front without Markdown syntax.
+- `cards-core`: the `content` module: `parse` (Markdown → `Document`, nesting capped at 16 levels), `plain_text` and `plain_summary`. New dependency: `pulldown-cmark`.
+- `fill_scratch_db --markdown`: a deck with one card per Markdown construct. A count of 0 now adds no scratch deck.
 - Export and import in the app (ADR 0018). The deck list has a main menu (☰, F10) with **Export…** and **Import…**. Export saves everything to `cards-YYYY-MM-DD.cards` and says where in a toast. Import checks the file first and shows what it would add, what it brings back that you deleted, and what is already there; with conflicts it lists them, using your own deck names and card fronts, and offers no import. After an import, the deck list and open deck pages update. The work runs in the background, so the window stays responsive, and closing the window lets it finish.
 - `cards-core`: `Store::open_concurrent`, a second connection for a worker thread (never creates the database, refuses an unmigrated one).
 - README: "Exporting and importing".

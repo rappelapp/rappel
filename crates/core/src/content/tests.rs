@@ -1,0 +1,519 @@
+use proptest::prelude::*;
+
+use super::*;
+
+fn text(s: &str) -> Inline {
+    Inline::Text(s.to_owned())
+}
+
+fn para(inlines: Vec<Inline>) -> Block {
+    Block::Paragraph(inlines)
+}
+
+fn blocks(md: &str) -> Vec<Block> {
+    parse(md).blocks
+}
+
+/// The deepest container nesting in `blocks` (a paragraph of text is 1).
+fn depth(blocks: &[Block]) -> usize {
+    blocks.iter().map(block_depth).max().unwrap_or(0)
+}
+
+fn block_depth(block: &Block) -> usize {
+    1 + match block {
+        Block::Paragraph(inlines)
+        | Block::Heading {
+            content: inlines, ..
+        } => inlines_depth(inlines),
+        Block::List { items, .. } => items.iter().map(|item| 1 + depth(item)).max().unwrap_or(0),
+        Block::BlockQuote(blocks) => depth(blocks),
+        Block::Table { header, rows, .. } => std::iter::once(header)
+            .chain(rows)
+            .flatten()
+            .map(|cell| 2 + inlines_depth(cell))
+            .max()
+            .unwrap_or(0),
+        Block::CodeBlock { .. } | Block::Rule | Block::DisplayMath(_) => 0,
+    }
+}
+
+fn inlines_depth(inlines: &[Inline]) -> usize {
+    inlines
+        .iter()
+        .map(|inline| match inline {
+            Inline::Emphasis(inner)
+            | Inline::Strong(inner)
+            | Inline::Strikethrough(inner)
+            | Inline::Link { content: inner, .. } => 1 + inlines_depth(inner),
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+#[test]
+fn paragraphs_and_breaks() {
+    assert_eq!(
+        blocks("one\ntwo  \nthree\n\nfour"),
+        [
+            para(vec![text("one two"), Inline::LineBreak, text("three")]),
+            para(vec![text("four")]),
+        ]
+    );
+}
+
+#[test]
+fn blank_sides_are_empty() {
+    assert!(parse("").is_empty());
+    assert!(parse("  \n\t\n ").is_empty());
+    assert!(!parse("x").is_empty());
+    assert!(!parse("---").is_empty());
+}
+
+#[test]
+fn headings_have_their_level() {
+    assert_eq!(
+        blocks("# One\n###### Six *it*"),
+        [
+            Block::Heading {
+                level: 1,
+                content: vec![text("One")]
+            },
+            Block::Heading {
+                level: 6,
+                content: vec![text("Six "), Inline::Emphasis(vec![text("it")])]
+            },
+        ]
+    );
+}
+
+#[test]
+fn emphasis_strong_strikethrough_and_code() {
+    assert_eq!(
+        blocks("*a* **b** ~~c~~ `d*e*`"),
+        [para(vec![
+            Inline::Emphasis(vec![text("a")]),
+            text(" "),
+            Inline::Strong(vec![text("b")]),
+            text(" "),
+            Inline::Strikethrough(vec![text("c")]),
+            text(" "),
+            Inline::Code("d*e*".to_owned()),
+        ])]
+    );
+}
+
+#[test]
+fn lists_nest() {
+    assert_eq!(
+        blocks("- a\n  - b\n- c\n\n3. x\n4. y"),
+        [
+            Block::List {
+                start: None,
+                items: vec![
+                    vec![
+                        para(vec![text("a")]),
+                        Block::List {
+                            start: None,
+                            items: vec![vec![para(vec![text("b")])]],
+                        },
+                    ],
+                    vec![para(vec![text("c")])],
+                ],
+            },
+            Block::List {
+                start: Some(3),
+                items: vec![vec![para(vec![text("x")])], vec![para(vec![text("y")])]],
+            },
+        ]
+    );
+}
+
+#[test]
+fn code_blocks_keep_their_text() {
+    assert_eq!(
+        blocks("```rust ignore\nfn main() {}\n  <b>&\n```\n\n    indented"),
+        [
+            Block::CodeBlock {
+                lang: Some("rust".to_owned()),
+                code: "fn main() {}\n  <b>&".to_owned(),
+            },
+            Block::CodeBlock {
+                lang: None,
+                code: "indented".to_owned(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn block_quotes_nest() {
+    assert_eq!(
+        blocks("> a\n>\n> > b"),
+        [Block::BlockQuote(vec![
+            para(vec![text("a")]),
+            Block::BlockQuote(vec![para(vec![text("b")])]),
+        ])]
+    );
+}
+
+#[test]
+fn rules() {
+    assert_eq!(
+        blocks("a\n\n---\n\nb"),
+        [para(vec![text("a")]), Block::Rule, para(vec![text("b")])]
+    );
+}
+
+#[test]
+fn tables_have_alignment_header_and_rows() {
+    assert_eq!(
+        blocks("| a | b | c |\n|:--|:-:|--:|\n| *1* | 2 |\n"),
+        [Block::Table {
+            align: vec![Align::Left, Align::Center, Align::Right],
+            header: vec![vec![text("a")], vec![text("b")], vec![text("c")]],
+            rows: vec![vec![
+                vec![Inline::Emphasis(vec![text("1")])],
+                vec![text("2")],
+                vec![],
+            ]],
+        }]
+    );
+}
+
+#[test]
+fn links_keep_text_and_url() {
+    assert_eq!(
+        blocks("[the *docs*](https://example.org/a?b=1&c) and <https://x.org>"),
+        [para(vec![
+            Inline::Link {
+                content: vec![text("the "), Inline::Emphasis(vec![text("docs")])],
+                url: "https://example.org/a?b=1&c".to_owned(),
+            },
+            text(" and "),
+            Inline::Link {
+                content: vec![text("https://x.org")],
+                url: "https://x.org".to_owned(),
+            },
+        ])]
+    );
+}
+
+#[test]
+fn images_are_media_references_or_other() {
+    assert_eq!(
+        blocks("![a *cat*](media:ab12.png) ![remote](https://x.org/i.png)"),
+        [para(vec![
+            Inline::Image {
+                alt: "a cat".to_owned(),
+                target: ImageTarget::Media("ab12.png".to_owned()),
+            },
+            text(" "),
+            Inline::Image {
+                alt: "remote".to_owned(),
+                target: ImageTarget::Other("https://x.org/i.png".to_owned()),
+            },
+        ])]
+    );
+}
+
+#[test]
+fn inline_math() {
+    assert_eq!(
+        blocks(r"Area $\pi r^2$, done"),
+        [para(vec![
+            text("Area "),
+            Inline::Math {
+                source: r"\pi r^2".to_owned(),
+                display: false,
+            },
+            text(", done"),
+        ])]
+    );
+}
+
+#[test]
+fn display_math_is_a_block() {
+    assert_eq!(
+        blocks("Before\n$$\\int_0^1 x\\,dx$$\nafter"),
+        [
+            para(vec![text("Before")]),
+            Block::DisplayMath(r"\int_0^1 x\,dx".to_owned()),
+            para(vec![text("after")]),
+        ]
+    );
+    assert_eq!(blocks("$$x$$"), [Block::DisplayMath("x".to_owned())]);
+    assert_eq!(
+        blocks("- $$x$$"),
+        [Block::List {
+            start: None,
+            items: vec![vec![Block::DisplayMath("x".to_owned())]],
+        }]
+    );
+}
+
+#[test]
+fn display_math_in_a_heading_stays_inline() {
+    assert_eq!(
+        blocks("# $$x$$"),
+        [Block::Heading {
+            level: 1,
+            content: vec![Inline::Math {
+                source: "x".to_owned(),
+                display: true,
+            }],
+        }]
+    );
+}
+
+#[test]
+fn dollars_as_currency_stay_text() {
+    for md in [
+        "$5 and $10",
+        "costs $5.",
+        "$5-$10",
+        "from $5-$10 a day",
+        r"\$x\$",
+        r"\$5 and \$10",
+        "$ x $",
+        "a $ sign",
+    ] {
+        let doc = parse(md);
+        assert_eq!(doc.blocks.len(), 1, "{md}");
+        let Block::Paragraph(inlines) = &doc.blocks[0] else {
+            panic!("{md}: {doc:?}");
+        };
+        assert!(
+            inlines.iter().all(|i| matches!(i, Inline::Text(_))),
+            "{md}: {inlines:?}"
+        );
+        assert_eq!(plain_text(&doc), md.replace('\\', ""), "{md}");
+    }
+}
+
+#[test]
+fn currency_beside_real_math() {
+    assert_eq!(
+        blocks("$5-$10 for $x$"),
+        [para(vec![
+            text("$5-$10 for "),
+            Inline::Math {
+                source: "x".to_owned(),
+                display: false,
+            },
+        ])]
+    );
+}
+
+#[test]
+fn raw_html_stays_literal() {
+    assert_eq!(
+        blocks("a <b>bold</b> & <script>alert(1)</script> &amp; &lt;i&gt;"),
+        [para(vec![text(
+            "a <b>bold</b> & <script>alert(1)</script> & <i>"
+        )])]
+    );
+    assert_eq!(
+        blocks("<div onclick=\"x()\">\n<img src=\"https://x.org/t.png\">\n</div>\n\nnext"),
+        [
+            para(vec![
+                text("<div onclick=\"x()\">"),
+                Inline::LineBreak,
+                text("<img src=\"https://x.org/t.png\">"),
+                Inline::LineBreak,
+                text("</div>"),
+            ]),
+            para(vec![text("next")]),
+        ]
+    );
+    assert_eq!(
+        blocks("<a href=\"https://x.org\">x</a>"),
+        [para(vec![text("<a href=\"https://x.org\">x</a>")])]
+    );
+    assert_eq!(
+        blocks("<!-- hidden? -->"),
+        [para(vec![text("<!-- hidden? -->")])]
+    );
+}
+
+#[test]
+fn nul_becomes_the_replacement_character() {
+    let md = "a\0b `c\0` $d\0$\n\n```\ne\0\n```\n\n<p>\0</p>";
+    let plain = plain_text(&parse(md));
+    assert!(!plain.contains('\0'));
+    assert_eq!(plain.matches('\u{FFFD}').count(), 5, "{plain}");
+}
+
+#[test]
+fn deep_nesting_is_capped_and_keeps_the_text() {
+    let quotes = format!("{} deep", ">".repeat(10_000));
+    let doc = parse(&quotes);
+    assert!(depth(&doc.blocks) <= MAX_DEPTH + 2);
+    assert_eq!(plain_text(&doc), "deep");
+
+    let mut list = String::new();
+    for i in 0..100 {
+        list.push_str(&"  ".repeat(i));
+        list.push_str("- item ");
+        list.push_str(&i.to_string());
+        list.push('\n');
+    }
+    list.push_str("\nend");
+    let doc = parse(&list);
+    assert!(depth(&doc.blocks) <= MAX_DEPTH + 2);
+    let plain = plain_text(&doc);
+    for i in 0..100 {
+        assert!(
+            plain.contains(&format!("item {i}\n")),
+            "item {i} lost: {plain}"
+        );
+    }
+
+    let stars = format!("{}x{}", "*a ".repeat(500), " b*".repeat(500));
+    let doc = parse(&stars);
+    assert!(depth(&doc.blocks) <= MAX_DEPTH + 2);
+    assert_eq!(plain_text(&doc).matches('a').count(), 500);
+}
+
+#[test]
+fn flattened_blocks_keep_their_lines_and_cells() {
+    let deep = "> ".repeat(MAX_DEPTH + 4);
+    let md = format!(
+        "{deep}```\n{deep}alpha\n{deep}beta\n{deep}```\n{deep}\n\
+         {deep}<div>\n{deep}gamma\n{deep}</div>\n{deep}\n\
+         {deep}| a | b |\n{deep}|--|--|\n{deep}| c | d |\n{deep}\n\
+         {deep}![alt *x*](media:a.png) [link *y*](u)"
+    );
+    let doc = parse(&md);
+    assert!(depth(&doc.blocks) <= MAX_DEPTH + 2);
+    let plain = plain_text(&doc);
+    let lines: Vec<&str> = plain.lines().map(str::trim).collect();
+    assert_eq!(
+        lines,
+        [
+            "alpha",
+            "beta",
+            "<div>",
+            "gamma",
+            "</div>",
+            "a b",
+            "c d",
+            "alt x link y"
+        ],
+        "{plain:?}"
+    );
+}
+
+#[test]
+fn many_leading_hard_breaks_are_fast() {
+    // Quadratic before: minutes for a 1 MiB side.
+    let md = format!("- \\\n{}b", "\\\n".repeat(300_000));
+    let start = std::time::Instant::now();
+    assert_eq!(plain_text(&parse(&md)), "b");
+    let md = format!("$$x$$\\\n{}b", "\\\n".repeat(300_000));
+    assert_eq!(plain_text(&parse(&md)), "x\nb");
+    // Generous, for slow CI machines; the quadratic version took minutes.
+    assert!(start.elapsed() < std::time::Duration::from_secs(20));
+}
+
+#[test]
+fn summary_parses_a_bounded_prefix() {
+    let md = format!("**start** {}", "word ".repeat(1_000_000));
+    assert!(plain_summary(&md).starts_with("start word word"));
+    // A cut inside a multibyte character is moved to its start.
+    let md = "é".repeat(20_000);
+    assert_eq!(plain_summary(&md).chars().count(), PREVIEW_CHARS);
+    assert_eq!(one_line_summary(" a\n b "), "a b");
+}
+
+#[test]
+fn plain_text_has_no_syntax() {
+    let md = "# Title\n\n**bold** and *it* `code` [link](https://x.org) ![alt](media:a.png) \
+              $x^2$\n\n- one\n- two\n\n> quote\n\n---\n\n| h1 | h2 |\n|--|--|\n| c1 | c2 |\n\n$$y$$";
+    assert_eq!(
+        plain_text(&parse(md)),
+        "Title\nbold and it code link alt x^2\none\ntwo\nquote\nh1 h2\nc1 c2\ny"
+    );
+    assert_eq!(
+        plain_summary(md),
+        "Title bold and it code link alt x^2 one two quote h1 h2 c1 c2 y"
+    );
+}
+
+#[test]
+fn summary_keeps_html_as_typed() {
+    assert_eq!(plain_summary("<b>x</b> & y"), "<b>x</b> & y");
+}
+
+#[test]
+fn summary_is_cut() {
+    let summary = plain_summary(&format!("**{}**", "word ".repeat(1_000).trim_end()));
+    assert_eq!(summary.chars().count(), PREVIEW_CHARS - 1);
+    assert!(!summary.contains('*'));
+}
+
+/// Text made mostly of Markdown syntax, so that random input hits the
+/// parser's corner cases.
+fn markdownish() -> impl Strategy<Value = String> {
+    let piece = prop_oneof![
+        Just("*".to_owned()),
+        Just("_".to_owned()),
+        Just("~~".to_owned()),
+        Just("`".to_owned()),
+        Just("```".to_owned()),
+        Just("$".to_owned()),
+        Just("$$".to_owned()),
+        Just("\\".to_owned()),
+        Just("[".to_owned()),
+        Just("](".to_owned()),
+        Just(")".to_owned()),
+        Just("![".to_owned()),
+        Just("<".to_owned()),
+        Just(">".to_owned()),
+        Just("|".to_owned()),
+        Just("#".to_owned()),
+        Just("- ".to_owned()),
+        Just("1. ".to_owned()),
+        Just("---".to_owned()),
+        Just("&".to_owned()),
+        Just("\n".to_owned()),
+        Just("\n\n".to_owned()),
+        Just("  ".to_owned()),
+        Just("media:".to_owned()),
+        Just("<b>".to_owned()),
+        Just("5".to_owned()),
+        "[a-z]{1,4}",
+        any::<String>(),
+    ];
+    prop::collection::vec(piece, 0..200).prop_map(|pieces| pieces.concat())
+}
+
+proptest! {
+    #[test]
+    fn parsing_never_panics(md in markdownish()) {
+        let doc = parse(&md);
+        prop_assert!(depth(&doc.blocks) <= MAX_DEPTH + 2);
+        let summary = plain_summary(&md);
+        prop_assert!(!summary.contains(['\n', '\r']));
+        prop_assert!(summary.chars().count() <= PREVIEW_CHARS);
+        prop_assert_eq!(summary.trim(), summary.as_str());
+    }
+
+    #[test]
+    fn parsing_arbitrary_text_never_panics(md in any::<String>()) {
+        prop_assert!(!plain_text(&parse(&md)).contains('\0'));
+    }
+
+    #[test]
+    fn deep_nesting_never_panics(
+        prefix in prop::collection::vec(
+            prop_oneof![Just("> "), Just("- "), Just("  "), Just("1. "), Just("*"), Just("[")],
+            0..300,
+        ),
+        tail in markdownish(),
+    ) {
+        let md = format!("{}{tail}", prefix.concat());
+        let doc = parse(&md);
+        prop_assert!(depth(&doc.blocks) <= MAX_DEPTH + 2);
+    }
+}

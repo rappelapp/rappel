@@ -1,9 +1,9 @@
 using Gtk 4.0;
 using Adw 1;
 
-// A study session of one deck. Texts are set in pages/review_page.rs.
-// Card content is untrusted: every label has markup off (plain text until
-// Markdown rendering comes).
+// A study session of one deck. Texts are set in pages/review_page.rs; the
+// front and back boxes are filled by render/ (ADR 0019), which escapes the
+// untrusted card content.
 template $CardsReviewPage: Adw.NavigationPage {
   title: _("Study");
 
@@ -36,37 +36,19 @@ template $CardsReviewPage: Adw.NavigationPage {
               spacing: 24;
               focusable: true;
 
-              // Screen readers read the front, and the back once shown.
-              accessibility {
-                labelled-by: front_label;
-                described-by: back_label;
-              }
-
-              Gtk.Label front_label {
-                use-markup: false;
-                wrap: true;
-                wrap-mode: word_char;
-                justify: center;
-
-                styles [
-                  "title-2",
-                ]
+              // Its accessible label is the front's text, and its
+              // description the back's once shown (set in the page).
+              Gtk.Box front_box {
+                orientation: vertical;
               }
 
               Gtk.Separator back_separator {
                 visible: false;
               }
 
-              Gtk.Label back_label {
+              Gtk.Box back_box {
+                orientation: vertical;
                 visible: false;
-                use-markup: false;
-                wrap: true;
-                wrap-mode: word_char;
-                justify: center;
-
-                styles [
-                  "title-3",
-                ]
               }
             };
           };

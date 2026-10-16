@@ -43,6 +43,10 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Card content (cards-core, ADR 0019): CommonMark parser with tables,
+# strikethrough and math. No default features: they only add a CLI.
+pulldown-cmark = { version = "0.13", default-features = false }
+
 # Test-only: temporary directories for filesystem tests.
 tempfile = "3"
 # Test-only: property-based tests (scheduler replay).
