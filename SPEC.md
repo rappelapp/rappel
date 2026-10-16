@@ -17,7 +17,7 @@ v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, S
 2. **Core is UI-agnostic.** `rappel-core` holds all logic and has no GTK dependency. It must stay testable with plain `cargo test`.
 3. **GNOME-native.** Follow the GNOME HIG. Use libadwaita widgets as designed. No custom colors, no web views.
 4. **Few options, good defaults.** A setting needs a reason to exist.
-5. **Untrusted content.** Card text may later come from imports. It is never interpreted as HTML or markup without escaping, and never triggers network or file access outside the app's data directory.
+5. **Untrusted content.** Card text may later come from imports. It is never interpreted as HTML or markup without escaping. Card content never causes network access or access to user files. Reading installed system fonts is allowed (ADR 0021).
 
 ---
 
@@ -111,7 +111,7 @@ Storage rules:
 
 ### 4.2 Math
 - `$...$` inline and `$$...$$` display math in Markdown.
-- Rendering: evaluate **RaTeX** first (pure-Rust, KaTeX-compatible, has `ratex-cairo` and a `ratex-gtk4` widget). Render inline math to a texture and insert it into the text flow; display math as a centered block. Formula color follows the theme foreground (works in dark mode).
+- Rendering: evaluate **RaTeX** first (pure-Rust, KaTeX-compatible, has `ratex-cairo` and a `ratex-gtk4` widget). Draw inline math as vectors in the text flow, on the text baseline; display math as a centered block (ADR 0021). Formula color follows the theme foreground (works in dark mode).
 - Fallback if RaTeX doesn't work out: show the LaTeX source in monospace. Never a web view.
 - Invalid LaTeX shows the source with an error style, never crashes.
 - Record the decision in `docs/adr/`.

@@ -6,6 +6,9 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+- ADR 0021 (accepted): math rendering with RaTeX, from the `spike/math` experiment. SPEC §1 principle 5 and §4.2 amended. `\oiint` is a known limitation. Nothing changes in the app yet.
+
 ## 0.2.0-alpha.1 — 2026-10-16
 
 ### Added
