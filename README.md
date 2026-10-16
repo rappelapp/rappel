@@ -31,7 +31,7 @@ CARDS_DATA_DIR=/tmp/cards-scratch cargo run -p cards
 
 ## Recovering your data
 
-Cards backs up its database automatically: before every schema upgrade, before an import that adds anything, and once a day, into `backups/` inside the data directory (`~/.local/share/cards/backups/`, keeping the 14 newest).
+Cards backs up its database automatically: before every schema upgrade, before an import that adds or brings back anything, and once a day, into `backups/` inside the data directory (`~/.local/share/cards/backups/`, keeping the 14 newest).
 
 If the database is damaged or you want to go back to an earlier state, **restore a backup through Cards. Do not copy files by hand.** A copied-in file can be silently mixed with a leftover `cards.sqlite3-wal` file from the old database, which corrupts it or brings back data you meant to drop. Restoring checks the backup first and refuses a damaged one. It never deletes your current database: it is kept next to the new one as `cards.sqlite3.replaced-YYYYMMDD-HHMMSS` (with its `-wal`/`-shm`/`-journal` files, if any).
 
@@ -41,7 +41,7 @@ When Cards finds its database damaged, it shows a recovery screen that lists the
 
 **Export…** in the main menu (☰ on the deck list, or F10) saves everything (decks, cards and the whole review history, deleted items included) to one `.cards` file. Keep it as a copy, or open it on another computer with **Import…**.
 
-Import first shows what the file would add and what is already there, and writes nothing until you confirm. It only ever adds: nothing you have is changed or deleted. If the file disagrees with your data (for example a card edited in both places), nothing is imported and Cards lists where they differ. Importing the same file twice changes nothing.
+Import first shows what the file would add and what is already there, and writes nothing until you confirm. It adds what is new and brings back what you deleted; nothing you have is edited or deleted. A deck or card you deleted after exporting comes back with its review history if the file still has it, and a deck brings back the cards that were deleted with it. If the file disagrees with your data (for example a card edited in both places), nothing is imported and Cards lists where they differ. Importing the same file twice changes nothing.
 
 ## Documentation
 

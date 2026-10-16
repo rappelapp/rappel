@@ -30,9 +30,9 @@ Taking the `Store` out of `AppState` for the duration, or running the work on th
 **One job at a time, never cut off.** While an export or import runs, both actions are disabled and the application is held (`gio::Application::hold`), so closing the window lets the job finish, as a restore does. If the process is killed anyway, nothing is lost: an import is one transaction, and an export is written to `.partial` and then renamed.
 
 **The import dialog.** After the file chooser and the plan, an `AdwAlertDialog` shows one of three states:
-- **Import Data?** lists what the import adds and what is already there, and says a backup is made first. It offers Cancel and Import.
+- **Import Data?** lists what the import adds, what it brings back that you deleted, and what is already there, and says a backup is made first. It offers Cancel and Import.
 - **Cannot Import** appears when there are conflicts. It says nothing will change and lists the first five conflicts, then "and N more". It offers only Close.
-- **Nothing to Import** appears when every row is already present. It offers only Close.
+- **Nothing to Import** appears when every row is already present (nothing to add or bring back). It offers only Close.
 
 Conflicts are described with the user's own deck names and card fronts, read from the database, never with text from the file. Rows the database has deleted are described generically. After an import, the deck list and every deck page in the navigation stack are read again. A study session keeps the cards it started with. A refused file, a stale plan and other failures are shown in persistent toasts.
 

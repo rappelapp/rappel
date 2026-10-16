@@ -1,7 +1,7 @@
 //! Importing a `.cards` file: plan (check and compare, no writes), then
 //! apply (back up, then one transaction).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -24,10 +24,11 @@ impl Store {
     /// A file that is not a valid export is refused with
     /// [`Error::ImportRefused`], saying what is wrong and where. A valid
     /// file gives a plan whose [`ImportPlan::summary`] counts the rows that
-    /// would be added and those already present, and lists every conflict
-    /// (a row with the same id but different content, or a live deck name
-    /// already used by another live deck). Pass the plan to
-    /// [`Self::apply_import`].
+    /// would be added, those that would be brought back (deleted here,
+    /// live in the file, otherwise the same) and those already present,
+    /// and lists every conflict (a row with the same id but different
+    /// content, or a live deck name already used by another live deck).
+    /// Pass the plan to [`Self::apply_import`].
     ///
     /// # Errors
     /// [`Error::ImportRefused`], IO errors reading `path`, SQLite errors.
@@ -46,21 +47,28 @@ impl Store {
         let json = archive::read_cards_json(bytes, limits).map_err(Error::ImportRefused)?;
         let document = validate::parse(&json, limits).map_err(Error::ImportRefused)?;
         let tx = self.conn.unchecked_transaction()?;
-        let summary = classify(&tx, &document)?.summary;
+        let classified = classify(&tx, &document)?;
         // Read only: ending the transaction cannot lose anything.
         tx.finish()?;
-        Ok(ImportPlan { document, summary })
+        Ok(ImportPlan {
+            document,
+            classified,
+        })
     }
 
-    /// Adds the plan's new decks, cards and review events to the database.
+    /// Adds the plan's new decks, cards and review events to the database,
+    /// and brings back the deleted decks and cards that are live in the
+    /// file. A deck brought back also brings back the cards deleted with
+    /// it, as [`Self::undelete_deck`] does, unless the file has them.
     ///
     /// Nothing is written if the plan has conflicts, or if every row is
     /// already present (then no backup is made either, so importing a file
     /// twice changes nothing). Otherwise the database is backed up first
     /// (no backup, no import), then, in one transaction, the file is
     /// compared again (refused if the database changed since the plan),
-    /// the rows are inserted, and the schedule cache of every card that
-    /// got reviews is rebuilt from its log.
+    /// the rows are brought back and inserted, and the schedule cache of
+    /// every card that got reviews is rebuilt from its log. A card brought
+    /// back keeps its schedule, which deleting it did not touch.
     ///
     /// # Errors
     /// [`Error::ImportConflicts`], [`Error::ImportPlanStale`],
@@ -72,7 +80,7 @@ impl Store {
 
     /// [`Self::apply_import`] at time `now` (names the backup).
     pub(crate) fn apply_import_at(&mut self, plan: &ImportPlan, now: i64) -> Result<ImportReport> {
-        let summary = &plan.summary;
+        let summary = &plan.classified.summary;
         if !summary.conflicts.is_empty() {
             return Err(Error::ImportConflicts(summary.conflicts.len()));
         }
@@ -81,6 +89,8 @@ impl Store {
                 decks: 0,
                 cards: 0,
                 review_events: 0,
+                revived_decks: 0,
+                revived_cards: 0,
                 backup: None,
             });
         }
@@ -98,16 +108,15 @@ impl Store {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let rows = classify(&tx, doc)?;
-        // Rows are never removed, so between plan and now a row can only
-        // go from new to present or to a conflict, or from present to a
-        // conflict. Each of those changes the summary, so an equal summary
-        // means the same rows are new. (A plan applied to another database,
-        // after a restore, could match by counts alone; the rows written
-        // are still exactly the new ones, as they come from this
-        // comparison, not from the plan.)
-        if rows.summary != *summary {
+        // The same file, so equal positions are the same rows: the plan
+        // the user confirmed is exactly what is written. Any change here
+        // since (a row added, edited, deleted or brought back) that
+        // changes what would be written refuses the import.
+        if rows != plan.classified {
             return Err(Error::ImportPlanStale);
         }
+        // Decks first, so a new card can go into a revived deck.
+        revive_rows(&tx, doc, &rows)?;
         let reviewed = insert_rows(&tx, doc, &rows)?;
         rebuild_cards(&tx, &self.scheduler, reviewed)?;
         tx.commit()?;
@@ -115,12 +124,16 @@ impl Store {
             decks = summary.decks.new,
             cards = summary.cards.new,
             review_events = summary.review_events.new,
+            revived_decks = summary.decks.revived,
+            revived_cards = summary.cards.revived,
             "import applied"
         );
         Ok(ImportReport {
             decks: summary.decks.new,
             cards: summary.cards.new,
             review_events: summary.review_events.new,
+            revived_decks: summary.decks.revived,
+            revived_cards: summary.cards.revived,
             backup: Some(backup),
         })
     }
@@ -148,24 +161,77 @@ fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// How a document compares with the database: the summary, and the
-/// positions of the rows to add.
-struct Classified {
-    summary: ImportSummary,
+/// How a document compares with the database: the summary, the positions
+/// of the rows to add and to bring back, and the ids of the cards that
+/// come back with a revived deck but are not in the file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct Classified {
+    pub(super) summary: ImportSummary,
     new_decks: Vec<usize>,
     new_cards: Vec<usize>,
     new_events: Vec<usize>,
+    revived_decks: Vec<usize>,
+    revived_cards: Vec<usize>,
+    batch_cards: Vec<String>,
 }
 
-/// Same id and same content: present; unknown id: new; same id and
-/// different content: a conflict. Then live deck names against the
-/// database's other live decks.
-fn classify(conn: &Connection, doc: &Document) -> Result<Classified> {
-    let mut summary = ImportSummary::default();
-    let mut new_decks = Vec::new();
-    let mut new_cards = Vec::new();
-    let mut new_events = Vec::new();
+/// What to do with a deck or card of the file whose id is in the database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Outcome {
+    /// Nothing: it is already here.
+    Present,
+    /// Clear the database row's `deleted_at`, which is this stamp.
+    Revive(i64),
+    /// Refuse the whole import.
+    Conflict,
+}
 
+/// Compares a row of the file with the database's row of the same id.
+/// `rest_equal` says whether every field but `deleted_at` is the same.
+/// Only a difference in `deleted_at` can be merged: deleted here and live
+/// in the file brings the row back; live here and deleted in the file
+/// leaves it live, as an import never deletes. Deleted on both sides at
+/// different times, like any other difference, is a conflict.
+pub(super) fn compare(
+    rest_equal: bool,
+    stored_deleted: Option<i64>,
+    file_deleted: Option<i64>,
+) -> Outcome {
+    if !rest_equal {
+        return Outcome::Conflict;
+    }
+    match (stored_deleted, file_deleted) {
+        (None, _) => Outcome::Present,
+        (Some(stamp), None) => Outcome::Revive(stamp),
+        (Some(s), Some(f)) if s == f => Outcome::Present,
+        (Some(_), Some(_)) => Outcome::Conflict,
+    }
+}
+
+/// Unknown id: new; otherwise as [`compare`] says. A revived deck also
+/// revives the database's cards of the same delete batch (same deck, same
+/// `deleted_at`, as [`Store::undelete_deck`]) that the file does not have;
+/// those the file has are decided by their own row. Then live deck names
+/// against the database's other live decks, which covers revived decks.
+/// Conflicts come in file order: decks, cards, events, then names.
+fn classify(conn: &Connection, doc: &Document) -> Result<Classified> {
+    let mut rows = Classified::default();
+    let batches = classify_decks(conn, doc, &mut rows)?;
+    classify_cards(conn, doc, &mut rows)?;
+    add_batch_cards(conn, doc, &batches, &mut rows)?;
+    classify_events(conn, doc, &mut rows)?;
+    check_deck_names(conn, doc, &mut rows.summary)?;
+    Ok(rows)
+}
+
+/// Classifies the decks. Returns each revived deck's id with its
+/// `deleted_at` here, the stamp of its delete batch.
+fn classify_decks<'d>(
+    conn: &Connection,
+    doc: &'d Document,
+    rows: &mut Classified,
+) -> Result<Vec<(&'d str, i64)>> {
+    let mut batches = Vec::new();
     let mut stmt = conn
         .prepare("SELECT id, name, created_at, updated_at, deleted_at FROM decks WHERE id = ?1")?;
     for (i, d) in doc.decks.iter().enumerate() {
@@ -180,16 +246,33 @@ fn classify(conn: &Connection, doc: &Document) -> Result<Classified> {
                 })
             })
             .optional()?;
-        match stored {
-            None => {
-                summary.decks.new += 1;
-                new_decks.push(i);
+        let Some(s) = stored else {
+            rows.summary.decks.new += 1;
+            rows.new_decks.push(i);
+            continue;
+        };
+        let stored_deleted = s.deleted_at;
+        let rest_equal = DeckRecord {
+            deleted_at: d.deleted_at,
+            ..s
+        } == *d;
+        match compare(rest_equal, stored_deleted, d.deleted_at) {
+            Outcome::Present => rows.summary.decks.present += 1,
+            Outcome::Revive(stamp) => {
+                rows.summary.decks.revived += 1;
+                rows.revived_decks.push(i);
+                batches.push((d.id.as_str(), stamp));
             }
-            Some(s) if s == *d => summary.decks.present += 1,
-            Some(_) => summary.conflicts.push(Conflict::DeckDiffers(d.id.clone())),
+            Outcome::Conflict => rows
+                .summary
+                .conflicts
+                .push(Conflict::DeckDiffers(d.id.clone())),
         }
     }
+    Ok(batches)
+}
 
+fn classify_cards(conn: &Connection, doc: &Document, rows: &mut Classified) -> Result<()> {
     let mut stmt = conn.prepare(
         "SELECT id, deck_id, front_md, back_md, created_at, updated_at, deleted_at
          FROM cards WHERE id = ?1",
@@ -208,16 +291,57 @@ fn classify(conn: &Connection, doc: &Document) -> Result<Classified> {
                 })
             })
             .optional()?;
-        match stored {
-            None => {
-                summary.cards.new += 1;
-                new_cards.push(i);
+        let Some(s) = stored else {
+            rows.summary.cards.new += 1;
+            rows.new_cards.push(i);
+            continue;
+        };
+        let stored_deleted = s.deleted_at;
+        let rest_equal = CardRecord {
+            deleted_at: c.deleted_at,
+            ..s
+        } == *c;
+        match compare(rest_equal, stored_deleted, c.deleted_at) {
+            Outcome::Present => rows.summary.cards.present += 1,
+            // The stamp matters only for a deck, where it marks the batch.
+            Outcome::Revive(_) => {
+                rows.summary.cards.revived += 1;
+                rows.revived_cards.push(i);
             }
-            Some(s) if s == *c => summary.cards.present += 1,
-            Some(_) => summary.conflicts.push(Conflict::CardDiffers(c.id.clone())),
+            Outcome::Conflict => rows
+                .summary
+                .conflicts
+                .push(Conflict::CardDiffers(c.id.clone())),
         }
     }
+    Ok(())
+}
 
+/// Adds the cards deleted with each revived deck (same deck, same stamp)
+/// that are not in the file.
+fn add_batch_cards(
+    conn: &Connection,
+    doc: &Document,
+    batches: &[(&str, i64)],
+    rows: &mut Classified,
+) -> Result<()> {
+    let in_file: HashSet<&str> = doc.cards.iter().map(|c| c.id.as_str()).collect();
+    let mut stmt =
+        conn.prepare("SELECT id FROM cards WHERE deck_id = ?1 AND deleted_at = ?2 ORDER BY id")?;
+    for &(deck_id, stamp) in batches {
+        let ids = stmt.query_map(params![deck_id, stamp], |r| r.get::<_, String>(0))?;
+        for id in ids {
+            let id = id?;
+            if !in_file.contains(id.as_str()) {
+                rows.summary.cards.revived += 1;
+                rows.batch_cards.push(id);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn classify_events(conn: &Connection, doc: &Document, rows: &mut Classified) -> Result<()> {
     let mut stmt = conn.prepare(
         "SELECT id, card_id, reviewed_at, grade, duration_ms FROM review_events WHERE id = ?1",
     )?;
@@ -235,14 +359,22 @@ fn classify(conn: &Connection, doc: &Document) -> Result<Classified> {
             .optional()?;
         match stored {
             None => {
-                summary.review_events.new += 1;
-                new_events.push(i);
+                rows.summary.review_events.new += 1;
+                rows.new_events.push(i);
             }
-            Some(s) if s == *e => summary.review_events.present += 1,
-            Some(_) => summary.conflicts.push(Conflict::EventDiffers(e.id.clone())),
+            Some(s) if s == *e => rows.summary.review_events.present += 1,
+            Some(_) => rows
+                .summary
+                .conflicts
+                .push(Conflict::EventDiffers(e.id.clone())),
         }
     }
+    Ok(())
+}
 
+/// Each live deck of the file (new, present or revived) against the
+/// database's other live decks.
+fn check_deck_names(conn: &Connection, doc: &Document, summary: &mut ImportSummary) -> Result<()> {
     let mut stmt = conn
         .prepare("SELECT id FROM decks WHERE name_key = ?1 AND deleted_at IS NULL AND id <> ?2")?;
     for d in doc.decks.iter().filter(|d| d.deleted_at.is_none()) {
@@ -256,13 +388,24 @@ fn classify(conn: &Connection, doc: &Document) -> Result<Classified> {
             });
         }
     }
+    Ok(())
+}
 
-    Ok(Classified {
-        summary,
-        new_decks,
-        new_cards,
-        new_events,
-    })
+/// Brings back the revived decks, then the revived cards. `updated_at` is
+/// not touched, as deleting did not touch it.
+fn revive_rows(conn: &Connection, doc: &Document, rows: &Classified) -> Result<()> {
+    let mut deck = conn
+        .prepare("UPDATE decks SET deleted_at = NULL WHERE id = ?1 AND deleted_at IS NOT NULL")?;
+    for d in rows.revived_decks.iter().map(|&i| &doc.decks[i]) {
+        deck.execute([&d.id])?;
+    }
+    let mut card = conn
+        .prepare("UPDATE cards SET deleted_at = NULL WHERE id = ?1 AND deleted_at IS NOT NULL")?;
+    let from_file = rows.revived_cards.iter().map(|&i| doc.cards[i].id.as_str());
+    for id in from_file.chain(rows.batch_cards.iter().map(String::as_str)) {
+        card.execute([id])?;
+    }
+    Ok(())
 }
 
 /// Inserts the rows at the given positions of `doc`.

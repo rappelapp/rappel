@@ -329,10 +329,14 @@ fn exported_text(path: &Path) -> String {
 }
 
 fn imported_text(report: &ImportReport) -> String {
-    decks_cards_reviews(report.decks, report.cards, report.review_events).map_or_else(
-        || "Nothing was imported: everything was already here".to_owned(),
-        |added| format!("Imported {added}"),
-    )
+    let added = decks_cards_reviews(report.decks, report.cards, report.review_events);
+    let revived = decks_cards_reviews(report.revived_decks, report.revived_cards, 0);
+    match (added, revived) {
+        (Some(added), Some(revived)) => format!("Imported {added}, and brought back {revived}"),
+        (Some(added), None) => format!("Imported {added}"),
+        (None, Some(revived)) => format!("Brought back {revived}"),
+        (None, None) => "Nothing was imported: everything was already here".to_owned(),
+    }
 }
 
 /// What the import dialog says.
@@ -362,14 +366,21 @@ fn plan_view(summary: &ImportSummary) -> PlanView {
         summary.cards.new,
         summary.review_events.new,
     );
-    let Some(new) = new else {
+    let revived = decks_cards_reviews(summary.decks.revived, summary.cards.revived, 0);
+    if new.is_none() && revived.is_none() {
         return PlanView {
             heading: "Nothing to Import",
             body: "Everything in this file is already here.".to_owned(),
             can_import: false,
         };
-    };
-    let mut sentences = vec![format!("This adds {new}.")];
+    }
+    let mut sentences = Vec::new();
+    if let Some(new) = new {
+        sentences.push(format!("This adds {new}."));
+    }
+    if let Some(revived) = revived {
+        sentences.push(format!("This brings back {revived} you deleted."));
+    }
     let (decks, cards, reviews) = (
         summary.decks.present,
         summary.cards.present,
@@ -451,7 +462,18 @@ mod tests {
     const OTHER: &str = "01920000-0000-7000-8000-000000000004";
 
     fn counts(new: usize, present: usize) -> TableCounts {
-        TableCounts { new, present }
+        TableCounts {
+            new,
+            present,
+            revived: 0,
+        }
+    }
+
+    fn revived(revived: usize) -> TableCounts {
+        TableCounts {
+            revived,
+            ..TableCounts::default()
+        }
     }
 
     fn summary(decks: TableCounts, cards: TableCounts, reviews: TableCounts) -> ImportSummary {
@@ -502,6 +524,29 @@ mod tests {
             view.body,
             "This adds 1 deck. 2 decks and 3 cards are already here and will be skipped. \
              Your data is backed up first."
+        );
+    }
+
+    #[test]
+    fn deleted_rows_brought_back_offer_import() {
+        let view = plan_view(&summary(revived(2), revived(30), counts(0, 0)));
+        assert_eq!(
+            view,
+            PlanView {
+                heading: "Import Data?",
+                body: "This brings back 2 decks and 30 cards you deleted. \
+                       Your data is backed up first."
+                    .to_owned(),
+                can_import: true,
+            }
+        );
+        let mut decks = counts(1, 2);
+        decks.revived = 1;
+        let view = plan_view(&summary(decks, revived(1), counts(4, 0)));
+        assert_eq!(
+            view.body,
+            "This adds 1 deck and 4 reviews. This brings back 1 deck and 1 card you deleted. \
+             2 decks are already here and will be skipped. Your data is backed up first."
         );
     }
 
@@ -612,8 +657,34 @@ mod tests {
             decks: 1,
             cards: 2,
             review_events: 0,
+            revived_decks: 0,
+            revived_cards: 0,
             backup: None,
         };
         assert_eq!(imported_text(&report), "Imported 1 deck and 2 cards");
+        let report = ImportReport {
+            revived_cards: 3,
+            ..report
+        };
+        assert_eq!(
+            imported_text(&report),
+            "Imported 1 deck and 2 cards, and brought back 3 cards"
+        );
+        let report = ImportReport {
+            decks: 0,
+            cards: 0,
+            revived_decks: 1,
+            ..report
+        };
+        assert_eq!(imported_text(&report), "Brought back 1 deck and 3 cards");
+        let report = ImportReport {
+            revived_decks: 0,
+            revived_cards: 0,
+            ..report
+        };
+        assert_eq!(
+            imported_text(&report),
+            "Nothing was imported: everything was already here"
+        );
     }
 }

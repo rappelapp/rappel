@@ -9,7 +9,8 @@
 //! Import is two steps. [`Store::plan_import`](crate::storage::Store::plan_import)
 //! reads and checks the file and compares it with the database without
 //! writing anything; [`Store::apply_import`](crate::storage::Store::apply_import)
-//! backs the database up and writes the new rows in one transaction. The
+//! backs the database up, then adds the new rows and brings back deleted
+//! rows that are live in the file, in one transaction. The
 //! file is untrusted: anything unexpected refuses the whole import.
 
 mod archive;
@@ -42,17 +43,26 @@ pub struct ExportSummary {
 pub struct TableCounts {
     /// Rows whose id is not in the database: they would be added.
     pub new: usize,
-    /// Rows already in the database with exactly the same content.
+    /// Rows already in the database with the same content: identical, or
+    /// deleted in the file but live in the database (an import never
+    /// deletes).
     pub present: usize,
+    /// Deleted rows of the database that are live in the file with
+    /// otherwise the same content: they would be brought back. For cards,
+    /// this includes the cards deleted with a revived deck that the file
+    /// does not have. Always 0 for review events.
+    pub revived: usize,
 }
 
 /// One reason an import cannot be applied. Ids are the file's own, already
 /// checked to be `UUIDv7`; no card text is included.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Conflict {
-    /// The database has a deck with this id but different content.
+    /// The database has a deck with this id but different content (apart
+    /// from one side being deleted and the other live).
     DeckDiffers(String),
-    /// The database has a card with this id but different content.
+    /// The database has a card with this id but different content (apart
+    /// from one side being deleted and the other live).
     CardDiffers(String),
     /// The database has a review event with this id but different content.
     EventDiffers(String),
@@ -101,10 +111,15 @@ pub struct ImportSummary {
 }
 
 impl ImportSummary {
-    /// Whether applying would add nothing (every row is already present).
+    /// Whether applying would change nothing (every row is already
+    /// present: nothing to add, nothing to bring back).
     #[must_use]
     pub fn is_noop(&self) -> bool {
-        self.decks.new == 0 && self.cards.new == 0 && self.review_events.new == 0
+        self.decks.new == 0
+            && self.cards.new == 0
+            && self.review_events.new == 0
+            && self.decks.revived == 0
+            && self.cards.revived == 0
     }
 }
 
@@ -114,7 +129,8 @@ impl ImportSummary {
 #[derive(Clone)]
 pub struct ImportPlan {
     document: format::Document,
-    summary: ImportSummary,
+    /// The summary, and exactly which rows apply would write.
+    classified: import::Classified,
 }
 
 /// Only the summary: the document holds card text, which must not reach
@@ -122,17 +138,17 @@ pub struct ImportPlan {
 impl fmt::Debug for ImportPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ImportPlan")
-            .field("summary", &self.summary)
+            .field("summary", &self.classified.summary)
             .finish_non_exhaustive()
     }
 }
 
 impl ImportPlan {
-    /// What the import would add, what is already there, and the
-    /// conflicts.
+    /// What the import would add, what it would bring back, what is
+    /// already there, and the conflicts.
     #[must_use]
     pub fn summary(&self) -> &ImportSummary {
-        &self.summary
+        &self.classified.summary
     }
 }
 
@@ -145,8 +161,12 @@ pub struct ImportReport {
     pub cards: usize,
     /// Review events added.
     pub review_events: usize,
-    /// The backup made just before writing; `None` if nothing was added
-    /// (then nothing was written and no backup was needed).
+    /// Deleted decks brought back.
+    pub revived_decks: usize,
+    /// Deleted cards brought back.
+    pub revived_cards: usize,
+    /// The backup made just before writing; `None` if nothing was added or
+    /// brought back (then nothing was written and no backup was needed).
     pub backup: Option<PathBuf>,
 }
 
