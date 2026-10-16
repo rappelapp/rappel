@@ -5,8 +5,8 @@
 //! Order of cards:
 //! 1. a card in the 10-minute step that is due now (earliest first);
 //! 2. otherwise the next card of the queue: due reviews with new cards
-//!    spread evenly among them ([`interleave`]);
-//! 3. otherwise a step card due within [`EARLY_MS`], shown early;
+//!    spread evenly among them (`interleave`);
+//! 3. otherwise a step card due within `EARLY_MS`, shown early;
 //! 4. otherwise nothing: the session is over.
 //!
 //! A card answered into the step (a new card, or any Fail) comes back in
@@ -18,14 +18,14 @@ use std::time::Duration;
 use crate::domain::{CardState, Grade, Phase};
 
 /// New cards a deck introduces per day (SPEC §3 default; a setting later).
-pub const NEW_PER_DAY: u32 = 20;
+pub(crate) const NEW_PER_DAY: u32 = 20;
 
 /// How early a step card may be shown when nothing else is left.
-pub const EARLY_MS: i64 = 20 * 60 * 1000;
+pub(crate) const EARLY_MS: i64 = 20 * 60 * 1000;
 
 /// The longest time recorded for one answer. A card left on screen while
 /// the user is away should not count as an hour of study.
-pub const MAX_DURATION: Duration = Duration::from_secs(60);
+pub(crate) const MAX_DURATION: Duration = Duration::from_secs(60);
 
 /// A card and when it is due, UTC milliseconds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +42,7 @@ pub struct Due {
 pub struct StudyInput {
     /// Cards in review that are due, most overdue first.
     pub reviews: Vec<Due>,
-    /// Cards in the 10-minute step due within [`EARLY_MS`], earliest first.
+    /// Cards in the 10-minute step due within `EARLY_MS`, earliest first.
     pub steps: Vec<Due>,
     /// New cards still allowed today, oldest first.
     pub new: Vec<String>,
@@ -60,11 +60,11 @@ impl StudyInput {
 
 /// How many new cards may still be introduced today, after `new_today`.
 #[must_use]
-pub fn new_allowance(new_today: u32) -> u32 {
+pub(crate) fn new_allowance(new_today: u32) -> u32 {
     NEW_PER_DAY.saturating_sub(new_today)
 }
 
-/// `duration`, capped at [`MAX_DURATION`].
+/// `duration`, capped at `MAX_DURATION`.
 #[must_use]
 pub fn capped(duration: Duration) -> Duration {
     duration.min(MAX_DURATION)
@@ -75,7 +75,7 @@ pub fn capped(duration: Duration) -> Duration {
 /// card `i` (of `N`) at `(i + 1) / (N + 1)`; on a tie the review goes first.
 /// With `R >= N`, no two new cards are next to each other.
 #[must_use]
-pub fn interleave<T>(reviews: Vec<T>, new: Vec<T>) -> Vec<T> {
+pub(crate) fn interleave<T>(reviews: Vec<T>, new: Vec<T>) -> Vec<T> {
     let (r_len, n_len) = (reviews.len() as u128, new.len() as u128);
     let mut out = Vec::with_capacity(reviews.len() + new.len());
     let mut reviews = reviews.into_iter().peekable();

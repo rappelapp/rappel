@@ -12,7 +12,7 @@
 //!   to the nearest: no time zone is involved, so a rebuild needs nothing
 //!   but the stored UTC timestamps.
 //!
-//! [`Scheduler::rebuild_state`] is a fold of [`Scheduler::schedule`] over
+//! `Scheduler::rebuild_state` is a fold of `Scheduler::schedule` over
 //! the events in `(reviewed_at, id)` order. For the cache and a rebuild to
 //! agree, the log must already be in that order, which `schedule` enforces
 //! for times: it refuses a review earlier than the card's last one. Code
@@ -37,10 +37,12 @@ pub const DAY_MS: i64 = 86_400_000;
 pub const STEP_MS: i64 = 10 * 60 * 1000;
 
 /// The desired retention used until the user changes it (SPEC §3).
-pub const DEFAULT_DESIRED_RETENTION: f32 = 0.90;
+pub(crate) const DEFAULT_DESIRED_RETENTION: f32 = 0.90;
 
-/// The range of desired retention the user may choose (SPEC §3).
-pub const DESIRED_RETENTION_RANGE: std::ops::RangeInclusive<f32> = 0.80..=0.97;
+/// The range of desired retention the user may choose (SPEC §3). Used
+/// only by tests until settings exist.
+#[cfg(test)]
+pub(crate) const DESIRED_RETENTION_RANGE: std::ops::RangeInclusive<f32> = 0.80..=0.97;
 
 /// FSRS rating for Pass ("Good"). Fail is rating 1 ("Again"); `schedule`
 /// picks the matching field of `NextStates` rather than passing ratings.
@@ -48,7 +50,7 @@ const RATING_GOOD: u32 = 3;
 
 /// Schedules reviews with FSRS-6 and its default parameters.
 #[derive(Debug, Clone)]
-pub struct Scheduler {
+pub(crate) struct Scheduler {
     fsrs: FSRS,
     desired_retention: f32,
 }
@@ -70,6 +72,7 @@ impl Scheduler {
     /// # Errors
     /// [`Error::InvalidRetention`] if `desired_retention` is outside
     /// [`DESIRED_RETENTION_RANGE`].
+    #[cfg(test)]
     pub fn new(desired_retention: f32) -> Result<Self> {
         if !DESIRED_RETENTION_RANGE.contains(&desired_retention) {
             return Err(Error::InvalidRetention(desired_retention));
@@ -81,6 +84,7 @@ impl Scheduler {
     }
 
     /// The desired retention this scheduler targets.
+    #[cfg(test)]
     #[must_use]
     pub fn desired_retention(&self) -> f32 {
         self.desired_retention

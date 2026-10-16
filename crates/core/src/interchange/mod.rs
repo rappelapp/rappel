@@ -22,7 +22,7 @@ mod validate;
 use std::fmt;
 use std::path::PathBuf;
 
-pub use format::FORMAT_VERSION;
+pub(crate) use format::FORMAT_VERSION;
 
 /// File name extension of an export, without the dot.
 pub const FILE_EXTENSION: &str = "rappel";

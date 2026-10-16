@@ -29,10 +29,10 @@ pub use restore::{Restored, restore_backup, start_fresh};
 pub(crate) use schedule::rebuild_cards;
 
 /// File name of the database inside the data directory.
-pub const DB_FILE_NAME: &str = "rappel.sqlite3";
+pub(crate) const DB_FILE_NAME: &str = "rappel.sqlite3";
 
 /// Directory name for backups inside the data directory.
-pub const BACKUP_DIR_NAME: &str = "backups";
+pub(crate) const BACKUP_DIR_NAME: &str = "backups";
 
 const FILE_MODE: u32 = 0o600;
 
@@ -210,7 +210,8 @@ impl Store {
     ///
     /// # Errors
     /// If SQLite fails to read it.
-    pub fn schema_version(&self) -> Result<u32> {
+    #[cfg(test)]
+    pub(crate) fn schema_version(&self) -> Result<u32> {
         let v: u32 = self
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))?;

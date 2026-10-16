@@ -136,9 +136,7 @@ fn parse_id(id: &str) -> Option<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 2026-10-15T12:34:56.789Z
-    const T0: i64 = 1_792_067_696_789;
+    use crate::test_support::T0;
 
     fn ts_of(id: &str) -> i64 {
         i64::from_str_radix(&id.replace('-', "")[..12], 16).unwrap()

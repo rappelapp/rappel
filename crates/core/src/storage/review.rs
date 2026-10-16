@@ -83,7 +83,7 @@ impl Store {
     /// time). Read in one transaction, so the parts agree (ADR 0014):
     /// - due cards in review, most overdue first;
     /// - cards in the 10-minute step due within
-    ///   [`EARLY_MS`], earliest first;
+    ///   `EARLY_MS`, earliest first;
     /// - how many cards of the deck had their first review today, deleted
     ///   ones included (they used today's budget);
     /// - the new cards still allowed today, oldest first.
@@ -101,7 +101,7 @@ impl Store {
     /// The first time after `now` (UTC milliseconds) at which
     /// [`Self::study_input`] for deck `deck_id` would offer one more
     /// reviewed card: a review card's `due_at`, or a step card's `due_at`
-    /// minus [`EARLY_MS`]. `None` if no live card of the deck will become
+    /// minus `EARLY_MS`. `None` if no live card of the deck will become
     /// due. The day start, which renews the new-card budget, is the
     /// caller's to add.
     ///

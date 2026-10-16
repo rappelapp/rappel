@@ -2,9 +2,8 @@ use std::time::Duration;
 
 use super::*;
 use crate::domain::{CardState, Grade};
+use crate::test_support::T0;
 
-/// 2026-10-15T12:34:56.789Z
-const T0: i64 = 1_792_067_696_789;
 const MISSING: &str = "01920000-0000-7000-8000-00000000dead";
 
 /// How many reviewed live cards of `deck` are due at any time: reviews

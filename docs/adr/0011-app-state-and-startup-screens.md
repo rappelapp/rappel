@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-15
+- Amended by: ADR 0016 (the recovery page with no backups), ADR 0018 (a second connection)
 
 ## Context
 

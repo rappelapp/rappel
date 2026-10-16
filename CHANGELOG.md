@@ -16,9 +16,14 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ### Changed
 - `scripts/check.sh` runs `cargo deny check -D license-exception-not-encountered`, so a changed licence file of the KaTeX fonts fails the gate (ADR 0023). `deny.toml`: `OFL-1.1` is allowed for `ratex-katex-fonts` only, and RUSTSEC-2026-0192 (`ttf-parser` unmaintained) is ignored with a reason.
 - The quality gate needs a display, because a test starts GTK: CI runs it under Xvfb (`xvfb-run -a scripts/check.sh`, ADR 0024).
+- `rappel-core` makes public only what the app or `fill_scratch_db` uses. Items no front end used (e.g. `Scheduler`, `NEW_PER_DAY`, `interleave`, `has_nul`, `MAX_DEPTH`, `FORMAT_VERSION`, `DB_FILE_NAME`) are crate-private now, and the few only tests used (`is_valid_app_id`, `Scheduler::new`) are test-only. No behaviour change.
+- Core tests share their helpers (`test_support.rs`), and the export/import and store tests are split by topic into `tests/` directories. The import file checks are one function per table, in the same order. No test was changed or dropped.
 - **Review `RUSTSEC-2026-0192` in `deny.toml` by 2027-01-16**, earlier when RaTeX, `ab_glyph` or `fontdb` update, and remove it once RaTeX moves off `ttf-parser`. Every `ratex-*` bump: read `FONT_NOTICE.txt` of `ratex-katex-fonts` and recompute its hash in `deny.toml`, and check whether `third_party/ratex-cairo` can go.
 
 ### Documentation
+- SPEC §1 principle 6: adaptive from phone (360 px) to desktop, touch-friendly, ready for mobile Linux. SPEC §2 no longer says the app uses `anyhow`.
+- CLAUDE.md: the quality gate needs a display (`xvfb-run -a scripts/check.sh` without one; CI uses Xvfb), the gate command matches `scripts/check.sh`, and the status line points to SPEC.
+- ADRs that later ADRs amend now say so in an `Amended by:` header line (ADR 0001 describes these lines).
 - ADR 0021 (accepted): math rendering with RaTeX, from the `spike/math` experiment. SPEC §1 principle 5 and §4.2 amended. `\oiint` is a known limitation.
 - ADR 0023: math widgets, the 128 em cap, measured costs and the licence gate.
 - CLAUDE.md: don't launch the GUI beyond a quick start check.

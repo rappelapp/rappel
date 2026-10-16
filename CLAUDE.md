@@ -6,7 +6,7 @@
 - App name **Rappel**, app ID `io.github.rsmirke.Rappel`, licence GPL-3.0-or-later.
 - Crates: `rappel-core` in `crates/core` (no UI), `rappel` in `crates/app` (GTK binary).
 - Data dir `~/.local/share/rappel/`; debug builds use `~/.local/share/rappel-dev/`. `RAPPEL_DATA_DIR` overrides both. Never point development at the real data dir.
-- Status: v0 released as 0.1.0 (decks, plain-text cards, studying with FSRS). Markdown rendering moved to v0.2. Build order and scope are in `SPEC.md`.
+- Status: v0 released as 0.1.0 (decks, plain-text cards, studying with FSRS); v0.2 is in progress. What is done, the build order and the scope are in `SPEC.md` (its status line, then §4).
 
 ## About me
 - Strong in maths and algorithms, not a Rust or GTK developer, and I do **not** read most diffs. You are responsible for quality. The automated gate and the reviewer agent are how quality is checked, so never weaken them to make a task pass.
@@ -28,7 +28,8 @@
 
 ## Quality gate
 `scripts/check.sh` runs, in order:
-`cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo deny --locked check -D license-exception-not-encountered`.
+`cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo deny --locked check -D license-exception-not-encountered --hide-inclusion-graph`.
+The gate needs a display: some tests start GTK (`crates/app/src/testing.rs`). In a desktop session it uses that; without one, run `xvfb-run -a scripts/check.sh`. CI runs it under Xvfb (ADR 0024).
 A slice is not done until `scripts/check.sh` passes. It also runs as the git pre-commit hook and in CI (`.github/workflows/ci.yml`, required check `check`).
 
 ## Workflow for each slice

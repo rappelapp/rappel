@@ -193,7 +193,7 @@ pub fn deck_name_fits(name: &str) -> bool {
 /// NUL (glib-rs asserts there is none in debug builds), so a name or card
 /// side with one is refused when written and when imported.
 #[must_use]
-pub fn has_nul(text: &str) -> bool {
+pub(crate) fn has_nul(text: &str) -> bool {
     text.contains('\0')
 }
 

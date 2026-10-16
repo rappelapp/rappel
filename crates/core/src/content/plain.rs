@@ -24,8 +24,8 @@ const SUMMARY_SOURCE_BYTES: usize = 16 * 1024;
 
 /// `md` on one line, for a preview: its [`plain_text`] with every run of
 /// whitespace (newlines included) as one space, the ends trimmed, and cut
-/// to [`PREVIEW_CHARS`] characters. Only the first
-/// [`SUMMARY_SOURCE_BYTES`] of `md` are parsed, so the preview of a
+/// to `PREVIEW_CHARS` characters. Only the first
+/// `SUMMARY_SOURCE_BYTES` of `md` are parsed, so the preview of a
 /// longer side may show syntax the cut split (a lone `**` or `\`).
 #[must_use]
 pub fn plain_summary(md: &str) -> String {
@@ -36,7 +36,7 @@ pub fn plain_summary(md: &str) -> String {
     one_line_summary(&plain_text(&parse(&md[..end])))
 }
 
-/// `text` (a [`plain_text`]) on one line, cut to [`PREVIEW_CHARS`]
+/// `text` (a [`plain_text`]) on one line, cut to `PREVIEW_CHARS`
 /// characters.
 #[must_use]
 pub fn one_line_summary(text: &str) -> String {

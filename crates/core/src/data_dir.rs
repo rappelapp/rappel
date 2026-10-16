@@ -11,7 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::error::{Error, Result};
 
 /// Directory name under the XDG data home for release builds.
-pub const RELEASE_DIR_NAME: &str = "rappel";
+pub(crate) const RELEASE_DIR_NAME: &str = "rappel";
 
 /// Directory name release builds used before the rename to Rappel. Nothing
 /// reads it any more (the data is moved with export and import, ADR 0020),
@@ -21,7 +21,7 @@ pub const LEGACY_RELEASE_DIR_NAME: &str = "cards";
 
 /// Directory name under the XDG data home for debug builds, so development
 /// never touches real data.
-pub const DEBUG_DIR_NAME: &str = "rappel-dev";
+pub(crate) const DEBUG_DIR_NAME: &str = "rappel-dev";
 
 /// Permission bits for the data directory: owner only.
 const DIR_MODE: u32 = 0o700;
@@ -30,9 +30,9 @@ const DIR_MODE: u32 = 0o700;
 /// `cfg!(debug_assertions)`) so both cases are testable from either build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildProfile {
-    /// Development build: uses [`DEBUG_DIR_NAME`].
+    /// Development build: uses `DEBUG_DIR_NAME`.
     Debug,
-    /// Release build: uses [`RELEASE_DIR_NAME`].
+    /// Release build: uses `RELEASE_DIR_NAME`.
     Release,
 }
 

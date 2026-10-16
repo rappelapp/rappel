@@ -16,6 +16,7 @@ use crate::storage::tests::{
     CARD, CARD2, DAY_MS, DAY0, DECK, FAILING_V2, FAKE_V1, FAKE_V2, REVIEWS, corrupt_btree, count,
     insert_events, insert_sample, mode,
 };
+use crate::test_support::with_suffix;
 
 const DECK2: &str = "01920000-0000-7000-8000-000000000009";
 /// `utc_stamp(DAY0 + DAY_MS)`, the time every restore below runs at.
@@ -97,12 +98,6 @@ fn deck_names(conn: &Connection) -> Vec<String> {
         .unwrap()
         .collect::<rusqlite::Result<_>>()
         .unwrap()
-}
-
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(suffix);
-    PathBuf::from(name)
 }
 
 /// Every file and directory under `dir` with its bytes (directories map to

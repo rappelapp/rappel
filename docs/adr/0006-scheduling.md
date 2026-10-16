@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-15
+- Amended by: ADR 0009 (the Pass row for review cards)
 
 ## Context
 

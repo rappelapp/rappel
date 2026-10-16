@@ -39,7 +39,8 @@ impl Store {
     ///
     /// # Errors
     /// SQLite and scheduler errors. On error the cache is left unchanged.
-    pub fn rebuild_schedule_cache(&mut self, scheduler: &Scheduler) -> Result<usize> {
+    #[cfg(test)]
+    pub(crate) fn rebuild_schedule_cache(&mut self, scheduler: &Scheduler) -> Result<usize> {
         let tx = self.conn.transaction()?;
         let cards = write_schedule_cache(&tx, scheduler)?;
         tx.commit()?;
@@ -49,7 +50,7 @@ impl Store {
 
 /// Replaces every `card_schedule` row with one rebuilt from
 /// `review_events`. Returns the number of rows written. The caller provides
-/// the transaction (a migration's, or [`Store::rebuild_schedule_cache`]'s).
+/// the transaction (a migration's, or `Store::rebuild_schedule_cache`'s).
 pub(super) fn write_schedule_cache(tx: &Transaction<'_>, scheduler: &Scheduler) -> Result<usize> {
     tx.execute("DELETE FROM card_schedule", [])?;
     let mut cards = 0;

@@ -6,6 +6,7 @@
 - Closes: #12
 - Amended: 2026-10-16, deleted rows are revived from the file instead of being conflicts (see Merge rules)
 - Amended: 2026-10-16, a row deleted on both sides is already present, whatever the stamps; a NUL in a name or card side refuses the file
+- Amended by: ADR 0018 (limits enforced when writing), ADR 0020 (export extension)
 
 ## Context
 

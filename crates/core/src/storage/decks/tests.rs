@@ -2,10 +2,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::domain::Grade;
-
-/// 2026-10-15T12:34:56.789Z
-const T0: i64 = 1_792_067_696_789;
-const DAY_MS: i64 = 86_400_000;
+use crate::test_support::{DAY_MS, T0};
 
 fn deleted_at(store: &Store, table: &str, id: &str) -> Option<i64> {
     store
@@ -506,12 +503,11 @@ fn undelete_of_an_unknown_deck_is_not_found() {
 // --- The deck list counts like the deck page ------------------------------
 
 mod study_counts {
-    use std::time::Duration;
-
     use super::{DAY_MS, T0};
     use crate::domain::Grade;
     use crate::scheduling::session::NEW_PER_DAY;
     use crate::storage::Store;
+    use crate::test_support::answer;
 
     /// "Today" began two hours before `T0`.
     const DAY_START: i64 = T0 - 2 * 3_600_000;
@@ -527,12 +523,6 @@ mod study_counts {
             })
             .collect();
         (deck, cards)
-    }
-
-    fn answer(store: &mut Store, card: &str, grade: Grade, at: i64) {
-        store
-            .record_review(card, grade, Duration::from_secs(3), at)
-            .unwrap();
     }
 
     /// Every deck's `(new, due)` from `list_decks` equals the lengths of

@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-15
 - Amends: ADR 0008 ("There is no undelete in this slice")
+- Amended by: ADR 0013 (deck rows become activatable; Ctrl+N)
 
 ## Context
 

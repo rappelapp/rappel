@@ -42,8 +42,15 @@ fn json_problem(err: &serde_json::Error) -> ImportProblem {
 }
 
 /// Every rule a file must follow, in file order: top level, decks, cards,
-/// then review events.
+/// then review events. The first broken rule is the one reported.
 pub(super) fn check(doc: &Document, limits: &Limits) -> Result<(), ImportProblem> {
+    check_top_level(doc)?;
+    let decks = check_decks(doc, limits)?;
+    let cards = check_cards(doc, &decks, limits)?;
+    check_review_events(doc, &cards)
+}
+
+fn check_top_level(doc: &Document) -> Result<(), ImportProblem> {
     if !timestamp_ok(doc.exported_at) {
         return Err(ImportProblem::InvalidTopLevel {
             field: "exported_at",
@@ -56,8 +63,14 @@ pub(super) fn check(doc: &Document, limits: &Limits) -> Result<(), ImportProblem
     if !doc.media.is_empty() {
         return Err(ImportProblem::UnsupportedMedia);
     }
+    Ok(())
+}
 
-    // Deck id -> whether the deck is deleted.
+/// The decks' rules. Returns each deck id with whether the deck is deleted.
+fn check_decks<'d>(
+    doc: &'d Document,
+    limits: &Limits,
+) -> Result<HashMap<&'d str, bool>, ImportProblem> {
     let mut decks: HashMap<&str, bool> = HashMap::with_capacity(doc.decks.len());
     let mut live_names: HashSet<String> = HashSet::new();
     for (index, d) in doc.decks.iter().enumerate() {
@@ -84,7 +97,16 @@ pub(super) fn check(doc: &Document, limits: &Limits) -> Result<(), ImportProblem
             return Err(at("name", FieldProblem::DuplicateDeckName));
         }
     }
+    Ok(decks)
+}
 
+/// The cards' rules, given the decks from [`check_decks`]. Returns the card
+/// ids.
+fn check_cards<'d>(
+    doc: &'d Document,
+    decks: &HashMap<&str, bool>,
+    limits: &Limits,
+) -> Result<HashSet<&'d str>, ImportProblem> {
     let mut cards: HashSet<&str> = HashSet::with_capacity(doc.cards.len());
     for (index, c) in doc.cards.iter().enumerate() {
         let at = |field, reason| invalid("cards", index, field, reason);
@@ -116,7 +138,11 @@ pub(super) fn check(doc: &Document, limits: &Limits) -> Result<(), ImportProblem
         check_times(c.created_at, c.updated_at, c.deleted_at)
             .map_err(|f| at(f, FieldProblem::TimestampOutOfRange))?;
     }
+    Ok(cards)
+}
 
+/// The review events' rules, given the card ids from [`check_cards`].
+fn check_review_events(doc: &Document, cards: &HashSet<&str>) -> Result<(), ImportProblem> {
     let mut events: HashSet<&str> = HashSet::with_capacity(doc.review_events.len());
     for (index, e) in doc.review_events.iter().enumerate() {
         let at = |field, reason| invalid("review_events", index, field, reason);

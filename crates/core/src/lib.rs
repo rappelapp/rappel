@@ -12,6 +12,9 @@ pub mod scheduling;
 pub mod storage;
 pub mod time;
 
+#[cfg(test)]
+mod test_support;
+
 pub use error::{Error, Result};
 
 /// Human-readable application name.
@@ -20,38 +23,37 @@ pub const APP_NAME: &str = "Rappel";
 /// Reverse-DNS application ID, used by GTK and the desktop environment.
 pub const APP_ID: &str = "io.github.rsmirke.Rappel";
 
-/// Returns `true` if `id` is a valid application ID as defined by
-/// `g_application_id_is_valid`: at least two dot-separated elements, each
-/// non-empty, made of `[A-Za-z0-9_-]`, not starting with a digit, and at most
-/// 255 bytes in total.
-#[must_use]
-pub fn is_valid_app_id(id: &str) -> bool {
-    if id.is_empty() || id.len() > 255 {
-        return false;
-    }
-    let mut elements = 0;
-    for element in id.split('.') {
-        let mut chars = element.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        if first.is_ascii_digit() {
-            return false;
-        }
-        if !element
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
-            return false;
-        }
-        elements += 1;
-    }
-    elements >= 2
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Returns `true` if `id` is a valid application ID as defined by
+    /// `g_application_id_is_valid`: at least two dot-separated elements, each
+    /// non-empty, made of `[A-Za-z0-9_-]`, not starting with a digit, and at most
+    /// 255 bytes in total.
+    fn is_valid_app_id(id: &str) -> bool {
+        if id.is_empty() || id.len() > 255 {
+            return false;
+        }
+        let mut elements = 0;
+        for element in id.split('.') {
+            let mut chars = element.chars();
+            let Some(first) = chars.next() else {
+                return false;
+            };
+            if first.is_ascii_digit() {
+                return false;
+            }
+            if !element
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                return false;
+            }
+            elements += 1;
+        }
+        elements >= 2
+    }
 
     #[test]
     fn our_app_id_is_valid() {

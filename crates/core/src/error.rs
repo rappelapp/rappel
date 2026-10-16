@@ -133,7 +133,9 @@ pub enum Error {
         messages: Vec<String>,
     },
 
-    /// A desired retention outside the allowed range (0.80–0.97).
+    /// A desired retention outside the allowed range (0.80–0.97). Only
+    /// `Scheduler::new` returns it, and only tests use that until settings
+    /// exist.
     #[error("desired retention must be between 0.80 and 0.97, got {0}")]
     InvalidRetention(f32),
 

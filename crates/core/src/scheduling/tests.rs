@@ -3,18 +3,10 @@ use proptest::prelude::*;
 
 use super::fuzz::{MAX_INTERVAL_DAYS, floored_range, fuzz_factor, fuzz_range, fuzzed_days};
 use super::*;
+use crate::test_support::{T0, scheduled};
 
 const CARD: &str = "01929d4e-7a3c-7b12-8f00-0123456789ab";
-/// 2026-10-15 12:34:56.789 UTC.
-const T0: i64 = 1_792_067_696_789;
 const HOUR_MS: i64 = 3_600_000;
-
-fn scheduled(state: CardState) -> Schedule {
-    match state {
-        CardState::Scheduled(s) => s,
-        CardState::New => panic!("expected a scheduled card"),
-    }
-}
 
 /// Applies `grades` at the given times, one `schedule` call per review.
 fn run(s: &Scheduler, reviews: &[(i64, Grade)]) -> CardState {

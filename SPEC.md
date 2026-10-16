@@ -18,6 +18,7 @@ v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, S
 3. **GNOME-native.** Follow the GNOME HIG. Use libadwaita widgets as designed. No custom colors, no web views.
 4. **Few options, good defaults.** A setting needs a reason to exist.
 5. **Untrusted content.** Card text may later come from imports. It is never interpreted as HTML or markup without escaping. Card content never causes network access or access to user files. Reading installed system fonts is allowed (ADR 0021).
+6. **Adaptive from phone (360 px) to desktop, touch-friendly, ready for mobile Linux.**
 
 ---
 
@@ -61,7 +62,7 @@ rappel/
 
 - UI talks to `AppState` only, never to SQL.
 - Markdown parsing lives in core (`content`) and produces a `Document` tree. The GTK layer only turns that tree into widgets. This keeps parsing testable and reusable for a future WASM or mobile front end.
-- Errors: `rappel-core` uses `thiserror`; the app uses `anyhow` at the edges and shows `AdwToast` for user-facing errors.
+- Errors: `rappel-core` uses `thiserror`; the app turns core errors into user-facing `AdwToast`s or a startup problem page (no `anyhow`).
 - Logging: `tracing` + `tracing-subscriber`, level from `RUST_LOG`. No card content in logs above `debug`.
 
 ---

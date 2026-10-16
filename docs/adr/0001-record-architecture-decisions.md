@@ -13,7 +13,8 @@ We record every significant architecture decision as an Architecture Decision Re
 
 - ADRs live in `docs/adr/`, named `NNNN-short-kebab-title.md`, numbered in order and never renumbered.
 - Each ADR has: title, status (Proposed, Accepted, Deprecated, Superseded by NNNN), date, Context, Decision, Consequences.
-- An accepted ADR is not rewritten. To change a decision, write a new ADR that supersedes it and update the old one's status line only.
+- An accepted ADR is not rewritten. To change a decision, write a new ADR that supersedes it and update the old one's header lines only (its status line, or the `Amended by` line below).
+- A new ADR that changes only part of an older one says so in an `- Amends: ADR NNNN (what)` header line, and the older one gets a matching `- Amended by: ADR NNNN (what)` header line. Older ADRs keep the other forms they already have (an `- Amended: <date>, …` line for a change made in the same ADR, an inline note).
 - A slice that makes a significant decision adds its ADR in the same PR.
 
 "Significant" means: hard to reverse, affects several modules, adds a major dependency, changes the data format or storage, or picks between real alternatives.

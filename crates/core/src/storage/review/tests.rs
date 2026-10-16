@@ -2,13 +2,10 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::Error;
-use crate::domain::{CardState, Schedule};
+use crate::domain::CardState;
 use crate::id::IdGen;
 use crate::scheduling::{STEP_MS, Scheduler};
-
-/// 2026-10-15T12:34:56.789Z
-const T0: i64 = 1_792_067_696_789;
-const DAY_MS: i64 = 86_400_000;
+use crate::test_support::{DAY_MS, T0, schedule_table, scheduled};
 
 fn store_with_cards(n: usize) -> (Store, String, Vec<String>) {
     let mut store = Store::in_memory();
@@ -24,47 +21,10 @@ fn store_with_cards(n: usize) -> (Store, String, Vec<String>) {
     (store, deck, cards)
 }
 
-fn scheduled(state: CardState) -> Schedule {
-    match state {
-        CardState::Scheduled(s) => s,
-        CardState::New => panic!("expected a scheduled card"),
-    }
-}
-
 fn rebuilt(store: &Store, card: &str) -> CardState {
     Scheduler::default()
         .rebuild_state(card, &store.review_events(card).unwrap())
         .unwrap()
-}
-
-/// A `card_schedule` row: card id, phase, due, stability and difficulty as
-/// bits, last review, reps, lapses.
-type ScheduleRow = (String, String, i64, u64, u64, i64, i64, i64);
-
-/// Every `card_schedule` row, with the floats as bits so equality is exact.
-fn schedule_table(store: &Store) -> Vec<ScheduleRow> {
-    let mut stmt = store
-        .conn
-        .prepare(
-            "SELECT card_id, phase, due_at, stability, difficulty, last_review_at, reps, lapses
-             FROM card_schedule ORDER BY card_id",
-        )
-        .unwrap();
-    stmt.query_map([], |r| {
-        Ok((
-            r.get(0)?,
-            r.get(1)?,
-            r.get(2)?,
-            r.get::<_, f64>(3)?.to_bits(),
-            r.get::<_, f64>(4)?.to_bits(),
-            r.get(5)?,
-            r.get(6)?,
-            r.get(7)?,
-        ))
-    })
-    .unwrap()
-    .collect::<rusqlite::Result<_>>()
-    .unwrap()
 }
 
 #[test]
@@ -461,16 +421,10 @@ mod study {
     use crate::domain::{Grade, Phase};
     use crate::scheduling::STEP_MS;
     use crate::scheduling::session::{Due, EARLY_MS, NEW_PER_DAY, Session};
-    use crate::storage::Store;
+    use crate::test_support::answer;
 
     /// "Today" began two hours before `T0`.
     const DAY_START: i64 = T0 - 2 * 3_600_000;
-
-    fn answer(store: &mut Store, card: &str, grade: Grade, at: i64) {
-        store
-            .record_review(card, grade, Duration::from_secs(3), at)
-            .unwrap();
-    }
 
     #[test]
     fn new_cards_are_limited_per_day_from_first_reviews() {

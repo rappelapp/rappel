@@ -2,8 +2,8 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::domain::Schedule;
+use crate::test_support::T0;
 
-const T0: i64 = 1_792_067_696_789;
 const MIN: i64 = 60 * 1000;
 
 fn due(id: &str, due_at: i64) -> Due {
