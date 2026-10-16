@@ -27,7 +27,7 @@
 
 ## Quality gate
 `scripts/check.sh` runs, in order:
-`cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo deny --locked check`.
+`cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo deny --locked check -D license-exception-not-encountered`.
 A slice is not done until `scripts/check.sh` passes. It also runs as the git pre-commit hook and in CI (`.github/workflows/ci.yml`, required check `check`).
 
 ## Workflow for each slice
@@ -49,6 +49,7 @@ A slice is not done until `scripts/check.sh` passes. It also runs as the git pre
 
 ## UI work
 - You cannot see the window. Do not claim a UI looks right. Tell me exactly what to check, and I will send screenshots.
+- Don't launch the GUI to smoke-test it beyond a quick start check (under a minute). The maintainer checks windows; give him a checklist instead.
 - Check every new screen in light mode, dark mode, and at 360 px width.
 - Put every UI decision that does not need GTK (texts, counts, focus targets, key handling) in a pure function and unit-test it.
 - Before relying on GTK behaviour (signal order, focus, key propagation phase, toast queueing), read the gtk4/libadwaita source or docs and cite it in a comment.

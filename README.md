@@ -2,7 +2,7 @@
 
 A native GNOME flashcard app. Two grades only (Fail and Pass), Markdown cards with LaTeX math, FSRS scheduling. Everything stays on your computer: no network access, no accounts.
 
-**Status:** early development (0.1.0 released). You can create decks, add Markdown cards and study them with Fail and Pass on an FSRS schedule. Math is shown as LaTeX source and images as placeholders for now. See [SPEC.md](SPEC.md) for what is planned.
+**Status:** early development (0.1.0 released). You can create decks, add Markdown cards and study them with Fail and Pass on an FSRS schedule. Math (`$…$`, `$$…$$`) is drawn like KaTeX does; images are placeholders for now. See [SPEC.md](SPEC.md) for what is planned.
 
 ## Building
 
@@ -31,7 +31,7 @@ cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch 60 --d
 RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 ```
 
-Add `--markdown` for a deck with one card per Markdown construct (`… fill_scratch_db -- /tmp/rappel-md 0 --markdown` adds only that deck).
+Add `--markdown` for a deck with one card per Markdown construct, and `--math` for a deck with 15 formulas, one per card, plus a card with invalid LaTeX (`… fill_scratch_db -- /tmp/rappel-md 0 --markdown --math` adds only those two decks).
 
 ## Recovering your data
 
@@ -61,3 +61,7 @@ Rappel was called Cards before 0.2.0. It does not read the old data folder (`~/.
 ## Licence
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+## Credits
+
+Math is laid out by [RaTeX](https://github.com/erweixin/RaTeX) (MIT) and drawn with the [KaTeX](https://katex.org) fonts, which are © their authors and licensed under the SIL Open Font License 1.1 ([LICENSES/KaTeX-fonts-OFL-1.1.txt](LICENSES/KaTeX-fonts-OFL-1.1.txt)). The fonts are separate data shipped with the program, not part of its code. A copy of RaTeX's cairo renderer, adapted to our gtk-rs version, is in [third_party/ratex-cairo](third_party/ratex-cairo).

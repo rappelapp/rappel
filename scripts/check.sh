@@ -19,6 +19,9 @@ step "cargo test"
 cargo test --workspace --locked
 
 step "cargo deny check"
-cargo deny --locked check --hide-inclusion-graph
+# -D: if the pinned hash of ratex-katex-fonts' OFL.txt stops matching, cargo-deny
+# silently falls back to the crate's "MIT" label and only warns that the OFL-1.1
+# exception was not used. That must fail the gate (ADR 0021, point 8).
+cargo deny --locked check -D license-exception-not-encountered --hide-inclusion-graph
 
 printf '\n\033[1;32mAll checks passed.\033[0m\n'

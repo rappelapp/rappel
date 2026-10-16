@@ -9,9 +9,18 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ### Added
 - The card editor is a Markdown editor (SPEC §4.4, ADR 0022): front and back use GtkSourceView with Markdown highlighting, a monospace font and line wrapping, in colours that follow the light or dark style. A live preview, rendered as on the review page, sits beside the text when the dialog is wide and below it when narrow; the Preview button in the header bar shows or hides it. The preview updates a quarter of a second after typing pauses, and shows only the first 32 KiB of each side (with a note), because laying out a very long paragraph froze the editor. **Ctrl+B** / **Ctrl+I** wrap the selection in `**bold**` / `*italic*` markers, or insert empty ones at the cursor; Ctrl+Z undoes them in one step. The dialog opens larger (960 × 640) and is still a bottom sheet on a narrow window.
 - New dependency: `sourceview5` (Rust bindings for GtkSourceView 5). Building now needs the GtkSourceView 5 development files and introspection data (see README).
+- Math is drawn (SPEC §4.2, ADR 0021, 0023). `$…$` sits in the text on the text baseline and wraps with it; `$$…$$` is a centred block. Both follow the light or dark theme live (drawn as vectors, meant to stay sharp on HiDPI screens), work on the review page and in the editor's preview, and carry their LaTeX source as the accessible label. HiDPI and screen readers are still to be checked in the running app. A formula wider than the card scrolls sideways on its own. Invalid LaTeX is shown as its source in the error style. Limits: 200 formulas per card side (the rest stay source), sources over 4 KiB and formulas over 128 em in either direction stay source. `\href` and `\url` show their text and are never links. Known limits: `\oiint` draws wrongly, `\mathbb{1}` is an upright 1.
+- `fill_scratch_db --math`: a "Math" deck with the 15 formulas of the math spike, one per card, and a card with invalid LaTeX.
+- New dependencies: `ratex-parser`, `ratex-layout`, `ratex-types` (MIT) and `ratex-cairo` (MIT, vendored in `third_party/ratex-cairo` with `cairo-rs` bumped to 0.22, used through `[patch.crates-io]`), which also bring `ratex-katex-fonts` (the KaTeX fonts, SIL OFL 1.1; credited in the README, licence text in `LICENSES/`). About 60 more packages in all, and up to 5 MB in the binary.
+
+### Changed
+- `scripts/check.sh` runs `cargo deny check -D license-exception-not-encountered`, so a changed licence file of the KaTeX fonts fails the gate (ADR 0023). `deny.toml`: `OFL-1.1` is allowed for `ratex-katex-fonts` only, and RUSTSEC-2026-0192 (`ttf-parser` unmaintained) is ignored with a reason.
+- **Review `RUSTSEC-2026-0192` in `deny.toml` by 2027-01-16**, earlier when RaTeX, `ab_glyph` or `fontdb` update, and remove it once RaTeX moves off `ttf-parser`. Every `ratex-*` bump: read `FONT_NOTICE.txt` of `ratex-katex-fonts` and recompute its hash in `deny.toml`, and check whether `third_party/ratex-cairo` can go.
 
 ### Documentation
-- ADR 0021 (accepted): math rendering with RaTeX, from the `spike/math` experiment. SPEC §1 principle 5 and §4.2 amended. `\oiint` is a known limitation. Nothing changes in the app yet.
+- ADR 0021 (accepted): math rendering with RaTeX, from the `spike/math` experiment. SPEC §1 principle 5 and §4.2 amended. `\oiint` is a known limitation.
+- ADR 0023: math widgets, the 128 em cap, measured costs and the licence gate.
+- CLAUDE.md: don't launch the GUI beyond a quick start check.
 
 ## 0.2.0-alpha.1 — 2026-10-16
 

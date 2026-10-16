@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-16
 - Accepted: 2026-10-16, by the maintainer
+- Amended by: ADR 0023 (inline formulas are child widgets; the size cap is 128 em)
 - Amends: SPEC §4.2 (inline math is drawn as vectors in the text flow, not as a texture), SPEC §1 principle 5 (reading system fonts, see point 7)
 
 ## Context

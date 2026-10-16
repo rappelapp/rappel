@@ -3,7 +3,7 @@
 //! try studying without waiting days (ADR 0014).
 //!
 //! ```text
-//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown]
+//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math]
 //! RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 //! ```
 //!
@@ -13,7 +13,10 @@
 //! they are due today; the rest stay new. With `--markdown`, it also adds
 //! the deck "Markdown (one card per construct)": new cards, one per
 //! Markdown construct (ADR 0019), all studyable today, to check how they
-//! look. The directory must be absolute and is never one of the
+//! look. With `--math`, it adds the deck "Math": 15 new cards, one per
+//! formula of the math spike (ADR 0021: 4 sentences with inline math, then
+//! 11 display formulas), and one card with invalid LaTeX. The directory
+//! must be absolute and is never one of the
 //! app's own data directories, release or debug: this is for throwaway
 //! data only.
 
@@ -47,7 +50,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<String, String> {
-    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown]";
+    let usage =
+        "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math]";
     let number = |arg: Option<std::ffi::OsString>| {
         arg.as_ref()
             .and_then(|n| n.to_str())
@@ -56,12 +60,14 @@ fn run() -> Result<String, String> {
     };
     let mut args = std::env::args_os().skip(1);
     let dir = PathBuf::from(args.next().ok_or(usage)?);
-    let (mut count, mut due, mut markdown) = (None, 0, false);
+    let (mut count, mut due, mut markdown, mut math) = (None, 0, false, false);
     while let Some(arg) = args.next() {
         if arg == "--due" {
             due = number(args.next())?;
         } else if arg == "--markdown" {
             markdown = true;
+        } else if arg == "--math" {
+            math = true;
         } else if count.is_none() {
             count = Some(number(Some(arg))?);
         } else {
@@ -69,8 +75,8 @@ fn run() -> Result<String, String> {
         }
     }
     let count = count.unwrap_or(DEFAULT_COUNT);
-    if count == 0 && !markdown {
-        return Err("nothing to add: count is 0 and no --markdown".to_owned());
+    if count == 0 && !markdown && !math {
+        return Err("nothing to add: count is 0 and no --markdown or --math".to_owned());
     }
     if due > count {
         return Err(format!("--due {due} is more than the {count} cards"));
@@ -119,11 +125,78 @@ fn run() -> Result<String, String> {
         }
         added.push(format!("{} cards to “{}”", MARKDOWN_CARDS.len(), deck.name));
     }
+    if math {
+        let deck = store.create_deck("Math").map_err(|e| e.to_string())?;
+        let cards = math_cards();
+        for (front, back) in &cards {
+            store
+                .add_card(&deck.id, front, back)
+                .map_err(|e| e.to_string())?;
+        }
+        added.push(format!("{} cards to “{}”", cards.len(), deck.name));
+    }
     Ok(format!(
         "Added {} in {}",
         added.join(" and "),
         dir.display()
     ))
+}
+
+/// The sentences of the math spike with inline formulas (ADR 0021), formulas
+/// 1 to 4. `$…$` delimits the math.
+const MATH_INLINE: [&str; 4] = [
+    r"Soit $f \in \mathcal{C}^1([a,b],\mathbb{R})$ et $\lVert f \rVert_\infty = \sup_{x \in [a,b]} |f(x)|$.",
+    r"Le rayon de convergence vérifie $\frac{1}{R} = \limsup_{n \to +\infty} |a_n|^{1/n}$.",
+    r"Le vecteur de Poynting $\overrightarrow{\Pi} = \frac{\vec{E} \wedge \vec{B}}{\mu_0}$ a pour flux la puissance rayonnée.",
+    r"On a $n! \underset{n \to +\infty}{\sim} \sqrt{2\pi n}\left(\frac{n}{e}\right)^n$ (Stirling).",
+];
+
+/// The display formulas of the math spike, 5 to 15, without dollars.
+const MATH_DISPLAY: [&str; 11] = [
+    r"\hat{f}(\xi) = \int_{-\infty}^{+\infty} f(x)\, e^{-2i\pi x\xi} \,\mathrm{d}x",
+    r"\frac{1}{2\pi}\int_{0}^{2\pi} |f(t)|^2 \,\mathrm{d}t = \sum_{n=-\infty}^{+\infty} |c_n(f)|^2",
+    r"f(x) = \sum_{k=0}^{n} \frac{f^{(k)}(a)}{k!}(x-a)^k + \int_a^x \frac{(x-t)^n}{n!} f^{(n+1)}(t)\,\mathrm{d}t",
+    r"\begin{aligned} \operatorname{div} \vec{E} &= \frac{\rho}{\varepsilon_0} & \overrightarrow{\operatorname{rot}}\, \vec{E} &= -\frac{\partial \vec{B}}{\partial t} \\ \operatorname{div} \vec{B} &= 0 & \overrightarrow{\operatorname{rot}}\, \vec{B} &= \mu_0 \vec{j} + \mu_0\varepsilon_0 \frac{\partial \vec{E}}{\partial t} \end{aligned}",
+    r"\frac{\partial u_{\text{em}}}{\partial t} + \operatorname{div} \overrightarrow{\Pi} = -\vec{j} \cdot \vec{E}",
+    r"\begin{vmatrix} 1 & x_1 & \cdots & x_1^{n-1} \\ 1 & x_2 & \cdots & x_2^{n-1} \\ \vdots & \vdots & \ddots & \vdots \\ 1 & x_n & \cdots & x_n^{n-1} \end{vmatrix} = \prod_{1 \le i < j \le n} (x_j - x_i)",
+    r"\mathbb{1}_{[0,1]}(x) = \begin{cases} 1 & \text{si } x \in [0,1], \\ 0 & \text{sinon.} \end{cases}",
+    r"\left| \int_a^b f g \right| \le \left( \int_a^b f^2 \right)^{\frac{1}{2}} \left( \int_a^b g^2 \right)^{\frac{1}{2}}",
+    r"\oiint_{\Sigma} \vec{E} \cdot \mathrm{d}\vec{S} = \frac{Q_{\text{int}}}{\varepsilon_0} \qquad \oint_{\mathcal{C}} \vec{B} \cdot \mathrm{d}\vec{\ell} = \mu_0 I_{\text{enlacé}}",
+    r"i\hbar \frac{\partial \psi}{\partial t} = -\frac{\hbar^2}{2m} \Delta\psi + V\psi \qquad \frac{1}{1 + \cfrac{1}{1 + \cfrac{1}{x}}}",
+    r"\exp(A) = \sum_{k=0}^{+\infty} \frac{A^k}{k!}, \quad P = \begin{pmatrix} \cos\theta & -\sin\theta \\ \sin\theta & \cos\theta \end{pmatrix}, \quad \binom{n}{k} = \frac{n!}{k!\,(n-k)!}",
+];
+
+/// The cards of the "Math" deck: formula 1 to 15 of the spike, one per
+/// card, then one with invalid LaTeX. The front is the formula, so a card
+/// shows it at once; the back says what to look for.
+fn math_cards() -> Vec<(String, String)> {
+    let mut cards = Vec::new();
+    for (i, sentence) in MATH_INLINE.iter().enumerate() {
+        cards.push((
+            format!("Formula {}\n\n{sentence}", i + 1),
+            "Inline math sits on the text baseline, and wraps with the text at 360 px.".to_owned(),
+        ));
+    }
+    for (i, formula) in MATH_DISPLAY.iter().enumerate() {
+        let number = MATH_INLINE.len() + i + 1;
+        let note = match number {
+            11 => "Known limit: `\\mathbb{1}` is an upright 1 (KaTeX has no blackboard digits).",
+            13 => {
+                "Known limit: `\\oiint` draws the ring and the two integral signs on top of each other."
+            }
+            _ => "Check light, dark and 360 px: a wide formula scrolls sideways.",
+        };
+        cards.push((
+            format!("Formula {number}\n\n$${formula}$$"),
+            note.to_owned(),
+        ));
+    }
+    cards.push((
+        "Invalid LaTeX\n\nInline: $\\notacommand{x}$ and $x^$, then display:\n\n$$\\left( x$$"
+            .to_owned(),
+        "All three show their source in the error style, and the app carries on.".to_owned(),
+    ));
+    cards
 }
 
 /// One card per Markdown construct, front and back, in study order. The

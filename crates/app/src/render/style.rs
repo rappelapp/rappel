@@ -2,7 +2,9 @@
 //! a list item's marker, how many widgets a block costs. Pure and tested.
 //! Every side of a card is laid out the same way, whatever its structure.
 
-use rappel_core::content::{Block, Document};
+use rappel_core::content::{Block, Document, Inline};
+
+use super::math::MAX_FORMULAS;
 
 /// Whether the back is shown after the reveal: not when there is nothing
 /// to show, so only the grade buttons appear.
@@ -58,12 +60,18 @@ pub fn table_cell_classes(
 }
 
 /// How many widgets [`super::render`] makes for `block`, to stay within
-/// its budget.
+/// its budget. A formula that is drawn costs two (a scroller and the view,
+/// ADR 0023); a block is charged for at most [`MAX_FORMULAS`] of them, the
+/// most a side draws.
 pub fn widget_cost(block: &Block) -> usize {
     match block {
-        Block::Paragraph(_) | Block::Heading { .. } | Block::Rule | Block::DisplayMath(_) => 1,
-        // A label in a box.
-        Block::CodeBlock { .. } => 2,
+        Block::Paragraph(inlines)
+        | Block::Heading {
+            content: inlines, ..
+        } => 1 + formula_cost(inlines),
+        Block::Rule => 1,
+        // A scroller and the view; or a label in a box.
+        Block::DisplayMath(_) | Block::CodeBlock { .. } => 2,
         // A grid; per item a marker and a box with the item's blocks.
         Block::List { items, .. } => {
             1 + items
@@ -73,11 +81,35 @@ pub fn widget_cost(block: &Block) -> usize {
         }
         // A box, a separator and a box with the blocks.
         Block::BlockQuote(blocks) => 3 + blocks.iter().map(widget_cost).sum::<usize>(),
-        // A scroller, a grid and a label per cell.
+        // A scroller, a grid and a widget per cell.
         Block::Table { header, rows, .. } => {
-            2 + header.len() + rows.iter().map(Vec::len).sum::<usize>()
+            2 + header
+                .iter()
+                .chain(rows.iter().flatten())
+                .map(|cell| 1 + formula_cost(cell))
+                .sum::<usize>()
         }
     }
+}
+
+/// The widgets the formulas in `inlines` may add.
+fn formula_cost(inlines: &[Inline]) -> usize {
+    2 * formulas_in(inlines).min(MAX_FORMULAS)
+}
+
+/// How many `$…$` there are in `inlines`, at any depth.
+fn formulas_in(inlines: &[Inline]) -> usize {
+    inlines
+        .iter()
+        .map(|inline| match inline {
+            Inline::Math { .. } => 1,
+            Inline::Emphasis(inner)
+            | Inline::Strong(inner)
+            | Inline::Strikethrough(inner)
+            | Inline::Link { content: inner, .. } => formulas_in(inner),
+            _ => 0,
+        })
+        .sum()
 }
 
 #[cfg(test)]
@@ -115,6 +147,24 @@ mod tests {
         assert_eq!(cost("| a | b |\n|--|--|\n| 1 | 2 |\n| 3 |"), 2 + 2 + 2 + 2);
         // A huge list is costly, so it is shown as plain text.
         assert!(cost(&"- a\n".repeat(10_000)) > 20_000);
+    }
+
+    #[test]
+    fn a_drawn_formula_costs_two_widgets() {
+        let cost = |md| parse(md).blocks.iter().map(widget_cost).sum::<usize>();
+        // A display formula: a scroller and the view, where text was one label.
+        assert_eq!(cost("$$x$$"), 2);
+        // Inline: the paragraph, and two per formula, at any depth.
+        assert_eq!(cost("a $x$ b"), 1 + 2);
+        assert_eq!(cost("*$x$* [$y$ $z$](u)"), 1 + 2 * 3);
+        assert_eq!(cost("# $x$"), 1 + 2);
+        assert_eq!(
+            cost("| $a$ | b |\n|--|--|\n| $c$ $d$ | e |"),
+            2 + 3 + 1 + 5 + 1
+        );
+        // At most MAX_FORMULAS are charged to a block.
+        let many = "$x$ ".repeat(MAX_FORMULAS * 3);
+        assert_eq!(cost(&many), 1 + 2 * MAX_FORMULAS);
     }
 
     #[test]

@@ -7,14 +7,26 @@
 //! it. No label is selectable or focusable, so the keyboard focus stays on
 //! the review page's card area and its keys keep working. Links cannot be
 //! clicked; hovering shows their URL.
+//!
+//! Math (ADR 0021) is drawn as vectors: inline formulas inside their
+//! paragraph's text flow ([`math_paragraph`]), display formulas as centred
+//! blocks that scroll sideways when too wide ([`math_view`]). What is over
+//! a limit ([`math`]) stays source.
 
 mod markup;
+mod math;
+mod math_paragraph;
+mod math_view;
 mod style;
 
 use gtk::AccessibleRole as Role;
 use gtk::pango;
 use gtk::prelude::*;
 use rappel_core::content::{Align, Block, Cell, Document, Inline, plain_text};
+
+use math::{Budget, Placement};
+use math_paragraph::MathParagraph;
+use math_view::MathView;
 
 pub use style::back_shown;
 use style::{heading_class, list_marker, table_cell_classes, widget_cost};
@@ -35,6 +47,8 @@ pub fn render(doc: &Document) -> gtk::Box {
     // A block's cost counts everything inside it, so the budget is spent
     // on top-level blocks only.
     let mut budget = MAX_WIDGETS;
+    // Formulas are counted over the whole side, in document order.
+    let mut math = Budget::default();
     for (i, block) in doc.blocks.iter().enumerate() {
         let cost = widget_cost(block);
         if cost > budget {
@@ -45,7 +59,7 @@ pub fn render(doc: &Document) -> gtk::Box {
             break;
         }
         budget -= cost;
-        container.append(&block_widget(block, 0));
+        container.append(&block_widget(block, 0, &mut math));
     }
     container
 }
@@ -64,23 +78,32 @@ pub fn clear(container: &gtk::Box) {
 }
 
 /// `blocks` in a vertical box. `lists` is how many lists deep they are.
-fn blocks_widget(blocks: &[Block], lists: usize) -> gtk::Box {
+fn blocks_widget(blocks: &[Block], lists: usize, math: &mut Budget) -> gtk::Box {
     let container = blocks_box();
     for block in blocks {
-        container.append(&block_widget(block, lists));
+        container.append(&block_widget(block, lists, math));
     }
     container
 }
 
-fn block_widget(block: &Block, lists: usize) -> gtk::Widget {
+fn block_widget(block: &Block, lists: usize, math: &mut Budget) -> gtk::Widget {
     match block {
-        Block::Paragraph(inlines) => text_label(inlines, false, None, Role::Label).upcast(),
-        Block::Heading { level, content } => {
-            let label = text_label(content, false, Some(heading_class(*level)), Role::Heading);
-            label.update_property(&[gtk::accessible::Property::Level(i32::from(*level))]);
-            label.upcast()
+        Block::Paragraph(inlines) => {
+            text_widget(inlines, None, Role::Label, true, Alignment::Start, math)
         }
-        Block::List { start, items } => list(*start, items, lists).upcast(),
+        Block::Heading { level, content } => {
+            let heading = text_widget(
+                content,
+                Some(heading_class(*level)),
+                Role::Heading,
+                true,
+                Alignment::Start,
+                math,
+            );
+            heading.update_property(&[gtk::accessible::Property::Level(i32::from(*level))]);
+            heading
+        }
+        Block::List { start, items } => list(*start, items, lists, math).upcast(),
         Block::CodeBlock { code, .. } => {
             let label = plain_label(code, false);
             label.add_css_class("monospace");
@@ -96,7 +119,7 @@ fn block_widget(block: &Block, lists: usize) -> gtk::Widget {
         Block::BlockQuote(blocks) => {
             let quote = gtk::Box::new(gtk::Orientation::Horizontal, BLOCK_SPACING);
             quote.append(&gtk::Separator::new(gtk::Orientation::Vertical));
-            let inner = blocks_widget(blocks, lists);
+            let inner = blocks_widget(blocks, lists, math);
             inner.add_css_class("dim-label");
             inner.set_hexpand(true);
             quote.append(&inner);
@@ -107,18 +130,12 @@ fn block_widget(block: &Block, lists: usize) -> gtk::Widget {
             align,
             header,
             rows,
-        } => table(align, header, rows).upcast(),
-        Block::DisplayMath(source) => {
-            // The source until math rendering comes (SPEC §4.2's
-            // fallback), centred like a formula.
-            let label = plain_label(source, true);
-            label.add_css_class("monospace");
-            label.upcast()
-        }
+        } => table(align, header, rows, math).upcast(),
+        Block::DisplayMath(source) => display_math(source, math),
     }
 }
 
-fn list(start: Option<u64>, items: &[Vec<Block>], lists: usize) -> gtk::Grid {
+fn list(start: Option<u64>, items: &[Vec<Block>], lists: usize, math: &mut Budget) -> gtk::Grid {
     let grid = gtk::Grid::builder()
         .column_spacing(8)
         .row_spacing(6)
@@ -130,7 +147,7 @@ fn list(start: Option<u64>, items: &[Vec<Block>], lists: usize) -> gtk::Grid {
             .xalign(1.0)
             .valign(gtk::Align::Start)
             .build();
-        let content = blocks_widget(item, lists + 1);
+        let content = blocks_widget(item, lists + 1, math);
         content.set_hexpand(true);
         grid.attach(&marker, 0, row, 1, 1);
         grid.attach(&content, 1, row, 1, 1);
@@ -141,7 +158,12 @@ fn list(start: Option<u64>, items: &[Vec<Block>], lists: usize) -> gtk::Grid {
 /// A table in a horizontal scroller, so a wide one fits a narrow window.
 /// The grid has a border, a line between cells and a shaded header row,
 /// from the classes of [`table_cell_classes`] and `data/style.css`.
-fn table(align: &[Align], header: &[Cell], rows: &[Vec<Cell>]) -> gtk::ScrolledWindow {
+fn table(
+    align: &[Align],
+    header: &[Cell],
+    rows: &[Vec<Cell>],
+    math: &mut Budget,
+) -> gtk::ScrolledWindow {
     let grid = gtk::Grid::new();
     grid.add_css_class("card-table");
     // GTK CSS has no `overflow`; this clips the shaded header to the
@@ -155,18 +177,18 @@ fn table(align: &[Align], header: &[Cell], rows: &[Vec<Cell>]) -> gtk::ScrolledW
         let row = i32::try_from(r).unwrap_or(i32::MAX);
         for (c, cell) in cells.iter().enumerate() {
             let column = i32::try_from(c).unwrap_or(i32::MAX);
-            let label = text_label(cell, false, class, Role::Label);
+            // A cell keeps its line (no wrapping); the scroller handles the
+            // width.
+            let alignment = match align.get(c).copied().unwrap_or(Align::None) {
+                Align::None | Align::Left => Alignment::Start,
+                Align::Center => Alignment::Centre,
+                Align::Right => Alignment::End,
+            };
+            let widget = text_widget(cell, class, Role::Label, false, alignment, math);
             for class in table_cell_classes(r, c, row_count, column_count) {
-                label.add_css_class(class);
+                widget.add_css_class(class);
             }
-            // A cell keeps its line; the scroller handles the width.
-            label.set_wrap(false);
-            label.set_xalign(match align.get(c).copied().unwrap_or(Align::None) {
-                Align::None | Align::Left => 0.0,
-                Align::Center => 0.5,
-                Align::Right => 1.0,
-            });
-            grid.attach(&label, column, row, 1, 1);
+            grid.attach(&widget, column, row, 1, 1);
         }
     }
     gtk::ScrolledWindow::builder()
@@ -183,19 +205,93 @@ fn blocks_box() -> gtk::Box {
     gtk::Box::new(gtk::Orientation::Vertical, BLOCK_SPACING)
 }
 
-/// A wrapping label of `inlines`, with `class` if given.
-fn text_label(inlines: &[Inline], centred: bool, class: Option<&str>, role: Role) -> gtk::Label {
-    let markup::Markup { markup, links } = markup::inline_markup(inlines);
-    let label = wrapping_label(centred, role);
-    label.set_use_markup(true);
-    label.set_label(&markup);
+/// Where text sits in the space it has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Alignment {
+    Start,
+    Centre,
+    End,
+}
+
+/// The widget for `inlines`: a wrapping label, or, if a formula is drawn in
+/// them, a [`MathParagraph`] (which lays the formulas out in the text).
+/// `wrap` is off in table cells.
+fn text_widget(
+    inlines: &[Inline],
+    class: Option<&str>,
+    role: Role,
+    wrap: bool,
+    alignment: Alignment,
+    math: &mut Budget,
+) -> gtk::Widget {
+    let markup = markup::inline_markup(inlines, math);
+    let widget: gtk::Widget = if markup.formulas.is_empty() {
+        let label = wrapping_label(false, role);
+        label.set_use_markup(true);
+        label.set_label(&markup.markup);
+        label.set_wrap(wrap);
+        label.set_xalign(match alignment {
+            Alignment::Start => 0.0,
+            Alignment::Centre => 0.5,
+            Alignment::End => 1.0,
+        });
+        if !markup.links.is_empty() {
+            show_link_urls(&label, markup.links);
+        }
+        label.upcast()
+    } else {
+        let paragraph = MathParagraph::new(&markup, wrap, role);
+        paragraph.set_halign(match alignment {
+            Alignment::Start => gtk::Align::Start,
+            Alignment::Centre => gtk::Align::Center,
+            Alignment::End => gtk::Align::End,
+        });
+        paragraph.upcast()
+    };
     if let Some(class) = class {
-        label.add_css_class(class);
+        widget.add_css_class(class);
     }
-    if !links.is_empty() {
-        show_link_urls(&label, links);
+    widget
+}
+
+/// A `$$…$$` block: the formula centred in a scroller, or its source.
+fn display_math(source: &str, math: &mut Budget) -> gtk::Widget {
+    let placement = math.place(source, true);
+    match placement {
+        Placement::Formula => {
+            let view = MathView::new(source, true);
+            // Centred when it is narrower than the card; the viewport
+            // gives a wider one its full width, and the scroller moves it.
+            view.set_halign(gtk::Align::Center);
+            math_scroller(&view).upcast()
+        }
+        Placement::ErrorSource | Placement::Source => {
+            let label = plain_label(source, true);
+            label.add_css_class("monospace");
+            if placement == Placement::ErrorSource {
+                label.add_css_class("error");
+            }
+            label.upcast()
+        }
     }
-    label
+}
+
+/// A horizontal scroller for a formula that may be wider than the space it
+/// has. Not focusable (like a table's), so the focus stays on the card area
+/// and the keys keep working: it scrolls by pointer and touch only. The
+/// `math-scroller` class gives `data/style.css` something to mark that more
+/// is there.
+fn math_scroller(view: &MathView) -> gtk::ScrolledWindow {
+    let scroller = gtk::ScrolledWindow::builder()
+        .focusable(false)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .overlay_scrolling(true)
+        .propagate_natural_height(true)
+        .child(view)
+        .build();
+    scroller.add_css_class("math-scroller");
+    scroller
 }
 
 /// A wrapping label of plain `text` (markup off: nothing to escape).

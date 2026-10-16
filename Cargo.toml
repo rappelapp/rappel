@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/core", "crates/app"]
+# Vendored code (ADR 0021) is not ours to format, lint or test.
+exclude = ["third_party"]
 
 [workspace.package]
 version = "0.2.0-alpha.1"
@@ -50,6 +52,14 @@ serde_json = "1"
 # strikethrough and math. No default features: they only add a CLI.
 pulldown-cmark = { version = "0.13", default-features = false }
 
+# Math (rappel app, ADR 0021): RaTeX parses and lays out LaTeX; the vendored
+# ratex-cairo (see [patch.crates-io]) draws it with cairo. Pinned: young
+# project, review FONT_NOTICE.txt of ratex-katex-fonts at every bump.
+ratex-cairo = "=0.1.15"
+ratex-parser = "=0.1.15"
+ratex-layout = "=0.1.15"
+ratex-types = "=0.1.15"
+
 # Test-only: temporary directories for filesystem tests.
 tempfile = "3"
 # Test-only: property-based tests (scheduler replay).
@@ -58,6 +68,11 @@ proptest = "1"
 # Logging.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ratex-cairo 0.1.15 with cairo-rs bumped to 0.22 (third_party/ratex-cairo/VENDORED.md).
+# A path, not git: deny.toml has allow-git = [].
+[patch.crates-io]
+ratex-cairo = { path = "third_party/ratex-cairo" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

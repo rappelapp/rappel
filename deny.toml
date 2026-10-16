@@ -8,7 +8,16 @@ all-features = true
 # Fail on any vulnerability, unmaintained or unsound advisory in the RustSec DB.
 version = 2
 yanked = "deny"
-ignore = []
+# RUSTSEC-2026-0192 (ADR 0021): `ttf-parser` is unmaintained. Not a
+# vulnerability, and there is no fixed version. It reaches us through RaTeX
+# (ab_glyph, fontdb), parses only the bundled KaTeX fonts and installed system
+# fonts, and is never given card content as a font.
+# REVIEW BY 2027-01-16 (cargo-deny has no expiry field). Review sooner when
+# RaTeX, ab_glyph or fontdb update, and remove the entry once RaTeX moves
+# to `skrifa`.
+ignore = [
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained, not vulnerable; it parses only the bundled KaTeX fonts and installed system fonts. Review by 2027-01-16 (ADR 0021)." },
+]
 
 [licenses]
 version = 2
@@ -34,6 +43,23 @@ allow = [
     "CC0-1.0",
     "0BSD",
 ]
+
+# `ratex-katex-fonts` is labelled MIT, but its 20 embedded `KaTeX_*.ttf` are
+# SIL OFL-1.1 (fonts/OFL.txt, fonts/FONT_NOTICE.txt). The fonts are data
+# aggregated with the program, not code combined with it, so OFL-1.1 is
+# allowed for this crate only, never globally (ADR 0021, point 8). The
+# clarification records the real expression and pins it to the hash of
+# OFL.txt, so a changed licence file fails the check. Every `ratex-*` bump
+# also needs a manual read of fonts/FONT_NOTICE.txt: a release could add
+# fonts under another licence and keep OFL.txt.
+[[licenses.exceptions]]
+crate = "ratex-katex-fonts"
+allow = ["OFL-1.1"]
+
+[[licenses.clarify]]
+crate = "ratex-katex-fonts"
+expression = "MIT AND OFL-1.1"
+license-files = [{ path = "fonts/OFL.txt", hash = 0x55ee1b8a }]
 
 [licenses.private]
 # Our own crates are `publish = false`; their licence is checked by the list above.

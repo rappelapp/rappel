@@ -1,6 +1,6 @@
 /* The app's only stylesheet, loaded by AdwApplication from `style.css` in
  * the resource base path (AdwApplication docs, "Stylesheet"). It styles the
- * grid of a Markdown table (render/).
+ * grid of a Markdown table and the sideways-scroll hint of wide formulas (render/).
  * No literal colours: lines and shading are the text colour at a low
  * opacity, so they follow light, dark and high-contrast themes. */
 
@@ -23,4 +23,17 @@
 
 .card-table-cell.table-header {
   background-color: alpha(currentColor, 0.1);
+}
+
+/* A formula wider than the card scrolls sideways, and overlay scrollbars hide
+ * until the pointer moves. GtkScrolledWindow draws an `undershoot` node on the
+ * side where more content is; Adwaita styles it for tree and column views
+ * only, so it is styled here: a fade of the text colour, which follows light,
+ * dark and high-contrast themes. */
+.math-scroller > undershoot.left {
+  background-image: linear-gradient(to right, alpha(currentColor, 0.25), alpha(currentColor, 0) 20px);
+}
+
+.math-scroller > undershoot.right {
+  background-image: linear-gradient(to left, alpha(currentColor, 0.25), alpha(currentColor, 0) 20px);
 }
