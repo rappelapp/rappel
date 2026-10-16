@@ -1,4 +1,4 @@
-//! Time as Cards stores it: UTC milliseconds since the Unix epoch, in `i64`.
+//! Time as Rappel stores it: UTC milliseconds since the Unix epoch, in `i64`.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

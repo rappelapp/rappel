@@ -1,4 +1,4 @@
-//! Importing a `.cards` file: plan (check and compare, no writes), then
+//! Importing a `.rappel` file: plan (check and compare, no writes), then
 //! apply (back up, then one transaction).
 
 use std::collections::{BTreeSet, HashSet};
@@ -18,7 +18,7 @@ use crate::storage::{KEEP_BACKUPS, Store, create_backup, prune_backups, rebuild_
 use crate::time::now_ms;
 
 impl Store {
-    /// Reads and checks the `.cards` file `path` and compares it with the
+    /// Reads and checks the `.rappel` file `path` and compares it with the
     /// database. Writes nothing.
     ///
     /// A file that is not a valid export is refused with

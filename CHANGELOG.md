@@ -6,6 +6,8 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## 0.2.0-alpha.1 — 2026-10-16
+
 ### Added
 - Edit a card during review: **E** or the pencil button in the header bar opens the card editor on the current card. After saving, the card is drawn again in place, and the answer, the timer and the session carry on (time in the editor counts towards the answer time, which is capped at 60 s as always); closing without saving changes nothing. The deck page's list shows the edit when you go back.
 - Markdown cards (ADR 0019). Studying shows both sides rendered: paragraphs, headings, nested lists, code blocks, block quotes, rules, tables, emphasis, strong, strikethrough and inline code. Math (`$…$`, `$$…$$`) is shown as monospace source for now, and dollars used as prices (`$5-$10`, `\$`) stay text. Links are underlined and show their URL when hovered; they cannot be clicked. Images are a placeholder, and remote images are shown as text, never fetched. Raw HTML is shown as typed. A card whose back is empty shows only Fail and Pass after Show Answer. The card list shows each front without Markdown syntax.
@@ -20,6 +22,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - Tests: the cache property test also adds, deletes and undeletes cards and decks; a file-backed store is reopened; a v2 backup is restored; migration 0005 moves the due date of a late Pass (#13).
 
 ### Changed
+- **Breaking: the app is renamed from Cards to Rappel** (ADR 0020). Crates `rappel-core` and `rappel`, app ID `io.github.rsmirke.Rappel`, `RAPPEL_DATA_DIR`, data folder `~/.local/share/rappel` (`rappel-dev` for debug builds), database `rappel.sqlite3`, backups `rappel-YYYYMMDD-HHMMSS.sqlite3`. Exports are now `.rappel` files; the archive inside is unchanged (`cards.json`, format version 1), so existing `.cards` exports still import, and the import file chooser shows both. The old data folder is not migrated or read: to move your data, **Export…** in the last Cards build and **Import…** in Rappel. Debug builds also refuse the old `cards` data folder.
 - Every card side looks the same: body text, normal weight, aligned to the start. A card that is one paragraph is no longer large and centred. Headings, code, quotes and tables keep their own styles.
 - Tables have a border, lines between cells and a shaded header row, using theme colours only (`data/style.css`, the app's first stylesheet; ADR 0019).
 - A deck or card deleted on both sides at different times counts as already present in an import, not as a conflict (ADR 0017).

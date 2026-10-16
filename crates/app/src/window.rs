@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cards_core::domain::Card;
-use cards_core::storage::Restored;
 use gtk::{gio, glib};
+use rappel_core::domain::Card;
+use rappel_core::storage::Restored;
 
 use crate::dialogs::card_editor::CardEditor;
 use crate::interchange;
@@ -37,8 +37,8 @@ mod imp {
     use crate::state::AppState;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Cards/window.ui")]
-    pub struct CardsWindow {
+    #[template(resource = "/io/github/rsmirke/Rappel/window.ui")]
+    pub struct RappelWindow {
         #[template_child]
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,
         #[template_child]
@@ -65,9 +65,9 @@ mod imp {
     }
 
     #[glib::object_subclass]
-    impl ObjectSubclass for CardsWindow {
-        const NAME: &'static str = "CardsWindow";
-        type Type = super::CardsWindow;
+    impl ObjectSubclass for RappelWindow {
+        const NAME: &'static str = "RappelWindow";
+        type Type = super::RappelWindow;
         type ParentType = adw::ApplicationWindow;
 
         fn class_init(klass: &mut Self::Class) {
@@ -107,7 +107,7 @@ mod imp {
         }
     }
 
-    impl ObjectImpl for CardsWindow {
+    impl ObjectImpl for RappelWindow {
         fn constructed(&self) {
             self.parent_constructed();
             let window = self.obj();
@@ -118,8 +118,8 @@ mod imp {
             }
         }
     }
-    impl WidgetImpl for CardsWindow {}
-    impl WindowImpl for CardsWindow {
+    impl WidgetImpl for RappelWindow {}
+    impl WindowImpl for RappelWindow {
         /// Closing the window with unsaved text in a card editor asks the
         /// editor's "Discard Changes?" first, as Escape does.
         fn close_request(&self) -> glib::Propagation {
@@ -142,18 +142,18 @@ mod imp {
             glib::Propagation::Stop
         }
     }
-    impl ApplicationWindowImpl for CardsWindow {}
-    impl AdwApplicationWindowImpl for CardsWindow {}
+    impl ApplicationWindowImpl for RappelWindow {}
+    impl AdwApplicationWindowImpl for RappelWindow {}
 }
 
 glib::wrapper! {
-    pub struct CardsWindow(ObjectSubclass<imp::CardsWindow>)
+    pub struct RappelWindow(ObjectSubclass<imp::RappelWindow>)
         @extends adw::ApplicationWindow, gtk::ApplicationWindow, gtk::Window, gtk::Widget,
         @implements gio::ActionGroup, gio::ActionMap, gtk::Accessible, gtk::Buildable,
                     gtk::ConstraintTarget, gtk::Native, gtk::Root, gtk::ShortcutManager;
 }
 
-impl CardsWindow {
+impl RappelWindow {
     pub fn new(app: &adw::Application) -> Self {
         glib::Object::builder().property("application", app).build()
     }
@@ -252,7 +252,7 @@ impl CardsWindow {
     }
 
     /// Shows the error page for decks that could not be read in `data_dir`.
-    fn decks_unreadable(&self, err: &cards_core::Error, data_dir: &Path) {
+    fn decks_unreadable(&self, err: &rappel_core::Error, data_dir: &Path) {
         tracing::error!("cannot list decks: {err}");
         self.show_problem(Problem::Failed {
             message: "The decks could not be read.".to_owned(),
@@ -299,8 +299,8 @@ impl CardsWindow {
             } => {
                 imp.too_new_page
                     .set_description(Some(&glib::markup_escape_text(&format!(
-                        "This database was made by a newer version of Cards (database version \
-                         {found}; this version supports up to {supported}). Update Cards to \
+                        "This database was made by a newer version of Rappel (database version \
+                         {found}; this version supports up to {supported}). Update Rappel to \
                          open it. The database has not been changed."
                     ))));
                 imp.too_new_path.set_label(&data_folder_line(&data_dir));
@@ -353,11 +353,11 @@ mod tests {
 
     #[test]
     fn recovery_toasts_say_what_happened_and_where_the_old_file_is() {
-        let kept = Path::new("/data/cards.sqlite3.replaced-20261015-120000");
+        let kept = Path::new("/data/rappel.sqlite3.replaced-20261015-120000");
         assert_eq!(
             recovered_message(Recovered::Backup, Some(kept)),
             "Backup restored. The previous database was kept as \
-             /data/cards.sqlite3.replaced-20261015-120000"
+             /data/rappel.sqlite3.replaced-20261015-120000"
         );
         assert_eq!(
             recovered_message(Recovered::Backup, None),
@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(
             recovered_message(Recovered::Fresh, Some(kept)),
             "Started with an empty database. The previous database was kept as \
-             /data/cards.sqlite3.replaced-20261015-120000"
+             /data/rappel.sqlite3.replaced-20261015-120000"
         );
         assert_eq!(
             recovered_message(Recovered::Fresh, None),

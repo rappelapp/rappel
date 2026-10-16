@@ -1,4 +1,4 @@
-//! `cards-core`: all logic of Cards, independent of any UI toolkit.
+//! `rappel-core`: all logic of Rappel, independent of any UI toolkit.
 //!
 //! This crate must never depend on gtk4, glib, gio, libadwaita or anything UI.
 
@@ -15,10 +15,10 @@ pub mod time;
 pub use error::{Error, Result};
 
 /// Human-readable application name.
-pub const APP_NAME: &str = "Cards";
+pub const APP_NAME: &str = "Rappel";
 
 /// Reverse-DNS application ID, used by GTK and the desktop environment.
-pub const APP_ID: &str = "io.github.rsmirke.Cards";
+pub const APP_ID: &str = "io.github.rsmirke.Rappel";
 
 /// Returns `true` if `id` is a valid application ID as defined by
 /// `g_application_id_is_valid`: at least two dot-separated elements, each
@@ -68,13 +68,13 @@ mod tests {
     #[test]
     fn rejects_invalid_ids() {
         assert!(!is_valid_app_id(""));
-        assert!(!is_valid_app_id("Cards"), "needs at least two elements");
-        assert!(!is_valid_app_id("io..Cards"), "empty element");
-        assert!(!is_valid_app_id(".io.Cards"), "leading dot");
-        assert!(!is_valid_app_id("io.Cards."), "trailing dot");
-        assert!(!is_valid_app_id("io.1Cards"), "element starts with digit");
-        assert!(!is_valid_app_id("io.Car ds"), "space");
-        assert!(!is_valid_app_id("io.Cartes✓"), "non-ASCII");
+        assert!(!is_valid_app_id("Rappel"), "needs at least two elements");
+        assert!(!is_valid_app_id("io..Rappel"), "empty element");
+        assert!(!is_valid_app_id(".io.Rappel"), "leading dot");
+        assert!(!is_valid_app_id("io.Rappel."), "trailing dot");
+        assert!(!is_valid_app_id("io.1Rappel"), "element starts with digit");
+        assert!(!is_valid_app_id("io.Rapp el"), "space");
+        assert!(!is_valid_app_id("io.Rappel✓"), "non-ASCII");
     }
 
     #[test]

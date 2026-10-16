@@ -71,7 +71,7 @@ pub fn local_next_day_start_ms(now_ms: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use cards_core::time::{UtcParts, utc_ms};
+    use rappel_core::time::{UtcParts, utc_ms};
 
     use super::*;
 
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn the_local_zone_gives_a_start_within_the_last_day() {
-        let now = cards_core::time::now_ms();
+        let now = rappel_core::time::now_ms();
         let start = local_day_start_ms(now);
         assert!(start <= now && now - start < 25 * 3_600_000);
     }
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn the_local_next_day_start_is_within_the_next_day() {
-        let now = cards_core::time::now_ms();
+        let now = rappel_core::time::now_ms();
         let next = local_next_day_start_ms(now);
         assert!(next > now && next - now <= 25 * 3_600_000);
         assert_eq!(local_day_start_ms(next), next);

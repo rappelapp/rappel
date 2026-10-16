@@ -45,6 +45,6 @@ fn main() {
     glib_build_tools::compile_resources(
         &[PathBuf::from(DATA_DIR), ui_dir],
         "data/resources.gresource.xml",
-        "cards.gresource",
+        "rappel.gresource",
     );
 }

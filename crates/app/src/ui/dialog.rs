@@ -5,7 +5,7 @@ use gtk::glib;
 use gtk::prelude::*;
 
 /// The gresource prefix of every `.ui` file (`data/resources.gresource.xml`).
-const RESOURCE_PREFIX: &str = "/io/github/rsmirke/Cards/";
+const RESOURCE_PREFIX: &str = "/io/github/rsmirke/Rappel/";
 
 /// A builder over the bundled `file`, e.g. `"restore_dialog.ui"`.
 pub fn builder(file: &str) -> gtk::Builder {

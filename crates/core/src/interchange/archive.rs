@@ -1,4 +1,4 @@
-//! Writing and reading the `.cards` zip archive.
+//! Writing and reading the `.rappel` zip archive.
 //!
 //! The archive holds exactly `cards.json` and an empty `media/` directory.
 //! Nothing is ever extracted to disk: `cards.json` is read into memory by
@@ -100,7 +100,7 @@ pub(super) fn read_cards_json(bytes: &[u8], limits: &Limits) -> Result<Vec<u8>, 
 }
 
 /// The number of entries the archive's end record declares. The record
-/// must end the file (no archive comment, which Cards never writes) and
+/// must end the file (no archive comment, which Rappel never writes) and
 /// describe a single-disk archive without zip64, so it cannot be confused
 /// with bytes inside an entry.
 fn declared_entries(bytes: &[u8]) -> Result<usize, ImportProblem> {

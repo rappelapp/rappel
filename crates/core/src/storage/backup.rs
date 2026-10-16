@@ -1,6 +1,6 @@
 //! Database backups with the SQLite online backup API.
 //!
-//! Backups are named `cards-YYYYMMDD-HHMMSS.sqlite3` (UTC), with `-2`, `-3`…
+//! Backups are named `rappel-YYYYMMDD-HHMMSS.sqlite3` (UTC), with `-2`, `-3`…
 //! appended if a name is taken. Each is written to `<name>.partial`, checked
 //! with `PRAGMA quick_check`, synced and only then renamed, so a file with
 //! the final name is always a complete, checked backup.
@@ -23,12 +23,12 @@ use super::BACKUP_DIR_NAME;
 /// How many backups [`prune_backups`] keeps (SPEC §3).
 pub(crate) const KEEP_BACKUPS: usize = 14;
 
-const PREFIX: &str = "cards-";
+const PREFIX: &str = "rappel-";
 const EXTENSION: &str = ".sqlite3";
 const PARTIAL: &str = ".partial";
 const FILE_MODE: u32 = 0o600;
 
-/// `cards-YYYYMMDD-` for the UTC day of `now_ms`.
+/// `rappel-YYYYMMDD-` for the UTC day of `now_ms`.
 fn day_prefix(now_ms: i64) -> String {
     let t = utc_parts(now_ms);
     format!("{PREFIX}{:04}{:02}{:02}-", t.year, t.month, t.day)
@@ -43,7 +43,7 @@ pub(crate) fn utc_stamp(now_ms: i64) -> String {
     )
 }
 
-/// `cards-YYYYMMDD-HHMMSS` for `now_ms`, without extension.
+/// `rappel-YYYYMMDD-HHMMSS` for `now_ms`, without extension.
 fn backup_stem(now_ms: i64) -> String {
     format!("{PREFIX}{}", utc_stamp(now_ms))
 }
@@ -387,30 +387,30 @@ mod tests {
 
     #[test]
     fn names_use_utc_date_and_time() {
-        assert_eq!(backup_stem(NOW), "cards-20261015-123456");
-        assert_eq!(day_prefix(NOW), "cards-20261015-");
+        assert_eq!(backup_stem(NOW), "rappel-20261015-123456");
+        assert_eq!(day_prefix(NOW), "rappel-20261015-");
     }
 
     #[test]
     fn parses_only_backup_names() {
         assert_eq!(
-            parse_backup_name("cards-20261015-123456.sqlite3"),
+            parse_backup_name("rappel-20261015-123456.sqlite3"),
             Some(("20261015-123456", 1))
         );
         assert_eq!(
-            parse_backup_name("cards-20261015-123456-3.sqlite3"),
+            parse_backup_name("rappel-20261015-123456-3.sqlite3"),
             Some(("20261015-123456", 3))
         );
         for bad in [
-            "cards.sqlite3",
-            "cards-20261015-123456.sqlite3.partial",
-            "cards-20261015-123456-1.sqlite3",
-            "cards-20261015-123456-+2.sqlite3",
-            "cards-20261015-123456-x.sqlite3",
-            "cards-2026101-1234567.sqlite3",
-            "cards-20261015_123456.sqlite3",
+            "rappel.sqlite3",
+            "rappel-20261015-123456.sqlite3.partial",
+            "rappel-20261015-123456-1.sqlite3",
+            "rappel-20261015-123456-+2.sqlite3",
+            "rappel-20261015-123456-x.sqlite3",
+            "rappel-2026101-1234567.sqlite3",
+            "rappel-20261015_123456.sqlite3",
             "notes.txt",
-            "cards-bad.sqlite3",
+            "rappel-bad.sqlite3",
         ] {
             assert_eq!(parse_backup_name(bad), None, "{bad}");
         }
@@ -432,15 +432,15 @@ mod tests {
     #[test]
     fn collision_suffix_sorts_after_the_plain_name() {
         let tmp = tempfile::tempdir().unwrap();
-        touch(tmp.path(), "cards-20261015-123456-2.sqlite3");
-        touch(tmp.path(), "cards-20261015-123456.sqlite3");
-        touch(tmp.path(), "cards-20261014-000000.sqlite3");
+        touch(tmp.path(), "rappel-20261015-123456-2.sqlite3");
+        touch(tmp.path(), "rappel-20261015-123456.sqlite3");
+        touch(tmp.path(), "rappel-20261014-000000.sqlite3");
         assert_eq!(
             backup_names(tmp.path()).unwrap(),
             [
-                "cards-20261014-000000.sqlite3",
-                "cards-20261015-123456.sqlite3",
-                "cards-20261015-123456-2.sqlite3",
+                "rappel-20261014-000000.sqlite3",
+                "rappel-20261015-123456.sqlite3",
+                "rappel-20261015-123456-2.sqlite3",
             ]
         );
     }
@@ -449,18 +449,18 @@ mod tests {
     fn prune_keeps_newest_and_ignores_other_files() {
         let tmp = tempfile::tempdir().unwrap();
         for day in 1..=16 {
-            touch(tmp.path(), &format!("cards-202610{day:02}-120000.sqlite3"));
+            touch(tmp.path(), &format!("rappel-202610{day:02}-120000.sqlite3"));
         }
         touch(tmp.path(), "notes.txt");
-        touch(tmp.path(), "cards-bad.sqlite3");
-        touch(tmp.path(), "cards-20261017-120000.sqlite3.partial");
+        touch(tmp.path(), "rappel-bad.sqlite3");
+        touch(tmp.path(), "rappel-20261017-120000.sqlite3.partial");
 
         prune_backups(tmp.path(), KEEP_BACKUPS, None).unwrap();
 
         let mut expected: Vec<String> = (3..=16)
-            .map(|day| format!("cards-202610{day:02}-120000.sqlite3"))
+            .map(|day| format!("rappel-202610{day:02}-120000.sqlite3"))
             .collect();
-        expected.push("cards-bad.sqlite3".into());
+        expected.push("rappel-bad.sqlite3".into());
         expected.push("notes.txt".into());
         expected.sort();
         assert_eq!(names(tmp.path()), expected);
@@ -471,19 +471,19 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // 15 backups from a clock that was years ahead.
         for day in 1..=15 {
-            touch(tmp.path(), &format!("cards-203001{day:02}-120000.sqlite3"));
+            touch(tmp.path(), &format!("rappel-203001{day:02}-120000.sqlite3"));
         }
-        let fresh = tmp.path().join("cards-20261015-123456.sqlite3");
-        touch(tmp.path(), "cards-20261015-123456.sqlite3");
+        let fresh = tmp.path().join("rappel-20261015-123456.sqlite3");
+        touch(tmp.path(), "rappel-20261015-123456.sqlite3");
 
         prune_backups(tmp.path(), KEEP_BACKUPS, Some(&fresh)).unwrap();
 
         let left = names(tmp.path());
         assert_eq!(left.len(), KEEP_BACKUPS);
-        assert!(left.contains(&"cards-20261015-123456.sqlite3".to_owned()));
+        assert!(left.contains(&"rappel-20261015-123456.sqlite3".to_owned()));
         // The other 13 slots go to the newest names.
-        assert_eq!(left[0], "cards-20261015-123456.sqlite3");
-        assert_eq!(left[1], "cards-20300103-120000.sqlite3");
+        assert_eq!(left[0], "rappel-20261015-123456.sqlite3");
+        assert_eq!(left[1], "rappel-20300103-120000.sqlite3");
     }
 
     #[test]
@@ -496,9 +496,9 @@ mod tests {
     fn has_backup_for_day_matches_utc_day_only() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(!has_backup_for_day(tmp.path(), NOW).unwrap());
-        touch(tmp.path(), "cards-20261014-235959.sqlite3");
+        touch(tmp.path(), "rappel-20261014-235959.sqlite3");
         assert!(!has_backup_for_day(tmp.path(), NOW).unwrap());
-        touch(tmp.path(), "cards-20261015-000000.sqlite3");
+        touch(tmp.path(), "rappel-20261015-000000.sqlite3");
         assert!(has_backup_for_day(tmp.path(), NOW).unwrap());
     }
 
@@ -524,7 +524,7 @@ mod tests {
         let backups = tmp.path().join("backups");
         let path = create_backup(&conn, &backups, NOW).unwrap();
 
-        assert_eq!(path, backups.join("cards-20261015-123456.sqlite3"));
+        assert_eq!(path, backups.join("rappel-20261015-123456.sqlite3"));
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(&backups), 0o700);
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(mode, "delete");
         drop(copy);
         // Only the finished backup is left: no -wal, -journal or .partial.
-        assert_eq!(names(&backups), ["cards-20261015-123456.sqlite3"]);
+        assert_eq!(names(&backups), ["rappel-20261015-123456.sqlite3"]);
     }
 
     #[test]
@@ -550,7 +550,7 @@ mod tests {
         let backups = tmp.path().join("backups");
         create_backup(&conn, &backups, NOW).unwrap();
         let second = create_backup(&conn, &backups, NOW).unwrap();
-        assert_eq!(second, backups.join("cards-20261015-123456-2.sqlite3"));
+        assert_eq!(second, backups.join("rappel-20261015-123456-2.sqlite3"));
     }
 
     fn backup_file(dir: &Path, name: &str, len: usize) {
@@ -564,9 +564,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join(BACKUP_DIR_NAME);
         fs::create_dir(&dir).unwrap();
-        backup_file(&dir, "cards-20261014-000000.sqlite3", 100);
-        backup_file(&dir, "cards-20261015-123456.sqlite3", 200);
-        backup_file(&dir, "cards-20261015-123456-2.sqlite3", 300);
+        backup_file(&dir, "rappel-20261014-000000.sqlite3", 100);
+        backup_file(&dir, "rappel-20261015-123456.sqlite3", 200);
+        backup_file(&dir, "rappel-20261015-123456-2.sqlite3", 300);
 
         let list = list_backups(tmp.path()).unwrap();
         let names: Vec<_> = list
@@ -576,9 +576,9 @@ mod tests {
         assert_eq!(
             names,
             [
-                "cards-20261015-123456-2.sqlite3",
-                "cards-20261015-123456.sqlite3",
-                "cards-20261014-000000.sqlite3",
+                "rappel-20261015-123456-2.sqlite3",
+                "rappel-20261015-123456.sqlite3",
+                "rappel-20261014-000000.sqlite3",
             ]
         );
         assert_eq!(list[0].created_ms(), NOW - 789);
@@ -588,7 +588,7 @@ mod tests {
             list.iter().map(BackupInfo::size_bytes).collect::<Vec<_>>(),
             [300, 200, 100]
         );
-        assert_eq!(list[2].path(), dir.join("cards-20261014-000000.sqlite3"));
+        assert_eq!(list[2].path(), dir.join("rappel-20261014-000000.sqlite3"));
     }
 
     #[test]
@@ -596,27 +596,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join(BACKUP_DIR_NAME);
         fs::create_dir(&dir).unwrap();
-        backup_file(&dir, "cards-20261015-123456.sqlite3", 100);
+        backup_file(&dir, "rappel-20261015-123456.sqlite3", 100);
         // Wrong names.
         backup_file(&dir, "notes.sqlite3", 100);
-        backup_file(&dir, "cards-20261016-123456.sqlite3.partial", 100);
+        backup_file(&dir, "rappel-20261016-123456.sqlite3.partial", 100);
         // Impossible dates.
-        backup_file(&dir, "cards-20261316-123456.sqlite3", 100);
-        backup_file(&dir, "cards-20260431-123456.sqlite3", 100);
-        backup_file(&dir, "cards-20261016-243456.sqlite3", 100);
+        backup_file(&dir, "rappel-20261316-123456.sqlite3", 100);
+        backup_file(&dir, "rappel-20260431-123456.sqlite3", 100);
+        backup_file(&dir, "rappel-20261016-243456.sqlite3", 100);
         // Not an SQLite file, empty, a directory, a symlink.
-        fs::write(dir.join("cards-20261016-000001.sqlite3"), vec![0x42; 100]).unwrap();
-        fs::write(dir.join("cards-20261016-000002.sqlite3"), b"").unwrap();
-        fs::create_dir(dir.join("cards-20261016-000003.sqlite3")).unwrap();
+        fs::write(dir.join("rappel-20261016-000001.sqlite3"), vec![0x42; 100]).unwrap();
+        fs::write(dir.join("rappel-20261016-000002.sqlite3"), b"").unwrap();
+        fs::create_dir(dir.join("rappel-20261016-000003.sqlite3")).unwrap();
         std::os::unix::fs::symlink(
-            dir.join("cards-20261015-123456.sqlite3"),
-            dir.join("cards-20261016-000004.sqlite3"),
+            dir.join("rappel-20261015-123456.sqlite3"),
+            dir.join("rappel-20261016-000004.sqlite3"),
         )
         .unwrap();
 
         let list = list_backups(tmp.path()).unwrap();
         assert_eq!(list.len(), 1, "{list:?}");
-        assert_eq!(list[0].path(), dir.join("cards-20261015-123456.sqlite3"));
+        assert_eq!(list[0].path(), dir.join("rappel-20261015-123456.sqlite3"));
     }
 
     #[test]
@@ -632,12 +632,12 @@ mod tests {
         let backups = tmp.path().join("backups");
         fs::create_dir(&backups).unwrap();
         fs::write(
-            backups.join("cards-20261015-123456.sqlite3.partial"),
+            backups.join("rappel-20261015-123456.sqlite3.partial"),
             b"junk",
         )
         .unwrap();
         let path = create_backup(&conn, &backups, NOW).unwrap();
-        assert_eq!(names(&backups), ["cards-20261015-123456.sqlite3"]);
+        assert_eq!(names(&backups), ["rappel-20261015-123456.sqlite3"]);
         Connection::open(path)
             .unwrap()
             .query_row("SELECT count(*) FROM t", [], |r| r.get::<_, i64>(0))

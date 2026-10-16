@@ -1,7 +1,7 @@
-//! Export and import of the whole database as a `.cards` file (SPEC §4.1,
+//! Export and import of the whole database as a `.rappel` file (SPEC §4.1,
 //! ADR 0017).
 //!
-//! A `.cards` file is a zip archive with exactly two entries: `cards.json`
+//! A `.rappel` file is a zip archive with exactly two entries: `cards.json`
 //! (decks, cards and the review log, deleted rows included) and an empty
 //! `media/` directory. The same database exported at the same time always
 //! gives the same bytes.
@@ -25,7 +25,13 @@ use std::path::PathBuf;
 pub use format::FORMAT_VERSION;
 
 /// File name extension of an export, without the dot.
-pub const FILE_EXTENSION: &str = "cards";
+pub const FILE_EXTENSION: &str = "rappel";
+
+/// File name extensions an import accepts, without the dot. `cards` is what
+/// exports were called before the rename to Rappel (ADR 0020): same archive,
+/// same `format_version` 1. Import reads the content, never the extension, so
+/// this only tells the file chooser what to show.
+pub const IMPORT_EXTENSIONS: [&str; 2] = [FILE_EXTENSION, "cards"];
 
 /// What an export wrote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,7 +189,7 @@ pub enum ImportProblem {
     },
     /// The file is not a zip archive, or a damaged one (`0` says what the
     /// zip reader found).
-    #[error("not a valid .cards archive: {0}")]
+    #[error("not a valid Rappel export: {0}")]
     InvalidArchive(String),
     /// The archive has an entry other than `cards.json` and `media/`, or
     /// one of them twice. The name is shown escaped and shortened.
@@ -208,10 +214,10 @@ pub enum ImportProblem {
     /// (`0` is the parser's message, with line and column).
     #[error("cards.json is malformed: {0}")]
     Json(String),
-    /// The file was written by a newer version of Cards, or has a version
+    /// The file was written by a newer version of Rappel, or has a version
     /// that never existed.
     #[error(
-        "format version {found} is not supported (this version of Cards reads up to {FORMAT_VERSION})"
+        "format version {found} is not supported (this version of Rappel reads up to {FORMAT_VERSION})"
     )]
     UnsupportedFormatVersion {
         /// The file's `format_version`.
@@ -238,10 +244,10 @@ pub enum ImportProblem {
         reason: FieldProblem,
     },
     /// `settings` is not empty; this version knows no settings.
-    #[error("the file has settings, which this version of Cards does not know")]
+    #[error("the file has settings, which this version of Rappel does not know")]
     UnsupportedSettings,
     /// `media` is not empty; this version cannot import media.
-    #[error("the file has media, which this version of Cards cannot import")]
+    #[error("the file has media, which this version of Rappel cannot import")]
     UnsupportedMedia,
 }
 
@@ -290,7 +296,7 @@ pub enum FieldProblem {
 /// them.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Limits {
-    /// The whole `.cards` file.
+    /// The whole `.rappel` file.
     pub archive: u64,
     /// `cards.json`, decompressed.
     pub json: u64,

@@ -7,8 +7,8 @@
 //! store still has the final say.
 
 use adw::prelude::*;
-use cards_core::domain::{Deck, MAX_DECK_NAME_BYTES, deck_name_fits, deck_name_key};
 use gtk::glib;
+use rappel_core::domain::{Deck, MAX_DECK_NAME_BYTES, deck_name_fits, deck_name_key};
 
 use crate::ui::dialog;
 use crate::ui::text::group_digits;

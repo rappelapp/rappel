@@ -1,4 +1,4 @@
-//! Exporting the whole database to a `.cards` file.
+//! Exporting the whole database to a `.rappel` file.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -17,7 +17,7 @@ use crate::time::now_ms;
 
 impl Store {
     /// Writes every deck, card and review event, deleted ones included,
-    /// to the `.cards` file `path`, replacing it if it exists.
+    /// to the `.rappel` file `path`, replacing it if it exists.
     ///
     /// The file is written next to `path` with mode `0600`, synced, and
     /// only then renamed, so `path` is never a partial export. The same

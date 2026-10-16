@@ -7,8 +7,8 @@
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cards_core::domain::DeckSummary;
 use gtk::glib;
+use rappel_core::domain::DeckSummary;
 
 use crate::ui::rows;
 
@@ -19,7 +19,7 @@ mod imp {
     use gtk::glib;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Cards/deck_row.ui")]
+    #[template(resource = "/io/github/rsmirke/Rappel/deck_row.ui")]
     pub struct DeckRow {
         #[template_child]
         pub menu_button: TemplateChild<gtk::MenuButton>,
@@ -28,7 +28,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for DeckRow {
-        const NAME: &'static str = "CardsDeckRow";
+        const NAME: &'static str = "RappelDeckRow";
         type Type = super::DeckRow;
         type ParentType = adw::ActionRow;
 

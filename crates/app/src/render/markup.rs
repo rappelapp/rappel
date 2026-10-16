@@ -9,8 +9,8 @@
 use std::fmt::Write;
 use std::ops::Range;
 
-use cards_core::content::{ImageTarget, Inline};
 use gtk::glib;
+use rappel_core::content::{ImageTarget, Inline};
 
 /// A label's markup and where its links are.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -93,8 +93,8 @@ pub fn link_at(links: &[(Range<usize>, String)], index: usize) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use cards_core::content::{Block, parse};
     use gtk::pango;
+    use rappel_core::content::{Block, parse};
 
     use super::*;
 

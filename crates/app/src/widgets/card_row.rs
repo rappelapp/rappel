@@ -19,7 +19,7 @@ mod imp {
     use gtk::glib;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Cards/card_row.ui")]
+    #[template(resource = "/io/github/rsmirke/Rappel/card_row.ui")]
     pub struct CardRow {
         #[template_child]
         pub front_label: TemplateChild<gtk::Label>,
@@ -31,7 +31,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for CardRow {
-        const NAME: &'static str = "CardsCardRow";
+        const NAME: &'static str = "RappelCardRow";
         type Type = super::CardRow;
         type ParentType = gtk::Box;
 

@@ -1,19 +1,19 @@
-//! Error type shared by all of `cards-core`.
+//! Error type shared by all of `rappel-core`.
 
 use std::io;
 use std::path::PathBuf;
 
-/// Everything that can go wrong in `cards-core`.
+/// Everything that can go wrong in `rappel-core`.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// No usable base directory: `CARDS_DATA_DIR` and `XDG_DATA_HOME` are
+    /// No usable base directory: `RAPPEL_DATA_DIR` and `XDG_DATA_HOME` are
     /// unset (or unusable) and `HOME` is unset, empty or relative.
-    #[error("cannot find the data directory: set HOME, XDG_DATA_HOME or CARDS_DATA_DIR")]
+    #[error("cannot find the data directory: set HOME, XDG_DATA_HOME or RAPPEL_DATA_DIR")]
     NoHomeDir,
 
-    /// `CARDS_DATA_DIR` is a relative path. It is rejected instead of being
+    /// `RAPPEL_DATA_DIR` is a relative path. It is rejected instead of being
     /// resolved against whatever the current directory happens to be.
-    #[error("CARDS_DATA_DIR must be an absolute path, got {}", .0.display())]
+    #[error("RAPPEL_DATA_DIR must be an absolute path, got {}", .0.display())]
     RelativeDataDir(PathBuf),
 
     /// A debug build resolved to the release data directory (or a directory
@@ -73,10 +73,10 @@ pub enum Error {
         messages: Vec<String>,
     },
 
-    /// The database was written by a newer version of Cards (or is not a
-    /// Cards database). It is left untouched.
+    /// The database was written by a newer version of Rappel (or is not a
+    /// Rappel database). It is left untouched.
     #[error(
-        "database version {found} is not supported (this version of Cards supports up to {supported})"
+        "database version {found} is not supported (this version of Rappel supports up to {supported})"
     )]
     UnsupportedVersion {
         /// `PRAGMA user_version` of the file.
@@ -85,11 +85,11 @@ pub enum Error {
         supported: u32,
     },
 
-    /// The file is an SQLite database with tables but no Cards schema
+    /// The file is an SQLite database with tables but no Rappel schema
     /// version, so it belongs to some other application. It is left
     /// untouched.
-    #[error("the file is a database, but not a Cards database")]
-    NotACardsDatabase,
+    #[error("the file is a database, but not a Rappel database")]
+    NotARappelDatabase,
 
     /// A migration failed and was rolled back.
     #[error("migration {version} failed: {source}")]
@@ -191,7 +191,7 @@ pub enum Error {
     },
 
     /// A backup was not restored because it failed validation (`source`
-    /// says why: damaged, too new, not a Cards database, or not a backup
+    /// says why: damaged, too new, not a Rappel database, or not a backup
     /// file at all). Nothing in the data directory was changed.
     #[error("backup {} cannot be restored: {source}", path.display())]
     RestoreRefused {
@@ -288,7 +288,7 @@ pub enum Error {
     #[error("cannot write the export: {0}")]
     ExportFailed(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    /// The file is not a valid `.cards` export (ADR 0017). Nothing was
+    /// The file is not a valid Rappel export (ADR 0017). Nothing was
     /// written.
     #[error("cannot import this file: {0}")]
     ImportRefused(#[source] crate::interchange::ImportProblem),

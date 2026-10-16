@@ -1,5 +1,5 @@
 # cargo-deny configuration. Run with `cargo deny check` (part of scripts/check.sh).
-# Cards is GPL-3.0-or-later: every dependency licence must be compatible with it.
+# Rappel is GPL-3.0-or-later: every dependency licence must be compatible with it.
 
 [graph]
 all-features = true

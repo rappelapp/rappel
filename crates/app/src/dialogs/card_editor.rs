@@ -7,15 +7,15 @@
 //! - A blank front disables saving, and so does a side over the store's
 //!   length limit, explained under that side (the store's own rules).
 //! - Closing with unsaved changes asks first, whether by Escape, Cancel or
-//!   closing the window (`CardsWindow` calls [`CardEditor::confirm_discard`]).
+//!   closing the window (`RappelWindow` calls [`CardEditor::confirm_discard`]).
 //! - A store error keeps the dialog open with the text as typed.
 
 use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cards_core::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits};
 use gtk::glib;
+use rappel_core::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits};
 
 use crate::state::AppState;
 use crate::ui::callback::Callback;
@@ -44,7 +44,7 @@ mod imp {
     use crate::ui::callback::Callback;
 
     #[derive(Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Cards/card_editor.ui")]
+    #[template(resource = "/io/github/rsmirke/Rappel/card_editor.ui")]
     pub struct CardEditor {
         #[template_child]
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,
@@ -82,7 +82,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for CardEditor {
-        const NAME: &'static str = "CardsCardEditor";
+        const NAME: &'static str = "RappelCardEditor";
         type Type = super::CardEditor;
         type ParentType = adw::Dialog;
 

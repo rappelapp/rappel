@@ -20,10 +20,10 @@ use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cards_core::content::{self, Document};
-use cards_core::domain::{CardState, Deck, Grade};
-use cards_core::scheduling::session::{Session, Summary, capped};
 use gtk::glib;
+use rappel_core::content::{self, Document};
+use rappel_core::domain::{CardState, Deck, Grade};
+use rappel_core::scheduling::session::{Session, Summary, capped};
 
 use crate::clock::local_day_start_ms;
 use crate::dialogs::card_editor::{CardEditor, Saved};
@@ -41,17 +41,17 @@ mod imp {
 
     use adw::prelude::*;
     use adw::subclass::prelude::*;
-    use cards_core::content::Document;
-    use cards_core::domain::Deck;
-    use cards_core::scheduling::session::Session;
     use gtk::glib;
+    use rappel_core::content::Document;
+    use rappel_core::domain::Deck;
+    use rappel_core::scheduling::session::Session;
 
     use super::OnSaved;
     use crate::state::AppState;
     use crate::ui::callback::Callback;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Cards/review_page.ui")]
+    #[template(resource = "/io/github/rsmirke/Rappel/review_page.ui")]
     pub struct ReviewPage {
         #[template_child]
         pub window_title: TemplateChild<adw::WindowTitle>,
@@ -96,7 +96,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for ReviewPage {
-        const NAME: &'static str = "CardsReviewPage";
+        const NAME: &'static str = "RappelReviewPage";
         type Type = super::ReviewPage;
         type ParentType = adw::NavigationPage;
 
@@ -104,10 +104,10 @@ mod imp {
             klass.bind_template();
             klass.install_action("review.reveal", None, |page, _, _| page.reveal());
             klass.install_action("review.fail", None, |page, _, _| {
-                page.grade(cards_core::domain::Grade::Fail);
+                page.grade(rappel_core::domain::Grade::Fail);
             });
             klass.install_action("review.pass", None, |page, _, _| {
-                page.grade(cards_core::domain::Grade::Pass);
+                page.grade(rappel_core::domain::Grade::Pass);
             });
             klass.install_action("review.done", None, |page, _, _| page.done());
             klass.install_action("review.edit", None, |page, _, _| page.edit());
@@ -202,8 +202,8 @@ impl ReviewPage {
         state: AppState,
         deck: Deck,
         on_saved: impl Fn(Saved) + 'static,
-    ) -> cards_core::Result<Self> {
-        let now = cards_core::time::now_ms();
+    ) -> rappel_core::Result<Self> {
+        let now = rappel_core::time::now_ms();
         let input = state.study_input(&deck.id, now, local_day_start_ms(now))?;
         let page: Self = glib::Object::new();
         let imp = page.imp();
@@ -279,7 +279,7 @@ impl ReviewPage {
         let Some(state) = imp.state.get() else {
             return;
         };
-        let now = cards_core::time::now_ms();
+        let now = rappel_core::time::now_ms();
         let next = imp
             .session
             .borrow()
@@ -466,7 +466,7 @@ impl ReviewPage {
             return;
         };
         let duration = capped(imp.shown_at.get().map_or(Duration::ZERO, |t| t.elapsed()));
-        let now = cards_core::time::now_ms();
+        let now = rappel_core::time::now_ms();
         if let Err(err) = state.record_review(&id, grade, duration, now) {
             self.error_toast(&format!("The answer could not be saved: {err}"));
             return;

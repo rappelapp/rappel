@@ -1,4 +1,4 @@
-//! Cards: a native GNOME flashcard app.
+//! Rappel: a native GNOME flashcard app.
 
 mod clock;
 mod dialogs;
@@ -15,7 +15,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
-use crate::window::CardsWindow;
+use crate::window::RappelWindow;
 
 fn main() -> glib::ExitCode {
     tracing_subscriber::fmt()
@@ -27,7 +27,7 @@ fn main() -> glib::ExitCode {
         )
         .init();
 
-    if let Err(err) = gio::resources_register_include!("cards.gresource") {
+    if let Err(err) = gio::resources_register_include!("rappel.gresource") {
         tracing::error!("failed to register bundled resources: {err}");
         return glib::ExitCode::FAILURE;
     }
@@ -35,7 +35,7 @@ fn main() -> glib::ExitCode {
     // `data/style.css` (table borders) needs no code: AdwApplication loads
     // `style.css` from the resource base path, which is the app ID's.
     let app = adw::Application::builder()
-        .application_id(cards_core::APP_ID)
+        .application_id(rappel_core::APP_ID)
         .build();
     app.set_accels_for_action("win.new", &["<Control>n"]);
     app.connect_activate(|app| {
@@ -46,7 +46,7 @@ fn main() -> glib::ExitCode {
         // The database is opened here, in the one running instance, and not
         // in main(): a second launch only forwards `activate` to it, and must
         // not open (back up, migrate) the database too.
-        let window = CardsWindow::new(app);
+        let window = RappelWindow::new(app);
         match startup::start() {
             Ok(state) => window.show_main(state),
             Err(problem) => window.show_problem(problem),
@@ -54,6 +54,6 @@ fn main() -> glib::ExitCode {
         window.present();
     });
 
-    tracing::debug!("starting {}", cards_core::APP_NAME);
+    tracing::debug!("starting {}", rappel_core::APP_NAME);
     app.run()
 }

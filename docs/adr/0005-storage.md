@@ -5,7 +5,7 @@
 
 ## Context
 
-Cards needs a local database before any domain or UI code exists. SPEC §1 says losing review history is the worst possible bug, and SPEC §3 sets WAL, foreign keys, `integrity_check` at startup, backups with the online backup API, file mode `0600` and directory mode `0700`. The maintainer decided:
+Rappel needs a local database before any domain or UI code exists. SPEC §1 says losing review history is the worst possible bug, and SPEC §3 sets WAL, foreign keys, `integrity_check` at startup, backups with the online backup API, file mode `0600` and directory mode `0700`. The maintainer decided:
 - ids are UUIDv7 stored as TEXT;
 - `review_events` is the source of truth and card scheduling state is a cache that can be rebuilt;
 - timestamps are UTC milliseconds.
@@ -30,7 +30,7 @@ Cards needs a local database before any domain or UI code exists. SPEC §1 says 
 - The schema version is `PRAGMA user_version`. `MIGRATIONS` is a static list of embedded SQL files, numbered from 1 with no gaps.
 - Each pending migration runs in its own `BEGIN IMMEDIATE` transaction, which runs the SQL, sets `user_version` and runs `PRAGMA foreign_key_check`. Any error or violation rolls back that migration, and the database stays at the last good version.
 - A database with a `user_version` above what the build knows, or a negative one, is refused untouched.
-- A database with tables but `user_version = 0` is refused untouched (`NotACardsDatabase`). Migration 0001 sets the version in the same transaction that creates the tables, so such a file belongs to another application.
+- A database with tables but `user_version = 0` is refused untouched (`NotARappelDatabase`). Migration 0001 sets the version in the same transaction that creates the tables, so such a file belongs to another application.
 - If a migration's SQL ends the transaction itself, the version is not recorded and the open fails.
 - Migrations run with foreign keys on. The first migration that rebuilds a table must also add a way to turn foreign keys off around its transaction; otherwise `DROP TABLE` cascades or is blocked (see the module docs).
 - A test pins a 64-bit FNV-1a hash of every migration's SQL. Editing a merged migration fails the test, and getting past it means visibly editing the pin, which review catches.
@@ -40,7 +40,7 @@ Cards needs a local database before any domain or UI code exists. SPEC §1 says 
 1. Create the directory (`0700`) and the file (`0600`). An existing file and its `-wal`/`-shm`/`-journal` files are tightened to `0600`. SQLite gives the side files it creates the same mode as the database file.
 2. Set the connection-only pragmas (`foreign_keys=ON`, `trusted_schema=OFF`, `busy_timeout`).
 3. Run `PRAGMA integrity_check`. Any problem, or a file that is not a database at all, returns `IntegrityCheckFailed` before anything is written.
-4. Check the version (too new, negative, or not a Cards database → refuse). This happens before step 5 because switching to WAL rewrites header bytes, and a file we refuse must stay byte-for-byte unchanged.
+4. Check the version (too new, negative, or not a Rappel database → refuse). This happens before step 5 because switching to WAL rewrites header bytes, and a file we refuse must stay byte-for-byte unchanged.
 5. Set `journal_mode=WAL` and `synchronous=FULL`. FULL is safer than NORMAL against power loss, and a flashcard app writes rarely.
 6. Back up.
 7. Migrate.
@@ -50,7 +50,7 @@ Cards needs a local database before any domain or UI code exists. SPEC §1 says 
   - before migrating an existing database;
   - otherwise once per UTC day, at the first open that day;
   - never for a brand-new empty database.
-- Name: `backups/cards-YYYYMMDD-HHMMSS.sqlite3`, in UTC so the name never depends on the time zone or on daylight-saving changes. If a name is taken, `-2`, `-3`… is appended.
+- Name: `backups/rappel-YYYYMMDD-HHMMSS.sqlite3`, in UTC so the name never depends on the time zone or on daylight-saving changes. If a name is taken, `-2`, `-3`… is appended.
 - Each backup is written to `<name>.partial` (pre-created `0600`) with the online backup API and switched to `journal_mode=DELETE` so it is one self-contained file. It then passes `PRAGMA quick_check`, is fsynced, and is renamed. The directory is fsynced afterwards. A file with a final name is always complete and checked.
 - 14 backups are kept. The backup made during this open is always one of them, and the other 13 slots go to the newest names. Without that rule, backups dated by a clock that was once ahead could make the fresh backup sort oldest and get deleted at once, leaving a migration without a backup. Pruning only touches names it generates, and removes leftover `.partial` files.
 - Failure handling:
@@ -64,5 +64,5 @@ Cards needs a local database before any domain or UI code exists. SPEC §1 says 
 - If the integrity check fails, the app cannot open the database. Recovery means restoring a backup, which needs a UI; until then the user restores a file by hand. Refusing is safer than writing to a damaged file.
 - The `UPDATE`/`DELETE` triggers also bind future migrations. A migration that has to rebuild `review_events` must drop and recreate them inside the migration.
 - Bundled SQLite adds about 1–2 MB to the binary and a C compile to clean builds. CI already has `build-essential`.
-- `tracing` is now a `cards-core` dependency, used to log migrations and backups. It is not a UI crate.
-- `cards_core::Error` exposes `rusqlite::Error` in some variants. That is fine for a workspace-internal crate.
+- `tracing` is now a `rappel-core` dependency, used to log migrations and backups. It is not a UI crate.
+- `rappel_core::Error` exposes `rusqlite::Error` in some variants. That is fine for a workspace-internal crate.

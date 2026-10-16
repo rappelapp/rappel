@@ -1,7 +1,7 @@
 //! Toasts: persistent ones for errors and warnings, and Undo toasts.
 
 use adw::prelude::*;
-use cards_core::storage::OpenWarning;
+use rappel_core::storage::OpenWarning;
 
 /// A toast with plain text (paths and errors may contain `<` or `&`) that
 /// stays until dismissed, so the user cannot miss it.
@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn warnings_name_what_failed_and_why() {
-        let err = || cards_core::Error::NotADirectory(PathBuf::from("/data/backups"));
+        let err = || rappel_core::Error::NotADirectory(PathBuf::from("/data/backups"));
         let text = warning_message(&OpenWarning::DailyBackupFailed(err()));
         assert!(text.starts_with("Today’s backup could not be made: "));
         assert!(text.contains("/data/backups"));

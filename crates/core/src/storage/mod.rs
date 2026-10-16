@@ -29,14 +29,14 @@ pub use restore::{Restored, restore_backup, start_fresh};
 pub(crate) use schedule::rebuild_cards;
 
 /// File name of the database inside the data directory.
-pub const DB_FILE_NAME: &str = "cards.sqlite3";
+pub const DB_FILE_NAME: &str = "rappel.sqlite3";
 
 /// Directory name for backups inside the data directory.
 pub const BACKUP_DIR_NAME: &str = "backups";
 
 const FILE_MODE: u32 = 0o600;
 
-/// An open Cards database.
+/// An open Rappel database.
 #[derive(Debug)]
 pub struct Store {
     pub(crate) conn: Connection,
@@ -74,7 +74,7 @@ impl Store {
     /// 1. The directory is created with mode `0700` and the database file
     ///    with `0600` (an existing one is tightened, with its `-wal`/`-shm`).
     /// 2. `PRAGMA integrity_check`, then the version check. A damaged file,
-    ///    a database newer than this build, or a non-Cards database is
+    ///    a database newer than this build, or a non-Rappel database is
     ///    refused before anything is written.
     /// 3. WAL mode, `synchronous=FULL`, foreign keys on.
     /// 4. If migrations are pending on an existing database, a backup is
@@ -86,7 +86,7 @@ impl Store {
     ///
     /// # Errors
     /// [`Error::IntegrityCheckFailed`], [`Error::UnsupportedVersion`],
-    /// [`Error::NotACardsDatabase`], [`Error::OrphanedSidecar`], [`Error::InterruptedRestore`],
+    /// [`Error::NotARappelDatabase`], [`Error::OrphanedSidecar`], [`Error::InterruptedRestore`],
     /// [`Error::Migration`], [`Error::ForeignKeyViolation`], backup errors,
     /// and IO or SQLite errors.
     pub fn open(data_dir: &Path) -> Result<Self> {
@@ -149,7 +149,7 @@ impl Store {
     /// # Errors
     /// [`Error::NotMigrated`] if the schema is not this build's latest (or
     /// [`Error::UnsupportedVersion`] if it is newer),
-    /// [`Error::NotACardsDatabase`], [`Error::PragmaRejected`], and SQLite
+    /// [`Error::NotARappelDatabase`], [`Error::PragmaRejected`], and SQLite
     /// errors, including for a missing file.
     pub fn open_concurrent(data_dir: &Path) -> Result<Self> {
         Self::open_concurrent_with(
@@ -400,7 +400,7 @@ fn refuse_orphaned_sidecars(db_path: &Path) -> Result<()> {
 ///
 /// # Errors
 /// [`Error::UnsupportedVersion`] for a negative version or one newer than
-/// the last migration, [`Error::NotACardsDatabase`] for a database with
+/// the last migration, [`Error::NotARappelDatabase`] for a database with
 /// tables but version 0.
 fn check_version(conn: &Connection, migrations: &[Migration]) -> Result<(u32, bool)> {
     let supported = latest(migrations);
@@ -413,7 +413,7 @@ fn check_version(conn: &Connection, migrations: &[Migration]) -> Result<(u32, bo
     if current == 0 && !is_new {
         // Migration 0001 sets user_version in the same transaction that
         // creates the tables, so this is some other application's file.
-        return Err(Error::NotACardsDatabase);
+        return Err(Error::NotARappelDatabase);
     }
     Ok((current, is_new))
 }

@@ -4,8 +4,8 @@
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cards_core::domain::Deck;
 use gtk::glib;
+use rappel_core::domain::Deck;
 
 use crate::dialogs::deck_name_dialog::{self, Purpose};
 use crate::pages::DeckPage;
@@ -26,7 +26,7 @@ mod imp {
     use crate::ui::rows;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Cards/decks_page.ui")]
+    #[template(resource = "/io/github/rsmirke/Rappel/decks_page.ui")]
     pub struct DecksPage {
         #[template_child]
         pub content_stack: TemplateChild<gtk::Stack>,
@@ -45,7 +45,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for DecksPage {
-        const NAME: &'static str = "CardsDecksPage";
+        const NAME: &'static str = "RappelDecksPage";
         type Type = super::DecksPage;
         type ParentType = adw::NavigationPage;
 
@@ -114,7 +114,7 @@ impl DecksPage {
     ///
     /// # Errors
     /// If the decks cannot be read.
-    pub fn set_state(&self, state: AppState) -> cards_core::Result<()> {
+    pub fn set_state(&self, state: AppState) -> rappel_core::Result<()> {
         if self.imp().state.set(state).is_err() {
             tracing::error!("the deck page already has an open database");
         }
@@ -269,7 +269,7 @@ impl DecksPage {
     }
 
     /// Rebuilds the list from the store and moves the focus.
-    fn reload(&self, focus: Focus<'_>) -> cards_core::Result<()> {
+    fn reload(&self, focus: Focus<'_>) -> rappel_core::Result<()> {
         let imp = self.imp();
         let Some(state) = imp.state() else {
             return Ok(());

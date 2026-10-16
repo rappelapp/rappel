@@ -5,10 +5,10 @@
 
 use std::cell::{Ref, RefCell};
 
-use cards_core::content::plain_summary;
-use cards_core::domain::Card;
 use gtk::glib;
 use gtk::subclass::prelude::*;
+use rappel_core::content::plain_summary;
+use rappel_core::domain::Card;
 
 mod imp {
     use super::{Card, RefCell};
@@ -41,7 +41,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for CardObject {
-        const NAME: &'static str = "CardsCardObject";
+        const NAME: &'static str = "RappelCardObject";
         type Type = super::CardObject;
     }
 

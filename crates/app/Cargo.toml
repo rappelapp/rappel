@@ -1,6 +1,6 @@
 [package]
-name = "cards"
-description = "Cards: a native GNOME flashcard app."
+name = "rappel"
+description = "Rappel: a native GNOME flashcard app."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-cards-core.workspace = true
+rappel-core.workspace = true
 gtk.workspace = true
 adw.workspace = true
 tracing.workspace = true

@@ -1,8 +1,8 @@
 using Gtk 4.0;
 using Adw 1;
 
-template $CardsWindow: Adw.ApplicationWindow {
-  title: _("Cards");
+template $RappelWindow: Adw.ApplicationWindow {
+  title: _("Rappel");
   default-width: 640;
   default-height: 560;
   width-request: 360;
@@ -18,7 +18,7 @@ template $CardsWindow: Adw.ApplicationWindow {
 
         // The deck list pushes deck pages onto this view.
         child: Adw.NavigationView navigation_view {
-          $CardsDecksPage decks_page {}
+          $RappelDecksPage decks_page {}
         };
       }
 
@@ -29,7 +29,7 @@ template $CardsWindow: Adw.ApplicationWindow {
           [top]
           Adw.HeaderBar {}
 
-          content: $CardsRecoveryPage recovery_page {};
+          content: $RappelRecoveryPage recovery_page {};
         };
       }
 
@@ -42,7 +42,7 @@ template $CardsWindow: Adw.ApplicationWindow {
 
           content: Adw.StatusPage too_new_page {
             icon-name: "software-update-available-symbolic";
-            title: _("Update Cards to Continue");
+            title: _("Update Rappel to Continue");
 
             child: Gtk.Label too_new_path {
               wrap: true;
@@ -67,7 +67,7 @@ template $CardsWindow: Adw.ApplicationWindow {
 
           content: Adw.StatusPage error_page {
             icon-name: "dialog-error-symbolic";
-            title: _("Cards Could Not Start");
+            title: _("Rappel Could Not Start");
 
             child: Gtk.Label error_details {
               wrap: true;

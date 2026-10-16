@@ -12,7 +12,7 @@ The core can open, check, back up, migrate and restore the database (ADR 0005, 0
 **`AppState` is an `Rc<RefCell<Store>>` handle.** `crates/app/src/state.rs` defines `AppState(Rc<Inner>)`, with `Inner { data_dir, store: RefCell<Store> }`. It is `Clone`, and a clone is just one more pointer to the same store.
 - `Rc`, not `Arc<Mutex<…>>`: GTK widgets live on the main thread only, so the store never needs to be shared across threads. rusqlite's `Connection` cannot be shared between threads anyway.
 - `RefCell`, because writes need `&mut Store`. Each `AppState` method borrows the store, does its work and releases it before returning. No method returns a borrow or calls into GTK while it holds one. So a signal handler that runs during another handler never finds the store borrowed, and the run-time borrow check cannot fail.
-- `AppState` methods return core domain types and `cards_core::Error`. `crates/app` does not depend on rusqlite.
+- `AppState` methods return core domain types and `rappel_core::Error`. `crates/app` does not depend on rusqlite.
 - It only has the operations the UI uses so far. Later slices add their own.
 - The recovery page runs while no database is open, so there is no `AppState` instance yet. It uses two associated functions, `AppState::list_backups(dir)` and `AppState::restore_unopened(dir, backup)`. The UI still reaches storage only through `AppState`.
 
@@ -24,7 +24,7 @@ The core can open, check, back up, migrate and restore the database (ADR 0005, 0
 
 | Error | Page |
 |---|---|
-| `IntegrityCheckFailed`, `NotACardsDatabase`, `OrphanedSidecar`, `InterruptedRestore` | Recovery: explanation, backups newest first, Restore with an `AdwAlertDialog` confirmation |
+| `IntegrityCheckFailed`, `NotARappelDatabase`, `OrphanedSidecar`, `InterruptedRestore` | Recovery: explanation, backups newest first, Restore with an `AdwAlertDialog` confirmation |
 | `UnsupportedVersion` | Too new: explanation and data folder, **no restore**. The file is fine; this build is too old. Restoring would set the user back to an older backup for no reason. |
 | anything else, including data folder errors | Error: short message, full error text, data folder when known |
 

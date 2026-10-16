@@ -3,8 +3,8 @@
 //! try studying without waiting days (ADR 0014).
 //!
 //! ```text
-//! cargo run -p cards-core --example fill_scratch_db -- /tmp/cards-scratch [count] [--due N] [--markdown]
-//! CARDS_DATA_DIR=/tmp/cards-scratch cargo run -p cards
+//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown]
+//! RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 //! ```
 //!
 //! It adds one deck, "Scratch (N cards)", with `count` cards (default
@@ -22,11 +22,13 @@ use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use cards_core::data_dir::{BuildProfile, DataDirEnv, ensure_data_dir, resolve_data_dir};
-use cards_core::domain::Grade;
-use cards_core::scheduling::{DAY_MS, STEP_MS};
-use cards_core::storage::Store;
-use cards_core::time::now_ms;
+use rappel_core::data_dir::{
+    BuildProfile, DataDirEnv, LEGACY_RELEASE_DIR_NAME, ensure_data_dir, resolve_data_dir,
+};
+use rappel_core::domain::Grade;
+use rappel_core::scheduling::{DAY_MS, STEP_MS};
+use rappel_core::storage::Store;
+use rappel_core::time::now_ms;
 
 const DEFAULT_COUNT: usize = 5_000;
 
@@ -210,17 +212,24 @@ const MARKDOWN_CARDS: [(&str, &str); 20] = [
     ),
 ];
 
-/// Fails if `dir` is, or is inside, the release or debug data directory
-/// the app would use without `CARDS_DATA_DIR`.
+/// Fails if `dir` is, or is inside, the release, debug or pre-rename data
+/// directory the app would use without `RAPPEL_DATA_DIR`.
 fn refuse_app_data_dirs(dir: &Path) -> Result<(), String> {
     let env = DataDirEnv {
-        cards_data_dir: None,
+        rappel_data_dir: None,
         ..DataDirEnv::from_process()
     };
-    for profile in [BuildProfile::Release, BuildProfile::Debug] {
-        let Ok(app_dir) = resolve_data_dir(&env, profile) else {
-            continue;
-        };
+    let mut app_dirs: Vec<PathBuf> = [BuildProfile::Release, BuildProfile::Debug]
+        .into_iter()
+        .filter_map(|profile| resolve_data_dir(&env, profile).ok())
+        .collect();
+    // Data from before the rename, until it has been moved with export/import.
+    let legacy = app_dirs
+        .first()
+        .and_then(|release| release.parent())
+        .map(|base| base.join(LEGACY_RELEASE_DIR_NAME));
+    app_dirs.extend(legacy);
+    for app_dir in app_dirs {
         let same = |a: &Path, b: &Path| a.starts_with(b); // a is b or inside it
         let resolved = (dir.canonicalize(), app_dir.canonicalize());
         let inside = same(dir, &app_dir)

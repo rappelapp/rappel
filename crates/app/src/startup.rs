@@ -4,8 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use cards_core::Error;
-use cards_core::data_dir::{self, BuildProfile, DataDirEnv};
+use rappel_core::Error;
+use rappel_core::data_dir::{self, BuildProfile, DataDirEnv};
 
 use crate::state::AppState;
 
@@ -15,7 +15,7 @@ pub enum RecoveryReason {
     /// The integrity check found damage (or the file is not a database).
     Damaged,
     /// The file is some other application's database.
-    NotCards,
+    NotRappel,
     /// The database file is missing but its journal is there.
     MissingFile,
     /// A restore moved the old database aside and did not finish.
@@ -26,7 +26,7 @@ impl RecoveryReason {
     pub fn title(self) -> &'static str {
         match self {
             Self::Damaged => "Database Is Damaged",
-            Self::NotCards => "Not a Cards Database",
+            Self::NotRappel => "Not a Rappel Database",
             Self::MissingFile => "Database File Is Missing",
             Self::InterruptedRestore => "Restore Did Not Finish",
         }
@@ -35,16 +35,16 @@ impl RecoveryReason {
     pub fn description(self) -> &'static str {
         match self {
             Self::Damaged => {
-                "Cards found damage in its database and did not open it, so nothing in it was \
+                "Rappel found damage in its database and did not open it, so nothing in it was \
                  changed. Restore a backup to continue. The damaged database is kept in the \
                  data folder, not deleted."
             }
-            Self::NotCards => {
-                "The database file was not made by Cards, so Cards did not open it. Restore a \
+            Self::NotRappel => {
+                "The database file was not made by Rappel, so Rappel did not open it. Restore a \
                  backup to continue. The file is kept in the data folder, not deleted."
             }
             Self::MissingFile => {
-                "The database file is missing but its journal is still there, so Cards did not \
+                "The database file is missing but its journal is still there, so Rappel did not \
                  start an empty database. Restore a backup to continue. The journal is kept in \
                  the data folder, not deleted."
             }
@@ -64,7 +64,7 @@ pub enum Problem {
         reason: RecoveryReason,
         data_dir: PathBuf,
     },
-    /// The database comes from a newer Cards. Nothing to restore: the file
+    /// The database comes from a newer Rappel. Nothing to restore: the file
     /// is fine, this build is too old.
     TooNew {
         found: i64,
@@ -93,7 +93,7 @@ pub fn start() -> Result<AppState, Problem> {
 }
 
 /// Resolves and creates the data directory.
-fn prepare_data_dir() -> cards_core::Result<PathBuf> {
+fn prepare_data_dir() -> rappel_core::Result<PathBuf> {
     let profile = if cfg!(debug_assertions) {
         BuildProfile::Debug
     } else {
@@ -102,13 +102,13 @@ fn prepare_data_dir() -> cards_core::Result<PathBuf> {
     let env = DataDirEnv::from_process();
     if profile == BuildProfile::Debug
         && env
-            .cards_data_dir
+            .rappel_data_dir
             .as_ref()
             .is_some_and(|dir| !dir.as_os_str().is_empty())
     {
         // The guard only knows the default release locations; real data kept
-        // in a custom CARDS_DATA_DIR inherited from the session is not caught.
-        tracing::warn!("debug build is using CARDS_DATA_DIR; make sure it is not real data");
+        // in a custom RAPPEL_DATA_DIR inherited from the session is not caught.
+        tracing::warn!("debug build is using RAPPEL_DATA_DIR; make sure it is not real data");
     }
     let dir = data_dir::resolve_data_dir(&env, profile)?;
     data_dir::ensure_data_dir(&dir)?;
@@ -125,7 +125,7 @@ pub fn data_folder_line(dir: &Path) -> String {
 pub fn data_dir_problem(err: &Error) -> Problem {
     let (message, data_dir) = match err {
         Error::DebugUsesReleaseDir { path, .. } => (
-            "This debug build refused to use the data folder of the installed Cards.",
+            "This debug build refused to use the data folder of an installed Rappel (or of Cards, its former name).",
             Some(path.clone()),
         ),
         Error::CreateDir { path, .. } => {
@@ -135,7 +135,7 @@ pub fn data_dir_problem(err: &Error) -> Problem {
             "The data folder path points to a file, not a folder.",
             Some(path.clone()),
         ),
-        Error::RelativeDataDir(_) => ("CARDS_DATA_DIR must be an absolute path.", None),
+        Error::RelativeDataDir(_) => ("RAPPEL_DATA_DIR must be an absolute path.", None),
         Error::NoHomeDir => ("The data folder could not be found.", None),
         _ => ("The data folder could not be used.", None),
     };
@@ -151,7 +151,7 @@ pub fn open_problem(err: &Error, data_dir: &Path) -> Problem {
     let data_dir = data_dir.to_path_buf();
     let reason = match err {
         Error::IntegrityCheckFailed { .. } => RecoveryReason::Damaged,
-        Error::NotACardsDatabase => RecoveryReason::NotCards,
+        Error::NotARappelDatabase => RecoveryReason::NotRappel,
         Error::OrphanedSidecar(_) => RecoveryReason::MissingFile,
         Error::InterruptedRestore(_) => RecoveryReason::InterruptedRestore,
         Error::UnsupportedVersion { found, supported } => {
@@ -177,7 +177,7 @@ mod tests {
     use super::*;
 
     fn dir() -> PathBuf {
-        PathBuf::from("/data/cards-dev")
+        PathBuf::from("/data/rappel-dev")
     }
 
     fn recovery(reason: RecoveryReason) -> Problem {
@@ -197,19 +197,19 @@ mod tests {
             recovery(RecoveryReason::Damaged)
         );
         assert_eq!(
-            open_problem(&Error::NotACardsDatabase, &dir()),
-            recovery(RecoveryReason::NotCards)
+            open_problem(&Error::NotARappelDatabase, &dir()),
+            recovery(RecoveryReason::NotRappel)
         );
     }
 
     #[test]
     fn interrupted_restores_offer_recovery() {
-        let wal = dir().join("cards.sqlite3-wal");
+        let wal = dir().join("rappel.sqlite3-wal");
         assert_eq!(
             open_problem(&Error::OrphanedSidecar(wal), &dir()),
             recovery(RecoveryReason::MissingFile)
         );
-        let partial = dir().join("cards.sqlite3.restore.partial");
+        let partial = dir().join("rappel.sqlite3.restore.partial");
         assert_eq!(
             open_problem(&Error::InterruptedRestore(partial), &dir()),
             recovery(RecoveryReason::InterruptedRestore)
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn other_open_errors_show_the_error_and_the_path() {
         let err = Error::Io {
-            path: dir().join("cards.sqlite3"),
+            path: dir().join("rappel.sqlite3"),
             source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
         };
         let Problem::Failed {
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn every_data_dir_error_maps_to_the_error_page() {
-        let release = PathBuf::from("/data/cards");
+        let release = PathBuf::from("/data/rappel");
         let debug_err = Error::DebugUsesReleaseDir {
             path: release.clone(),
             release: release.clone(),
@@ -282,7 +282,7 @@ mod tests {
             source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
         };
         assert_eq!(failed_dir(&create_err), Some(dir()));
-        let relative = Error::RelativeDataDir(PathBuf::from("cards"));
+        let relative = Error::RelativeDataDir(PathBuf::from("rappel"));
         assert_eq!(failed_dir(&relative), None);
     }
 }

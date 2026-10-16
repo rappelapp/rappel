@@ -23,7 +23,7 @@ Cards deleted on their own before the deck have a smaller stamp (ADR 0008 makes 
 **Delete without confirmation, undo from a toast.** The deck disappears at once, and a toast "“Name” deleted" offers Undo for the toast's normal timeout. The toast has high priority, so it is shown at once even when a toast that stays until dismissed (a backup warning, an error) is on screen. Nothing is ever removed from the database, so a deck whose toast was missed is still recoverable by a later trash feature.
 
 **Layout.**
-- The window's main page is an `AdwNavigationView` with one root `AdwNavigationPage` ("Cards"). The next slice pushes a deck page onto it, which gives the back button, swipe-back gesture and Alt+← for free.
+- The window's main page is an `AdwNavigationView` with one root `AdwNavigationPage` ("Rappel"). The next slice pushes a deck page onto it, which gives the back button, swipe-back gesture and Alt+← for free.
 - The decks are a `.boxed-list` in an `AdwClamp` (max 600 px). Each row is an `AdwActionRow`: the name is the title, with markup off because names are untrusted, and "N new · M due" is the subtitle.
 - Each row has a flat menu button (`view-more-symbolic`) with Rename… and Delete. Its tooltip is "Deck Actions", and its accessible label names the deck.
 - Rows are not activatable until opening a deck exists.

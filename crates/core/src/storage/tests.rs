@@ -158,7 +158,7 @@ fn reopen_keeps_data_and_backs_up_once_per_utc_day() {
     assert_eq!(count(&store.conn, "review_events"), 1);
     assert_eq!(store.schema_version().unwrap(), latest(MIGRATIONS));
     drop(store);
-    assert_eq!(e.backups(), ["cards-20261015-123457.sqlite3"]);
+    assert_eq!(e.backups(), ["rappel-20261015-123457.sqlite3"]);
 
     // Same day again: no new backup.
     drop(e.open(DAY0 + 60_000).unwrap());
@@ -169,8 +169,8 @@ fn reopen_keeps_data_and_backs_up_once_per_utc_day() {
     assert_eq!(
         e.backups(),
         [
-            "cards-20261015-123457.sqlite3",
-            "cards-20261016-123456.sqlite3"
+            "rappel-20261015-123457.sqlite3",
+            "rappel-20261016-123456.sqlite3"
         ]
     );
 }
@@ -184,7 +184,7 @@ fn backups_are_pruned_to_fourteen() {
     }
     let backups = e.backups();
     assert_eq!(backups.len(), KEEP_BACKUPS);
-    assert_eq!(backups.last().unwrap(), "cards-20261104-123456.sqlite3");
+    assert_eq!(backups.last().unwrap(), "rappel-20261104-123456.sqlite3");
 }
 
 #[test]
@@ -407,7 +407,7 @@ fn foreign_database_is_refused_untouched() {
         .unwrap();
     let before = fs::read(&e.db).unwrap();
 
-    assert!(matches!(e.open(DAY0), Err(Error::NotACardsDatabase)));
+    assert!(matches!(e.open(DAY0), Err(Error::NotARappelDatabase)));
     assert_eq!(fs::read(&e.db).unwrap(), before);
     assert_eq!(
         e.backups(),
@@ -476,7 +476,7 @@ fn failed_prune_is_a_warning() {
     drop(e.open(DAY0 + DAY_MS).unwrap());
     // Today's backup exists, so none is attempted; a stale partial backup
     // that cannot be removed (a non-empty directory) makes the prune fail.
-    let stuck = e.backups.join("cards-20261001-000000.sqlite3.partial");
+    let stuck = e.backups.join("rappel-20261001-000000.sqlite3.partial");
     fs::create_dir(&stuck).unwrap();
     fs::write(stuck.join("x"), b"").unwrap();
 
@@ -504,7 +504,7 @@ fn pre_migration_backup_survives_future_dated_backups() {
     for day in 1..=KEEP_BACKUPS {
         fs::write(
             e.backups
-                .join(format!("cards-203001{day:02}-120000.sqlite3")),
+                .join(format!("rappel-203001{day:02}-120000.sqlite3")),
             b"",
         )
         .unwrap();
@@ -512,7 +512,7 @@ fn pre_migration_backup_survives_future_dated_backups() {
 
     let store = e.open_with(DAY0, &[FAKE_V1, FAKE_V2]).unwrap();
     assert_eq!(store.schema_version().unwrap(), 2);
-    let fresh = e.backups.join("cards-20261015-123456.sqlite3");
+    let fresh = e.backups.join("rappel-20261015-123456.sqlite3");
     let v: u32 = Connection::open(&fresh)
         .unwrap()
         .pragma_query_value(None, "user_version", |r| r.get(0))
@@ -869,7 +869,7 @@ fn migration_0003_keeps_everything_live_and_unchanged() {
 }
 
 /// Two live decks with the same name cannot exist in a v2 database written
-/// by Cards (it had no way to create decks), but if they do, migration
+/// by Rappel (it had no way to create decks), but if they do, migration
 /// 0003 fails and rolls back, leaving the database at v2.
 #[test]
 fn migration_0003_with_duplicate_deck_names_rolls_back() {

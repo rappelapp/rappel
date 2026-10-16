@@ -2,7 +2,7 @@
 //! a list item's marker, how many widgets a block costs. Pure and tested.
 //! Every side of a card is laid out the same way, whatever its structure.
 
-use cards_core::content::{Block, Document};
+use rappel_core::content::{Block, Document};
 
 /// Whether the back is shown after the reveal: not when there is nothing
 /// to show, so only the grade buttons appear.
@@ -82,7 +82,7 @@ pub fn widget_cost(block: &Block) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use cards_core::content::parse;
+    use rappel_core::content::parse;
 
     use super::*;
 

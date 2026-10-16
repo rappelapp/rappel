@@ -2,19 +2,19 @@
 //!
 //! The current database is never deleted and never opened, so a restore
 //! works even when it is damaged. In order:
-//! 1. The backup is byte-copied to `cards.sqlite3.restore.checking` in the
+//! 1. The backup is byte-copied to `rappel.sqlite3.restore.checking` in the
 //!    data directory, and **the copy** is validated (integrity, version,
 //!    schema), so what gets installed is exactly what was checked. A copy
 //!    older than this build is migrated there and validated again, so a
 //!    migration that fails refuses the restore before anything changed.
-//!    Only then is it renamed to `cards.sqlite3.restore.partial`: that name
+//!    Only then is it renamed to `rappel.sqlite3.restore.partial`: that name
 //!    always means "a validated copy", and a later attempt that fails never
 //!    deletes it.
 //! 2. The current database and its `-wal`, `-shm` and `-journal` files are
-//!    renamed, main file first, to `cards.sqlite3.replaced-YYYYMMDD-HHMMSS`
+//!    renamed, main file first, to `rappel.sqlite3.replaced-YYYYMMDD-HHMMSS`
 //!    (plus the same suffixes). SQLite finds `<name>-wal` next to
 //!    `<name>`, so the moved-aside set still opens as one database.
-//! 3. The copy is renamed to `cards.sqlite3`, and opened with
+//! 3. The copy is renamed to `rappel.sqlite3`, and opened with
 //!    [`Store::open`].
 //!
 //! Once step 2 has started, a failure or crash can leave no main file. The
@@ -62,13 +62,13 @@ pub struct Restored {
 ///
 /// The backup is validated before anything is changed. The previous
 /// database is never deleted; it is moved to
-/// `cards.sqlite3.replaced-YYYYMMDD-HHMMSS` (mode `0600`), see
+/// `rappel.sqlite3.replaced-YYYYMMDD-HHMMSS` (mode `0600`), see
 /// [`Restored::replaced`]. This works when the current database is damaged.
 ///
 /// # Errors
 /// - [`Error::RestoreRefused`] if the backup is not a backup file in
 ///   `<data_dir>/backups/`, is damaged, is newer than this build, or does
-///   not have the Cards schema, or cannot be migrated to this build's
+///   not have the Rappel schema, or cannot be migrated to this build's
 ///   schema. Nothing was changed.
 /// - IO errors while copying or moving files, and any error from
 ///   [`Store::open`] on the restored database. If the old files were
@@ -89,7 +89,7 @@ pub fn restore_backup(
 ///
 /// `current` is the open store, if any; it is closed first. The current
 /// database and its `-wal`/`-shm`/`-journal` files are moved aside exactly
-/// as [`restore_backup`] does, to `cards.sqlite3.replaced-YYYYMMDD-HHMMSS`
+/// as [`restore_backup`] does, to `rappel.sqlite3.replaced-YYYYMMDD-HHMMSS`
 /// (see [`Restored::replaced`]). Nothing is deleted. Then an empty
 /// database is created and opened.
 ///
@@ -194,7 +194,7 @@ fn restore_with(
 }
 
 /// The backup must be a regular file with a backup name directly inside
-/// `<data_dir>/backups/`. Restore only reads files Cards made itself.
+/// `<data_dir>/backups/`. Restore only reads files Rappel made itself.
 fn check_location(data_dir: &Path, backup: &Path) -> Result<()> {
     let not_a_backup = || Error::Io {
         path: backup.to_path_buf(),
@@ -306,10 +306,10 @@ fn validate(path: &Path, migrations: &[Migration]) -> Result<u32> {
     let (version, is_new) = check_version(&conn, migrations)?;
     if is_new {
         // An empty database: nothing to restore.
-        return Err(Error::NotACardsDatabase);
+        return Err(Error::NotARappelDatabase);
     }
     if schema_objects(&conn)? != reference_schema(migrations, version)? {
-        return Err(Error::NotACardsDatabase);
+        return Err(Error::NotARappelDatabase);
     }
     conn.close().map_err(|(_, err)| err)?;
     Ok(version)

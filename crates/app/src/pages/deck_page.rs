@@ -15,9 +15,9 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cards_core::domain::{Card, Deck};
-use cards_core::scheduling::session::StudyInput;
 use gtk::{gio, glib};
+use rappel_core::domain::{Card, Deck};
+use rappel_core::scheduling::session::StudyInput;
 
 use crate::clock::{local_day_start_ms, local_next_day_start_ms};
 use crate::dialogs::card_editor::{CardEditor, Saved};
@@ -27,21 +27,21 @@ use crate::ui::focus::index_after_removal;
 use crate::ui::toast::{log_failure, persistent_toast, show_error, show_toast_from, undo_toast};
 use crate::ui::{init_once, nav};
 use crate::widgets::{CardObject, CardRow};
-use crate::window::CardsWindow;
+use crate::window::RappelWindow;
 
 mod imp {
     use std::cell::{Cell, OnceCell, RefCell};
 
     use adw::prelude::*;
     use adw::subclass::prelude::*;
-    use cards_core::domain::Deck;
     use gtk::{gio, glib};
+    use rappel_core::domain::Deck;
 
     use crate::state::AppState;
     use crate::ui::rows;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Cards/deck_page.ui")]
+    #[template(resource = "/io/github/rsmirke/Rappel/deck_page.ui")]
     pub struct DeckPage {
         #[template_child]
         pub window_title: TemplateChild<adw::WindowTitle>,
@@ -66,7 +66,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for DeckPage {
-        const NAME: &'static str = "CardsDeckPage";
+        const NAME: &'static str = "RappelDeckPage";
         type Type = super::DeckPage;
         type ParentType = adw::NavigationPage;
 
@@ -110,7 +110,7 @@ impl DeckPage {
     ///
     /// # Errors
     /// If the cards cannot be read.
-    pub fn new(state: AppState, deck: Deck) -> cards_core::Result<Self> {
+    pub fn new(state: AppState, deck: Deck) -> rappel_core::Result<Self> {
         let page: Self = glib::Object::new();
         let imp = page.imp();
         let cards = state.list_cards(&deck.id)?;
@@ -157,7 +157,7 @@ impl DeckPage {
         let (Some(state), Some(deck)) = (imp.state.get(), imp.deck.get()) else {
             return;
         };
-        let now = cards_core::time::now_ms();
+        let now = rappel_core::time::now_ms();
         match state.study_input(&deck.id, now, local_day_start_ms(now)) {
             Ok(input) => {
                 imp.window_title.set_subtitle(&study_subtitle(&input));
@@ -332,7 +332,7 @@ impl DeckPage {
         let page = self.downgrade();
         let window = self
             .root()
-            .and_downcast::<CardsWindow>()
+            .and_downcast::<RappelWindow>()
             .map(|w| w.downgrade());
         // The front is not in the title: it can be long or many lines.
         let toast = undo_toast("Card deleted", move || {
@@ -418,7 +418,7 @@ fn undo_card_delete(
     state: &AppState,
     id: &str,
     page: &glib::WeakRef<DeckPage>,
-    window: Option<&glib::WeakRef<CardsWindow>>,
+    window: Option<&glib::WeakRef<RappelWindow>>,
 ) {
     let window = window.and_then(glib::WeakRef::upgrade);
     match state.undelete_card(id) {
@@ -520,7 +520,7 @@ fn row_factory() -> gtk::SignalListItemFactory {
 
 #[cfg(test)]
 mod tests {
-    use cards_core::scheduling::session::Due;
+    use rappel_core::scheduling::session::Due;
 
     use super::*;
 

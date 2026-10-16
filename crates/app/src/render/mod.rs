@@ -11,10 +11,10 @@
 mod markup;
 mod style;
 
-use cards_core::content::{Align, Block, Cell, Document, Inline, plain_text};
 use gtk::AccessibleRole as Role;
 use gtk::pango;
 use gtk::prelude::*;
+use rappel_core::content::{Align, Block, Cell, Document, Inline, plain_text};
 
 pub use style::back_shown;
 use style::{heading_class, list_marker, table_cell_classes, widget_cost};

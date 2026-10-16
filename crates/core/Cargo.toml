@@ -1,6 +1,6 @@
 [package]
-name = "cards-core"
-description = "UI-agnostic core of Cards: domain, storage, scheduling, content."
+name = "rappel-core"
+description = "UI-agnostic core of Rappel: domain, storage, scheduling, content."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

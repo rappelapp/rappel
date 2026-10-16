@@ -7,7 +7,7 @@
 
 ## Context
 
-Cards are Markdown with LaTeX math (SPEC), but until now both sides were shown as plain text. SPEC §2 puts parsing in `cards-core` (`content`, a UI-agnostic tree) and widget building in the app (`render`). Card text is untrusted (SPEC §1.5). It may come from an import, so it must never be interpreted as markup, never reach the network, and never be able to crash or freeze the app. A side can be up to 1 MiB (ADR 0018).
+Cards are Markdown with LaTeX math (SPEC), but until now both sides were shown as plain text. SPEC §2 puts parsing in `rappel-core` (`content`, a UI-agnostic tree) and widget building in the app (`render`). Card text is untrusted (SPEC §1.5). It may come from an import, so it must never be interpreted as markup, never reach the network, and never be able to crash or freeze the app. A side can be up to 1 MiB (ADR 0018).
 
 ## Decision
 

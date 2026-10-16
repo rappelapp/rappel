@@ -13,7 +13,7 @@ SPEC §4.1 asks for a full export of the database and an import that works into 
 
 ## Decision
 
-**A zip archive.** An export is a `.cards` file: a zip archive with exactly two entries, `cards.json` and an empty `media/` directory. Media (SPEC §4.3) will go into `media/` as files named by their hash, instead of base64 inside the JSON, which would make the JSON a third larger and force the whole thing into memory as one string. The zip is read and written with the `zip` crate, with only Deflate enabled (through `zlib-rs`, pure Rust): no encryption and no other codecs, so less code reads untrusted input.
+**A zip archive.** An export is a `.rappel` file (named `.cards` before ADR 0020): a zip archive with exactly two entries, `cards.json` and an empty `media/` directory. Media (SPEC §4.3) will go into `media/` as files named by their hash, instead of base64 inside the JSON, which would make the JSON a third larger and force the whole thing into memory as one string. The zip is read and written with the `zip` crate, with only Deflate enabled (through `zlib-rs`, pure Rust): no encryption and no other codecs, so less code reads untrusted input.
 
 **`cards.json`, format version 1.** It holds `format_version`, `exported_at`, `decks`, `cards`, `review_events`, `settings` (an empty object for now) and `media` (an empty list for now). Every row is exported, deleted ones with their `deleted_at`. The derived or internal columns are left out: `decks.name_key` (recomputed), `cards.seq` (internal) and `card_schedule` (a cache, rebuilt from the log). Tags are not in version 1 because no tags table exists yet. The slice that adds them also adds them to the format as version 2. A reader accepts every version up to its own and refuses newer ones.
 
@@ -58,7 +58,7 @@ Any conflict refuses the whole import. Merging content field by field would need
 - Two live decks in the file share a name key, or a live card is in a deleted deck (states the app never produces).
 - `settings` or `media` is not empty.
 
-**Foreign ids are refused, not re-issued (#12).** Re-issuing would need remapping every reference. It would also break the merge rules: the same file imported twice would add everything twice, because its rows would get new ids each time. Every export Cards writes passes the check. The optional `CHECK` tightening in #12 (a migration) is left for later; today only `IdGen` and this checked import write ids.
+**Foreign ids are refused, not re-issued (#12).** Re-issuing would need remapping every reference. It would also break the merge rules: the same file imported twice would add everything twice, because its rows would get new ids each time. Every export Rappel writes passes the check. The optional `CHECK` tightening in #12 (a migration) is left for later; today only `IdGen` and this checked import write ids.
 
 **Apply.**
 1. If nothing is new or revived, apply returns at once. Nothing is written and no backup is made, so importing a file twice is a true no-op.

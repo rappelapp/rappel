@@ -8,24 +8,26 @@
 use std::path::{Path, PathBuf};
 
 use adw::prelude::*;
-use cards_core::Error;
-use cards_core::content;
-use cards_core::interchange::{Conflict, FILE_EXTENSION, ImportPlan, ImportReport, ImportSummary};
 use gtk::{gio, glib};
+use rappel_core::Error;
+use rappel_core::content;
+use rappel_core::interchange::{
+    Conflict, FILE_EXTENSION, IMPORT_EXTENSIONS, ImportPlan, ImportReport, ImportSummary,
+};
 
 use crate::state::AppState;
 use crate::ui::dialog;
 use crate::ui::text::{count, decks_cards_reviews};
 use crate::ui::toast::{log_failure, persistent_toast};
-use crate::window::CardsWindow;
+use crate::window::RappelWindow;
 
 /// How many conflicts the "Cannot Import" dialog lists by name.
 const SHOWN_CONFLICTS: usize = 5;
 
 /// Asks where to save, then exports there on a worker thread.
-pub async fn export(window: &CardsWindow, state: &AppState) {
+pub async fn export(window: &RappelWindow, state: &AppState) {
     let (year, month, day) = glib::DateTime::now_local().map_or((0, 0, 0), |now| now.ymd());
-    let dialog = file_dialog("Export Data");
+    let dialog = file_dialog("Export Data", &[FILE_EXTENSION]);
     dialog.set_initial_name(Some(&export_file_name(year, month, day)));
     let Some(path) = chosen_path(window, dialog.save_future(Some(window)).await) else {
         return;
@@ -51,8 +53,8 @@ pub async fn export(window: &CardsWindow, state: &AppState) {
 
 /// Asks for a file, checks it on a worker thread, shows what it would do,
 /// and imports it on a worker thread if the user confirms.
-pub async fn import(window: &CardsWindow, state: &AppState) {
-    let dialog = file_dialog("Import Data");
+pub async fn import(window: &RappelWindow, state: &AppState) {
+    let dialog = file_dialog("Import Data", &IMPORT_EXTENSIONS);
     let Some(path) = chosen_path(window, dialog.open_future(Some(window)).await) else {
         return;
     };
@@ -98,7 +100,7 @@ pub async fn import(window: &CardsWindow, state: &AppState) {
 }
 
 /// Shows the plan; whether the user chose Import.
-async fn confirm(window: &CardsWindow, state: &AppState, summary: &ImportSummary) -> bool {
+async fn confirm(window: &RappelWindow, state: &AppState, summary: &ImportSummary) -> bool {
     const FILE: &str = "import_dialog.ui";
     let builder = dialog::builder(FILE);
     let (Some(dialog), Some(conflicts_label)) = (
@@ -130,7 +132,7 @@ async fn confirm(window: &CardsWindow, state: &AppState, summary: &ImportSummary
 
 /// Applies the plan on a worker thread, then says what was added and
 /// refreshes every page that shows decks or cards.
-async fn apply(window: &CardsWindow, data_dir: PathBuf, plan: ImportPlan) {
+async fn apply(window: &RappelWindow, data_dir: PathBuf, plan: ImportPlan) {
     let result = {
         let _hold = hold(window);
         gio::spawn_blocking(move || AppState::apply_import_on_worker(&data_dir, &plan)).await
@@ -163,15 +165,19 @@ async fn apply(window: &CardsWindow, data_dir: PathBuf, plan: ImportPlan) {
 /// window lets it finish instead of cutting it off, as a restore does. Only
 /// around the worker: a chooser or dialog left open must not keep a
 /// windowless process alive.
-fn hold(window: &CardsWindow) -> Option<gio::ApplicationHoldGuard> {
+fn hold(window: &RappelWindow) -> Option<gio::ApplicationHoldGuard> {
     window.application().map(|app| app.hold())
 }
 
-/// A modal file chooser for `.cards` files.
-fn file_dialog(title: &str) -> gtk::FileDialog {
+/// A modal file chooser for `.rappel` files. It also shows `.cards` files,
+/// the name exports had before the rename (ADR 0020), so old exports import.
+/// Saving offers only `.rappel`, so an old export is not overwritten by accident.
+fn file_dialog(title: &str, extensions: &[&str]) -> gtk::FileDialog {
     let filter = gtk::FileFilter::new();
-    filter.set_name(Some("Cards Exports"));
-    filter.add_suffix(FILE_EXTENSION);
+    filter.set_name(Some("Rappel Exports"));
+    for extension in extensions {
+        filter.add_suffix(extension);
+    }
     let filters = gio::ListStore::new::<gtk::FileFilter>();
     filters.append(&filter);
     gtk::FileDialog::builder()
@@ -184,7 +190,7 @@ fn file_dialog(title: &str) -> gtk::FileDialog {
 
 /// The local path chosen, or `None` if the user cancelled or the chooser
 /// failed (then after a toast).
-fn chosen_path(window: &CardsWindow, chosen: Result<gio::File, glib::Error>) -> Option<PathBuf> {
+fn chosen_path(window: &RappelWindow, chosen: Result<gio::File, glib::Error>) -> Option<PathBuf> {
     match chosen {
         Ok(file) => {
             let path = file.path();
@@ -213,7 +219,7 @@ fn chosen_path(window: &CardsWindow, chosen: Result<gio::File, glib::Error>) -> 
 }
 
 /// Logs and shows `message` in a toast that stays until dismissed.
-fn fail(window: &CardsWindow, what: &str, message: &str) {
+fn fail(window: &RappelWindow, what: &str, message: &str) {
     log_failure(what, message);
     window.add_toast(persistent_toast(message));
 }
@@ -312,13 +318,13 @@ fn short_front(front: &str) -> String {
     }
 }
 
-/// `cards-YYYY-MM-DD.cards`, the export's suggested name.
+/// `rappel-YYYY-MM-DD.rappel`, the export's suggested name.
 fn export_file_name(year: i32, month: i32, day: i32) -> String {
     if year <= 0 {
         // No local date: GLib could not read the time zone.
-        return format!("cards.{FILE_EXTENSION}");
+        return format!("rappel.{FILE_EXTENSION}");
     }
-    format!("cards-{year:04}-{month:02}-{day:02}.{FILE_EXTENSION}")
+    format!("rappel-{year:04}-{month:02}-{day:02}.{FILE_EXTENSION}")
 }
 
 fn exported_text(path: &Path) -> String {
@@ -453,7 +459,7 @@ fn conflicts_text(
 
 #[cfg(test)]
 mod tests {
-    use cards_core::interchange::TableCounts;
+    use rappel_core::interchange::TableCounts;
 
     use super::*;
 
@@ -488,16 +494,16 @@ mod tests {
 
     #[test]
     fn the_export_is_named_by_the_local_date() {
-        assert_eq!(export_file_name(2026, 10, 16), "cards-2026-10-16.cards");
-        assert_eq!(export_file_name(2027, 1, 5), "cards-2027-01-05.cards");
-        assert_eq!(export_file_name(0, 0, 0), "cards.cards");
+        assert_eq!(export_file_name(2026, 10, 16), "rappel-2026-10-16.rappel");
+        assert_eq!(export_file_name(2027, 1, 5), "rappel-2027-01-05.rappel");
+        assert_eq!(export_file_name(0, 0, 0), "rappel.rappel");
     }
 
     #[test]
     fn the_export_toast_names_only_the_file() {
         assert_eq!(
-            exported_text(Path::new("/home/me/Documents/cards-2026-10-16.cards")),
-            "Exported to “cards-2026-10-16.cards”"
+            exported_text(Path::new("/home/me/Documents/rappel-2026-10-16.rappel")),
+            "Exported to “rappel-2026-10-16.rappel”"
         );
     }
 

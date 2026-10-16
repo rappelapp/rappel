@@ -5,7 +5,7 @@
 
 ## Context
 
-Cards is built in small slices, mostly by an AI coding agent, and reviewed by a maintainer who does not read most diffs. Decisions made in one slice (a crate choice, a storage format, a rendering approach) must be visible and justified later, without digging through chat logs or commit history.
+Rappel is built in small slices, mostly by an AI coding agent, and reviewed by a maintainer who does not read most diffs. Decisions made in one slice (a crate choice, a storage format, a rendering approach) must be visible and justified later, without digging through chat logs or commit history.
 
 ## Decision
 

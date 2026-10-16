@@ -1,4 +1,4 @@
-# Cards
+# Rappel
 
 A native GNOME flashcard app. Two grades only (Fail and Pass), Markdown cards with LaTeX math, FSRS scheduling. Everything stays on your computer: no network access, no accounts.
 
@@ -15,9 +15,9 @@ You need:
 - [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) for the quality gate (`cargo install cargo-deny`)
 
 ```sh
-cargo run -p cards                         # run the app
-RUST_LOG=cards=debug cargo run -p cards    # with debug logs
-GTK_DEBUG=interactive cargo run -p cards   # with the GTK inspector
+cargo run -p rappel                         # run the app
+RUST_LOG=rappel=debug cargo run -p rappel    # with debug logs
+GTK_DEBUG=interactive cargo run -p rappel   # with the GTK inspector
 scripts/check.sh                           # format, lint, test, licence/advisory checks
 scripts/install-hooks.sh                   # once per clone: run checks before every commit
 ```
@@ -25,25 +25,29 @@ scripts/install-hooks.sh                   # once per clone: run checks before e
 To try the app on scratch data instead of your own (60 cards, 30 of them due now):
 
 ```sh
-cargo run -p cards-core --example fill_scratch_db -- /tmp/cards-scratch 60 --due 30
-CARDS_DATA_DIR=/tmp/cards-scratch cargo run -p cards
+cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch 60 --due 30
+RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 ```
 
-Add `--markdown` for a deck with one card per Markdown construct (`… fill_scratch_db -- /tmp/cards-md 0 --markdown` adds only that deck).
+Add `--markdown` for a deck with one card per Markdown construct (`… fill_scratch_db -- /tmp/rappel-md 0 --markdown` adds only that deck).
 
 ## Recovering your data
 
-Cards backs up its database automatically: before every schema upgrade, before an import that adds or brings back anything, and once a day, into `backups/` inside the data directory (`~/.local/share/cards/backups/`, keeping the 14 newest).
+Rappel backs up its database automatically: before every schema upgrade, before an import that adds or brings back anything, and once a day, into `backups/` inside the data directory (`~/.local/share/rappel/backups/`, keeping the 14 newest).
 
-If the database is damaged or you want to go back to an earlier state, **restore a backup through Cards. Do not copy files by hand.** A copied-in file can be silently mixed with a leftover `cards.sqlite3-wal` file from the old database, which corrupts it or brings back data you meant to drop. Restoring checks the backup first and refuses a damaged one. It never deletes your current database: it is kept next to the new one as `cards.sqlite3.replaced-YYYYMMDD-HHMMSS` (with its `-wal`/`-shm`/`-journal` files, if any).
+If the database is damaged or you want to go back to an earlier state, **restore a backup through Rappel. Do not copy files by hand.** A copied-in file can be silently mixed with a leftover `rappel.sqlite3-wal` file from the old database, which corrupts it or brings back data you meant to drop. Restoring checks the backup first and refuses a damaged one. It never deletes your current database: it is kept next to the new one as `rappel.sqlite3.replaced-YYYYMMDD-HHMMSS` (with its `-wal`/`-shm`/`-journal` files, if any).
 
-When Cards finds its database damaged, it shows a recovery screen that lists the backups, newest first, and restores the one you pick. Restoring a backup while the database is healthy (to go back to an earlier state) is not in the app yet. If a database was made by a newer version of Cards, update Cards; do not restore an older backup over it.
+When Rappel finds its database damaged, it shows a recovery screen that lists the backups, newest first, and restores the one you pick. Restoring a backup while the database is healthy (to go back to an earlier state) is not in the app yet. If a database was made by a newer version of Rappel, update Rappel; do not restore an older backup over it.
 
 ## Exporting and importing
 
-**Export…** in the main menu (☰ on the deck list, or F10) saves everything (decks, cards and the whole review history, deleted items included) to one `.cards` file. Keep it as a copy, or open it on another computer with **Import…**.
+**Export…** in the main menu (☰ on the deck list, or F10) saves everything (decks, cards and the whole review history, deleted items included) to one `.rappel` file. Keep it as a copy, or open it on another computer with **Import…**.
 
-Import first shows what the file would add and what is already there, and writes nothing until you confirm. It adds what is new and brings back what you deleted; nothing you have is edited or deleted. A deck or card you deleted after exporting comes back with its review history if the file still has it, and a deck brings back the cards that were deleted with it. If the file disagrees with your data (for example a card edited in both places), nothing is imported and Cards lists where they differ. Importing the same file twice changes nothing.
+Import first shows what the file would add and what is already there, and writes nothing until you confirm. It adds what is new and brings back what you deleted; nothing you have is edited or deleted. A deck or card you deleted after exporting comes back with its review history if the file still has it, and a deck brings back the cards that were deleted with it. If the file disagrees with your data (for example a card edited in both places), nothing is imported and Rappel lists where they differ. Importing the same file twice changes nothing.
+
+### Coming from Cards
+
+Rappel was called Cards before 0.2.0. It does not read the old data folder (`~/.local/share/cards`). To move your data: in the last Cards build use **Export…**, then in Rappel use **Import…**. Old `.cards` exports import as they are; the import file chooser shows both `.rappel` and `.cards` files.
 
 ## Documentation
 

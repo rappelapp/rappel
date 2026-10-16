@@ -629,7 +629,7 @@ fn assert_refused(
 
 /// A backup-named path in the backups directory for a bad file.
 fn bad_path(e: &Env) -> PathBuf {
-    e.backups().join("cards-20261014-000000.sqlite3")
+    e.backups().join("rappel-20261014-000000.sqlite3")
 }
 
 /// A copy of the good backup, changed by `change` through SQLite.
@@ -688,7 +688,7 @@ fn foreign_database_is_refused() {
                 .unwrap();
             bad
         },
-        |err| matches!(err, Error::NotACardsDatabase),
+        |err| matches!(err, Error::NotARappelDatabase),
     );
 }
 
@@ -700,7 +700,7 @@ fn empty_database_is_refused() {
             fs::write(&bad, b"").unwrap();
             bad
         },
-        |err| matches!(err, Error::NotACardsDatabase),
+        |err| matches!(err, Error::NotARappelDatabase),
     );
 }
 
@@ -708,7 +708,7 @@ fn empty_database_is_refused() {
 fn backup_missing_a_table_is_refused() {
     assert_refused(
         |e, good| altered_copy(e, good, "DROP TABLE card_schedule;"),
-        |err| matches!(err, Error::NotACardsDatabase),
+        |err| matches!(err, Error::NotARappelDatabase),
     );
 }
 
@@ -716,7 +716,7 @@ fn backup_missing_a_table_is_refused() {
 fn backup_with_an_extra_object_is_refused() {
     assert_refused(
         |e, good| altered_copy(e, good, "CREATE VIEW sneaky AS SELECT 1;"),
-        |err| matches!(err, Error::NotACardsDatabase),
+        |err| matches!(err, Error::NotARappelDatabase),
     );
 }
 
@@ -739,7 +739,7 @@ fn v1_schema_labelled_v2_is_refused() {
                 .unwrap();
             bad
         },
-        |err| matches!(err, Error::NotACardsDatabase),
+        |err| matches!(err, Error::NotARappelDatabase),
     );
 }
 
@@ -755,7 +755,7 @@ fn wal_mode_backup_is_refused() {
 fn file_outside_the_backups_directory_is_refused() {
     assert_refused(
         |e, good| {
-            let elsewhere = e.data.join("cards-20261014-000000.sqlite3");
+            let elsewhere = e.data.join("rappel-20261014-000000.sqlite3");
             fs::copy(good, &elsewhere).unwrap();
             elsewhere
         },
@@ -852,7 +852,7 @@ fn start_fresh_moves_another_applications_database_aside() {
         conn.execute_batch("CREATE TABLE notes (body TEXT); INSERT INTO notes VALUES ('x');")
             .unwrap();
     }
-    assert!(matches!(e.open(), Err(Error::NotACardsDatabase)));
+    assert!(matches!(e.open(), Err(Error::NotARappelDatabase)));
     let foreign = fs::read(e.db()).unwrap();
 
     let fresh = e.start_fresh().unwrap();

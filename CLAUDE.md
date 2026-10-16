@@ -3,9 +3,9 @@
 `SPEC.md` is the source of truth for what to build. `ARCHITECTURE.md` describes how the code is organised. Read both before any task. If a request conflicts with them, say so before coding.
 
 ## Project facts
-- App name **Cards**, app ID `io.github.rsmirke.Cards`, licence GPL-3.0-or-later.
-- Crates: `cards-core` in `crates/core` (no UI), `cards` in `crates/app` (GTK binary).
-- Data dir `~/.local/share/cards/`; debug builds use `~/.local/share/cards-dev/`. `CARDS_DATA_DIR` overrides both. Never point development at the real data dir.
+- App name **Rappel**, app ID `io.github.rsmirke.Rappel`, licence GPL-3.0-or-later.
+- Crates: `rappel-core` in `crates/core` (no UI), `rappel` in `crates/app` (GTK binary).
+- Data dir `~/.local/share/rappel/`; debug builds use `~/.local/share/rappel-dev/`. `RAPPEL_DATA_DIR` overrides both. Never point development at the real data dir.
 - Status: v0 released as 0.1.0 (decks, plain-text cards, studying with FSRS). Markdown rendering moved to v0.2. Build order and scope are in `SPEC.md`.
 
 ## About me
@@ -57,9 +57,9 @@ A slice is not done until `scripts/check.sh` passes. It also runs as the git pre
 - Toasts, alert dialogs, navigation, row menus and one-time cells go through `crates/app/src/ui/`. Add to it instead of writing a local copy.
 
 ## Commands
-- Run: `cargo run -p cards`
+- Run: `cargo run -p rappel`
 - All checks: `scripts/check.sh`
 - Install git hooks (once per clone): `scripts/install-hooks.sh`
-- Inspector: `GTK_DEBUG=interactive cargo run -p cards`
-- Logs: `RUST_LOG=cards=debug cargo run -p cards`
-- Scratch data: `cargo run -p cards-core --example fill_scratch_db -- <dir> <cards> [--due N]`, then `CARDS_DATA_DIR=<dir> cargo run -p cards`
+- Inspector: `GTK_DEBUG=interactive cargo run -p rappel`
+- Logs: `RUST_LOG=rappel=debug cargo run -p rappel`
+- Scratch data: `cargo run -p rappel-core --example fill_scratch_db -- <dir> <cards> [--due N]`, then `RAPPEL_DATA_DIR=<dir> cargo run -p rappel`

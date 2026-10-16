@@ -10,12 +10,12 @@ When the database cannot be opened (damaged, missing next to its journal, anothe
 
 ## Decision
 
-**Start Fresh.** With no backup to restore, the recovery page offers "Start Fresh" after an `AdwAlertDialog` confirmation. `storage::start_fresh` moves the current database and its `-wal`/`-shm`/`-journal` files aside exactly as a restore does (ADR 0007): main file first, to `cards.sqlite3.replaced-YYYYMMDD-HHMMSS` (with `-N` if taken), mode `0600`. Nothing is deleted. It then opens a new, empty database with `Store::open`, and the app continues. The toast names the kept file.
+**Start Fresh.** With no backup to restore, the recovery page offers "Start Fresh" after an `AdwAlertDialog` confirmation. `storage::start_fresh` moves the current database and its `-wal`/`-shm`/`-journal` files aside exactly as a restore does (ADR 0007): main file first, to `rappel.sqlite3.replaced-YYYYMMDD-HHMMSS` (with `-N` if taken), mode `0600`. Nothing is deleted. It then opens a new, empty database with `Store::open`, and the app continues. The toast names the kept file.
 
 **When it is not offered.**
 - **Backups exist.** Restoring one keeps more of the user's data, and the empty database's daily backups would rotate the real ones out after 14 days. Start Fresh is not shown next to them, and core refuses it too (`Error::BackupsAvailable`, nothing changed), in case a backup appears between listing and confirming.
-- **A restore was interrupted** and its validated copy (`cards.sqlite3.restore.partial`) is waiting. That copy is the user's data. Starting over would hide it behind an empty database whose daily backups would then rotate out the real ones. Core refuses (`Error::InterruptedRestore`, nothing changed) and the page does not offer it. Finishing a restore from that copy when its backup is gone is a separate follow-up.
-- **A database from a newer Cards.** That file is fine; the fix is to update Cards (ADR 0011). This case has its own page and never reaches the recovery page.
+- **A restore was interrupted** and its validated copy (`rappel.sqlite3.restore.partial`) is waiting. That copy is the user's data. Starting over would hide it behind an empty database whose daily backups would then rotate out the real ones. Core refuses (`Error::InterruptedRestore`, nothing changed) and the page does not offer it. Finishing a restore from that copy when its backup is gone is a separate follow-up.
+- **A database from a newer Rappel.** That file is fine; the fix is to update Rappel (ADR 0011). This case has its own page and never reaches the recovery page.
 
 **The backup listing failed.** Start Fresh is not offered either: it is unknown whether backups exist.
 

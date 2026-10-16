@@ -1,11 +1,11 @@
-# Cards — SPEC (v0.2)
+# Rappel — SPEC (v0.2)
 
 A native GNOME flashcard app. Rust, GTK4, libadwaita, Blueprint. Two grades only: **Fail** and **Pass**. Cards are Markdown with LaTeX math. Scheduling is FSRS. Everything is local: no network access, no accounts.
 
-App name: **Cards**. App ID: `io.github.rsmirke.Cards`. Licence: **GPL-3.0-or-later**.
+App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-later**.
 
-- Crates: `cards-core` (`crates/core`, library) and `cards` (`crates/app`, GTK binary).
-- Data directory: `~/.local/share/cards/`. Debug builds use `~/.local/share/cards-dev/` so development never touches real data. Both can be overridden with the `CARDS_DATA_DIR` environment variable.
+- Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
+- Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
 v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page with math shown as source (§4.2 rendering is still to do), and editing the card on screen during review (part of §4.5).
 
@@ -14,7 +14,7 @@ v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, S
 ## 1. Principles
 
 1. **Data first.** Losing review history is the worst possible bug. Backups, export and migrations come before features.
-2. **Core is UI-agnostic.** `cards-core` holds all logic and has no GTK dependency. It must stay testable with plain `cargo test`.
+2. **Core is UI-agnostic.** `rappel-core` holds all logic and has no GTK dependency. It must stay testable with plain `cargo test`.
 3. **GNOME-native.** Follow the GNOME HIG. Use libadwaita widgets as designed. No custom colors, no web views.
 4. **Few options, good defaults.** A setting needs a reason to exist.
 5. **Untrusted content.** Card text may later come from imports. It is never interpreted as HTML or markup without escaping, and never triggers network or file access outside the app's data directory.
@@ -24,7 +24,7 @@ v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, S
 ## 2. Architecture
 
 ```
-cards/
+rappel/
 ├── Cargo.toml                 # workspace, [workspace.lints], shared deps
 ├── README.md  SPEC.md  CLAUDE.md  ARCHITECTURE.md  CHANGELOG.md
 ├── docs/adr/                  # Architecture Decision Records (NNNN-title.md)
@@ -35,7 +35,7 @@ cards/
 ├── .github/workflows/ci.yml   # runs scripts/check.sh (ADR 0003)
 ├── .claude/agents/reviewer.md
 └── crates/
-    ├── core/                  # cards-core — no gtk/glib/adw
+    ├── core/                  # rappel-core — no gtk/glib/adw
     │   └── src/
     │       ├── lib.rs
     │       ├── error.rs        # thiserror Error enum, Result alias
@@ -46,7 +46,7 @@ cards/
     │       ├── media/          # content-addressed media store
     │       ├── stats/          # pure functions over review events
     │       └── interchange/    # JSON export / import (versioned format)
-    └── app/                   # cards — GTK binary
+    └── app/                   # rappel — GTK binary
         ├── build.rs            # Blueprint (.blp) -> .ui -> embedded gresource
         ├── data/               # .blp files, resources.gresource.xml
         └── src/
@@ -61,7 +61,7 @@ cards/
 
 - UI talks to `AppState` only, never to SQL.
 - Markdown parsing lives in core (`content`) and produces a `Document` tree. The GTK layer only turns that tree into widgets. This keeps parsing testable and reusable for a future WASM or mobile front end.
-- Errors: `cards-core` uses `thiserror`; the app uses `anyhow` at the edges and shows `AdwToast` for user-facing errors.
+- Errors: `rappel-core` uses `thiserror`; the app uses `anyhow` at the edges and shows `AdwToast` for user-facing errors.
 - Logging: `tracing` + `tracing-subscriber`, level from `RUST_LOG`. No card content in logs above `debug`.
 
 ---
@@ -94,7 +94,7 @@ CREATE VIRTUAL TABLE cards_fts USING fts5(front_md, back_md, content='cards', co
 
 Storage rules:
 - `PRAGMA journal_mode=WAL`, `foreign_keys=ON`, `PRAGMA integrity_check` at startup (log and toast if it fails).
-- **Backups:** before any migration, and once per day at startup, copy the DB with the SQLite online backup API to `<data dir>/backups/cards-YYYYMMDD-HHMMSS.sqlite3`. Keep the 14 most recent.
+- **Backups:** before any migration, and once per day at startup, copy the DB with the SQLite online backup API to `<data dir>/backups/rappel-YYYYMMDD-HHMMSS.sqlite3`. Keep the 14 most recent.
 - DB and backup files are created with mode `0600`, directories `0700`.
 
 ---
@@ -102,7 +102,7 @@ Storage rules:
 ## 4. Features for v0.2 (in priority order)
 
 ### 4.1 Export / import
-- Export everything to one `.cards` file: a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 1`, `exported_at`, and all decks, cards and the full review log, deleted rows included with their `deleted_at`. It also has `settings` (empty until settings exist) and `media` (empty until images exist; image files will go into `media/`). Tags join the format, as version 2, with the tags slice. A reader accepts every version up to its own.
+- Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 1`, `exported_at`, and all decks, cards and the full review log, deleted rows included with their `deleted_at`. It also has `settings` (empty until settings exist) and `media` (empty until images exist; image files will go into `media/`). Tags join the format, as version 2, with the tags slice. A reader accepts every version up to its own.
 - Deterministic: the same database exported at the same time gives the same bytes (lists sorted by id, fixed zip metadata). Only `exported_at` differs between exports.
 - Import into an empty or existing DB in two steps: `plan_import` checks the file and returns a summary without writing anything (new / already present / conflicts, e.g. "12 decks, 840 cards, 5,210 reviews"); `apply_import` backs up the database, then writes in one transaction and rebuilds the schedule of the affected cards from the log.
 - Merge rules: an id not in the DB is added; the same id with the same content is skipped. A row that differs only by being deleted is merged: deleted in the DB and live in the file, it is revived (`deleted_at` cleared; a revived deck also revives the cards deleted with it, as `undelete_deck` does, except those the file has, which follow their own row); live in the DB and deleted in the file, it is skipped (an import never deletes); deleted on both sides, at whatever times, it is already present. The same id with any other difference, or a live deck name (revived ones included) already used by another live deck, is a conflict, and any conflict refuses the whole import. The summary also counts revived rows. Importing the same file twice changes nothing.

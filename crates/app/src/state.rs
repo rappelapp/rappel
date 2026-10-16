@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use cards_core::domain::{Card, CardState, Deck, DeckSummary, Grade, ReviewEvent};
-use cards_core::interchange::{ExportSummary, ImportPlan, ImportReport};
-use cards_core::scheduling::session::StudyInput;
-use cards_core::storage::{self, BackupInfo, OpenWarning, Restored, Store};
+use rappel_core::domain::{Card, CardState, Deck, DeckSummary, Grade, ReviewEvent};
+use rappel_core::interchange::{ExportSummary, ImportPlan, ImportReport};
+use rappel_core::scheduling::session::StudyInput;
+use rappel_core::storage::{self, BackupInfo, OpenWarning, Restored, Store};
 
 use crate::clock::local_day_start_ms;
 
@@ -40,7 +40,7 @@ impl fmt::Debug for AppState {
 
 impl AppState {
     /// Opens the database in `data_dir` (see [`Store::open`]).
-    pub fn open(data_dir: PathBuf) -> cards_core::Result<Self> {
+    pub fn open(data_dir: PathBuf) -> rappel_core::Result<Self> {
         let store = Store::open(&data_dir)?;
         Ok(Self::new(data_dir, store))
     }
@@ -55,20 +55,20 @@ impl AppState {
 
     /// The backups in `data_dir`, newest first. An associated function: it
     /// is used by the recovery page, before any database is open.
-    pub fn list_backups(data_dir: &Path) -> cards_core::Result<Vec<BackupInfo>> {
+    pub fn list_backups(data_dir: &Path) -> rappel_core::Result<Vec<BackupInfo>> {
         storage::list_backups(data_dir)
     }
 
     /// Restores `backup` in `data_dir` when no database could be opened
     /// (see [`storage::restore_backup`]). Blocking; runs on a worker thread.
-    pub fn restore_unopened(data_dir: &Path, backup: &BackupInfo) -> cards_core::Result<Restored> {
+    pub fn restore_unopened(data_dir: &Path, backup: &BackupInfo) -> rappel_core::Result<Restored> {
         storage::restore_backup(data_dir, None, backup)
     }
 
     /// Moves the database in `data_dir` aside and starts an empty one, when
     /// none could be opened (see [`storage::start_fresh`]). Blocking; runs
     /// on a worker thread.
-    pub fn start_fresh_unopened(data_dir: &Path) -> cards_core::Result<Restored> {
+    pub fn start_fresh_unopened(data_dir: &Path) -> rappel_core::Result<Restored> {
         storage::start_fresh(data_dir, None)
     }
 
@@ -76,14 +76,14 @@ impl AppState {
     /// [`Store::export_to`]). Blocking; runs on a worker thread, on its own
     /// connection ([`Store::open_concurrent`], ADR 0018), so the window's
     /// store stays on the main thread.
-    pub fn export_on_worker(data_dir: &Path, path: &Path) -> cards_core::Result<ExportSummary> {
+    pub fn export_on_worker(data_dir: &Path, path: &Path) -> rappel_core::Result<ExportSummary> {
         Store::open_concurrent(data_dir)?.export_to(path)
     }
 
-    /// Checks the `.cards` file `path` against the database in `data_dir`
+    /// Checks the `.rappel` file `path` against the database in `data_dir`
     /// (see [`Store::plan_import`]). Blocking; on its own connection like
     /// [`Self::export_on_worker`].
-    pub fn plan_import_on_worker(data_dir: &Path, path: &Path) -> cards_core::Result<ImportPlan> {
+    pub fn plan_import_on_worker(data_dir: &Path, path: &Path) -> rappel_core::Result<ImportPlan> {
         Store::open_concurrent(data_dir)?.plan_import(path)
     }
 
@@ -94,7 +94,7 @@ impl AppState {
     pub fn apply_import_on_worker(
         data_dir: &Path,
         plan: &ImportPlan,
-    ) -> cards_core::Result<ImportReport> {
+    ) -> rappel_core::Result<ImportReport> {
         Store::open_concurrent(data_dir)?.apply_import(plan)
     }
 
@@ -105,8 +105,8 @@ impl AppState {
 
     /// The live decks with what each has to study now, counted like the
     /// deck page (see [`Store::list_decks`]).
-    pub fn list_decks(&self) -> cards_core::Result<Vec<DeckSummary>> {
-        let now = cards_core::time::now_ms();
+    pub fn list_decks(&self) -> rappel_core::Result<Vec<DeckSummary>> {
+        let now = rappel_core::time::now_ms();
         self.0
             .store
             .borrow()
@@ -114,43 +114,43 @@ impl AppState {
     }
 
     /// Creates a deck (see [`Store::create_deck`]).
-    pub fn create_deck(&self, name: &str) -> cards_core::Result<Deck> {
+    pub fn create_deck(&self, name: &str) -> rappel_core::Result<Deck> {
         self.0.store.borrow_mut().create_deck(name)
     }
 
     /// Renames a deck (see [`Store::rename_deck`]).
-    pub fn rename_deck(&self, id: &str, name: &str) -> cards_core::Result<()> {
+    pub fn rename_deck(&self, id: &str, name: &str) -> rappel_core::Result<()> {
         self.0.store.borrow_mut().rename_deck(id, name)
     }
 
     /// Soft-deletes a deck and its cards (see [`Store::delete_deck`]).
-    pub fn delete_deck(&self, id: &str) -> cards_core::Result<()> {
+    pub fn delete_deck(&self, id: &str) -> rappel_core::Result<()> {
         self.0.store.borrow_mut().delete_deck(id)
     }
 
     /// Undoes [`Self::delete_deck`] (see [`Store::undelete_deck`]).
-    pub fn undelete_deck(&self, id: &str) -> cards_core::Result<Deck> {
+    pub fn undelete_deck(&self, id: &str) -> rappel_core::Result<Deck> {
         self.0.store.borrow_mut().undelete_deck(id)
     }
 
     /// The live cards of a deck, oldest first (see [`Store::list_cards`]).
-    pub fn list_cards(&self, deck_id: &str) -> cards_core::Result<Vec<Card>> {
+    pub fn list_cards(&self, deck_id: &str) -> rappel_core::Result<Vec<Card>> {
         self.0.store.borrow().list_cards(deck_id)
     }
 
     /// Adds a card (see [`Store::add_card`]).
-    pub fn add_card(&self, deck_id: &str, front: &str, back: &str) -> cards_core::Result<Card> {
+    pub fn add_card(&self, deck_id: &str, front: &str, back: &str) -> rappel_core::Result<Card> {
         self.0.store.borrow_mut().add_card(deck_id, front, back)
     }
 
     /// Replaces a card's front and back and returns the stored card (see
     /// [`Store::edit_card`]).
-    pub fn edit_card(&self, id: &str, front: &str, back: &str) -> cards_core::Result<Card> {
+    pub fn edit_card(&self, id: &str, front: &str, back: &str) -> rappel_core::Result<Card> {
         self.0.store.borrow_mut().edit_card(id, front, back)
     }
 
     /// Card `id` (see [`Store::card`]).
-    pub fn card(&self, id: &str) -> cards_core::Result<Card> {
+    pub fn card(&self, id: &str) -> rappel_core::Result<Card> {
         self.0.store.borrow().card(id)
     }
 
@@ -160,13 +160,13 @@ impl AppState {
         deck_id: &str,
         now: i64,
         day_start: i64,
-    ) -> cards_core::Result<StudyInput> {
+    ) -> rappel_core::Result<StudyInput> {
         self.0.store.borrow().study_input(deck_id, now, day_start)
     }
 
     /// When what a deck has to study next changes (see
     /// [`Store::next_study_change`]).
-    pub fn next_study_change(&self, deck_id: &str, now: i64) -> cards_core::Result<Option<i64>> {
+    pub fn next_study_change(&self, deck_id: &str, now: i64) -> rappel_core::Result<Option<i64>> {
         self.0.store.borrow().next_study_change(deck_id, now)
     }
 
@@ -177,7 +177,7 @@ impl AppState {
         grade: Grade,
         duration: Duration,
         now: i64,
-    ) -> cards_core::Result<ReviewEvent> {
+    ) -> rappel_core::Result<ReviewEvent> {
         self.0
             .store
             .borrow_mut()
@@ -185,17 +185,17 @@ impl AppState {
     }
 
     /// A card's scheduling state (see [`Store::card_state`]).
-    pub fn card_state(&self, card_id: &str) -> cards_core::Result<CardState> {
+    pub fn card_state(&self, card_id: &str) -> rappel_core::Result<CardState> {
         self.0.store.borrow().card_state(card_id)
     }
 
     /// Soft-deletes a card (see [`Store::delete_card`]).
-    pub fn delete_card(&self, id: &str) -> cards_core::Result<()> {
+    pub fn delete_card(&self, id: &str) -> rappel_core::Result<()> {
         self.0.store.borrow_mut().delete_card(id)
     }
 
     /// Undoes [`Self::delete_card`] (see [`Store::undelete_card`]).
-    pub fn undelete_card(&self, id: &str) -> cards_core::Result<Card> {
+    pub fn undelete_card(&self, id: &str) -> rappel_core::Result<Card> {
         self.0.store.borrow_mut().undelete_card(id)
     }
 

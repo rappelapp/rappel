@@ -9,8 +9,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cards_core::storage::{BackupInfo, Restored};
 use gtk::{gio, glib};
+use rappel_core::storage::{BackupInfo, Restored};
 
 use crate::startup::{RecoveryReason, data_folder_line};
 use crate::state::AppState;
@@ -43,7 +43,7 @@ mod imp {
     use crate::ui::callback::Callback;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Cards/recovery_page.ui")]
+    #[template(resource = "/io/github/rsmirke/Rappel/recovery_page.ui")]
     pub struct RecoveryPage {
         #[template_child]
         pub status: TemplateChild<adw::StatusPage>,
@@ -60,7 +60,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for RecoveryPage {
-        const NAME: &'static str = "CardsRecoveryPage";
+        const NAME: &'static str = "RappelRecoveryPage";
         type Type = super::RecoveryPage;
         type ParentType = adw::Bin;
 
@@ -243,7 +243,7 @@ impl RecoveryPage {
                 }
                 return;
             }
-            Ok(Err(cards_core::Error::RestoreRefused { source, .. })) => {
+            Ok(Err(rappel_core::Error::RestoreRefused { source, .. })) => {
                 tracing::warn!("backup refused: {source}");
                 format!("This backup cannot be used: {source}")
             }
@@ -307,13 +307,13 @@ impl RecoveryPage {
                 }
                 return;
             }
-            Ok(Err(cards_core::Error::InterruptedRestore(_))) => {
+            Ok(Err(rappel_core::Error::InterruptedRestore(_))) => {
                 tracing::warn!("start fresh refused: a validated restore copy is waiting");
                 imp.reason.set(Some(RecoveryReason::InterruptedRestore));
                 "A restore did not finish. Its copy is kept; restore a backup to continue."
                     .to_owned()
             }
-            Ok(Err(cards_core::Error::BackupsAvailable(_))) => {
+            Ok(Err(rappel_core::Error::BackupsAvailable(_))) => {
                 // A backup appeared since the list was shown; reloading
                 // lists it.
                 tracing::warn!("start fresh refused: backups exist");
@@ -356,7 +356,7 @@ mod tests {
     fn start_fresh_is_offered_for_every_reason_with_a_file_to_move() {
         for reason in [
             RecoveryReason::Damaged,
-            RecoveryReason::NotCards,
+            RecoveryReason::NotRappel,
             RecoveryReason::MissingFile,
         ] {
             assert!(offers_start_fresh(Some(reason)), "{reason:?}");

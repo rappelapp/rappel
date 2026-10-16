@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use unicode_normalization::UnicodeNormalization;
 
-/// The answer to a review. Cards has exactly two grades (SPEC §6).
+/// The answer to a review. Rappel has exactly two grades (SPEC §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Grade {
     /// The answer was not recalled.

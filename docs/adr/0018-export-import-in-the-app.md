@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR 0017 gave `cards-core` an export and a two-step import, without UI. The app needs a way to start them, and the work can be slow: an export reads every row, a plan reads and checks a file of up to 256 MiB, and an apply backs up the whole database. On the main thread that would freeze the window.
+ADR 0017 gave `rappel-core` an export and a two-step import, without UI. The app needs a way to start them, and the work can be slow: an export reads every row, a plan reads and checks a file of up to 256 MiB, and an apply backs up the whole database. On the main thread that would freeze the window.
 
 The UI's only way to the database is `AppState`, an `Rc<RefCell<Store>>` (ADR 0011), which must stay on the main thread. The worker needs another way in.
 
