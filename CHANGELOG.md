@@ -6,9 +6,6 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Documentation
-- ADR 0021 (proposed): math rendering with RaTeX, from the `spike/math` experiment. Nothing changes in the app yet.
-
 ## 0.2.0-alpha.1 — 2026-10-16
 
 ### Added
