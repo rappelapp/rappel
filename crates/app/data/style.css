@@ -1,0 +1,26 @@
+/* The app's only stylesheet, loaded by AdwApplication from `style.css` in
+ * the resource base path (AdwApplication docs, "Stylesheet"). It styles the
+ * grid of a Markdown table (render/).
+ * No literal colours: lines and shading are the text colour at a low
+ * opacity, so they follow light, dark and high-contrast themes. */
+
+.card-table {
+  border: 1px solid alpha(currentColor, 0.3);
+  border-radius: 6px;
+}
+
+.card-table-cell {
+  padding: 6px 12px;
+}
+
+.card-table-cell.table-line-end {
+  border-right: 1px solid alpha(currentColor, 0.3);
+}
+
+.card-table-cell.table-line-below {
+  border-bottom: 1px solid alpha(currentColor, 0.3);
+}
+
+.card-table-cell.table-header {
+  background-color: alpha(currentColor, 0.1);
+}

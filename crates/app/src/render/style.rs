@@ -1,48 +1,8 @@
-//! The rendering decisions that need no GTK: how a side is laid out, the
-//! style class of a heading, a list item's marker. Pure and tested.
+//! The rendering decisions that need no GTK: the style class of a heading,
+//! a list item's marker, how many widgets a block costs. Pure and tested.
+//! Every side of a card is laid out the same way, whatever its structure.
 
 use cards_core::content::{Block, Document};
-
-/// Which side of a card is shown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Side {
-    Front,
-    Back,
-}
-
-/// How a side is laid out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Style {
-    /// One paragraph: large and centred, as cards looked before Markdown
-    /// (`title-2` on the front, `title-3` on the back).
-    Simple(Side),
-    /// Anything else: body text, aligned to the start.
-    Rich,
-}
-
-impl Style {
-    /// The style for `doc` shown on `side`.
-    pub fn of(doc: &Document, side: Side) -> Self {
-        match doc.blocks.as_slice() {
-            [Block::Paragraph(_)] => Self::Simple(side),
-            _ => Self::Rich,
-        }
-    }
-
-    /// The style class of a paragraph's label, if any.
-    pub fn paragraph_class(self) -> Option<&'static str> {
-        match self {
-            Self::Simple(Side::Front) => Some("title-2"),
-            Self::Simple(Side::Back) => Some("title-3"),
-            Self::Rich => None,
-        }
-    }
-
-    /// Whether text is centred.
-    pub fn centred(self) -> bool {
-        matches!(self, Self::Simple(_))
-    }
-}
 
 /// Whether the back is shown after the reveal: not when there is nothing
 /// to show, so only the grade buttons appear.
@@ -71,6 +31,30 @@ pub fn list_marker(start: Option<u64>, index: usize, depth: usize) -> String {
         }
         None => ["•", "◦", "▪"][depth % 3].to_owned(),
     }
+}
+
+/// The style classes of the table cell at `row` (0 is the header) and
+/// `column`, in a table of `rows` rows (the header included) and `columns`
+/// columns. Lines go between cells and the grid has its own border, so the
+/// last column has no line on its right and the last row none below
+/// (`data/style.css`).
+pub fn table_cell_classes(
+    row: usize,
+    column: usize,
+    rows: usize,
+    columns: usize,
+) -> Vec<&'static str> {
+    let mut classes = vec!["card-table-cell"];
+    if column + 1 < columns {
+        classes.push("table-line-end");
+    }
+    if row + 1 < rows {
+        classes.push("table-line-below");
+    }
+    if row == 0 {
+        classes.push("table-header");
+    }
+    classes
 }
 
 /// How many widgets [`super::render`] makes for `block`, to stay within
@@ -103,37 +87,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn one_paragraph_is_simple_and_the_rest_rich() {
-        let style = |md| Style::of(&parse(md), Side::Front);
-        assert_eq!(style("What is *x*?"), Style::Simple(Side::Front));
-        assert_eq!(
-            style("line one\nline two  \nthree"),
-            Style::Simple(Side::Front)
-        );
-        assert_eq!(style("one\n\ntwo"), Style::Rich);
-        assert_eq!(style("# Title"), Style::Rich);
-        assert_eq!(style("- item"), Style::Rich);
-        assert_eq!(style("$$x$$"), Style::Rich);
-        assert_eq!(style(""), Style::Rich);
-        assert_eq!(
-            Style::of(&parse("x"), Side::Back),
-            Style::Simple(Side::Back)
-        );
-    }
-
-    #[test]
-    fn simple_sides_keep_the_old_look() {
-        assert_eq!(
-            Style::Simple(Side::Front).paragraph_class(),
-            Some("title-2")
-        );
-        assert_eq!(Style::Simple(Side::Back).paragraph_class(), Some("title-3"));
-        assert_eq!(Style::Rich.paragraph_class(), None);
-        assert!(Style::Simple(Side::Back).centred());
-        assert!(!Style::Rich.centred());
-    }
-
-    #[test]
     fn an_empty_back_is_not_shown() {
         assert!(!back_shown(&parse("")));
         assert!(!back_shown(&parse(" \n\n\t")));
@@ -162,6 +115,32 @@ mod tests {
         assert_eq!(cost("| a | b |\n|--|--|\n| 1 | 2 |\n| 3 |"), 2 + 2 + 2 + 2);
         // A huge list is costly, so it is shown as plain text.
         assert!(cost(&"- a\n".repeat(10_000)) > 20_000);
+    }
+
+    #[test]
+    fn table_cells_get_lines_between_them_and_a_header() {
+        assert_eq!(
+            table_cell_classes(0, 0, 3, 2),
+            [
+                "card-table-cell",
+                "table-line-end",
+                "table-line-below",
+                "table-header"
+            ]
+        );
+        assert_eq!(
+            table_cell_classes(1, 1, 3, 2),
+            ["card-table-cell", "table-line-below"]
+        );
+        assert_eq!(
+            table_cell_classes(2, 0, 3, 2),
+            ["card-table-cell", "table-line-end"]
+        );
+        // A header-only table, one column.
+        assert_eq!(
+            table_cell_classes(0, 0, 1, 1),
+            ["card-table-cell", "table-header"]
+        );
     }
 
     #[test]

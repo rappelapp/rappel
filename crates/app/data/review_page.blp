@@ -11,6 +11,18 @@ template $CardsReviewPage: Adw.NavigationPage {
     [top]
     Adw.HeaderBar {
       title-widget: Adw.WindowTitle window_title {};
+
+      [end]
+      Gtk.Button edit_button {
+        visible: false;
+        icon-name: "document-edit-symbolic";
+        action-name: "review.edit";
+        tooltip-text: _("Edit Card (E)");
+
+        accessibility {
+          label: _("Edit Card");
+        }
+      }
     }
 
     content: Gtk.Stack stack {

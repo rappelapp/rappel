@@ -96,6 +96,21 @@ fn names_longer_than_the_import_limit_are_refused() {
 }
 
 #[test]
+fn a_nul_in_a_name_is_refused() {
+    let mut store = Store::in_memory();
+    let deck = store.create_deck_at("Maths", T0).unwrap();
+    assert!(matches!(
+        store.create_deck_at("a\0b", T0),
+        Err(Error::ContainsNul)
+    ));
+    assert!(matches!(
+        store.rename_deck_at(&deck.id, "a\0b", T0 + 5),
+        Err(Error::ContainsNul)
+    ));
+    assert_eq!(names(&store), ["Maths"]);
+}
+
+#[test]
 fn rename_changes_name_and_updated_at() {
     let mut store = Store::in_memory();
     let deck = store.create_deck_at("Maths", T0).unwrap();

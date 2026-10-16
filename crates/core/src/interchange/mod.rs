@@ -275,6 +275,9 @@ pub enum FieldProblem {
     /// Longer than allowed.
     #[error("too long")]
     TooLong,
+    /// Has a NUL character (U+0000), which GTK cannot take.
+    #[error("contains a NUL character")]
+    ContainsNul,
     /// A live card whose deck is deleted, which the app never produces.
     #[error("a live card in a deleted deck")]
     LiveCardInDeletedDeck,

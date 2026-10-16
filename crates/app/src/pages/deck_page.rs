@@ -212,7 +212,15 @@ impl DeckPage {
         if view.visible_page().is_some_and(|p| p.is::<ReviewPage>()) {
             return;
         }
-        match ReviewPage::new(state.clone(), deck.clone()) {
+        // Cards saved from the session's editor update this list too.
+        let on_saved = glib::clone!(
+            #[weak(rename_to = deck_page)]
+            self,
+            move |saved| {
+                deck_page.show_saved(saved);
+            }
+        );
+        match ReviewPage::new(state.clone(), deck.clone(), on_saved) {
             Ok(page) => {
                 self.action_set_enabled("deck.study", false);
                 view.push(&page);
@@ -266,11 +274,18 @@ impl DeckPage {
         editor.show(self);
     }
 
-    /// Puts a saved card into the list.
+    /// Puts a card saved by this page's editor into the list and marks it
+    /// to take the focus once the editor closes.
     fn saved(&self, saved: Saved) {
-        let Some(store) = self.imp().cards.get() else {
-            return;
-        };
+        if let Some(id) = self.show_saved(saved) {
+            self.imp().focus_after_edit.replace(Some(id));
+        }
+    }
+
+    /// Puts a saved card into the list, wherever the save came from (the
+    /// review page's editor too). Returns its id.
+    fn show_saved(&self, saved: Saved) -> Option<String> {
+        let store = self.imp().cards.get()?;
         let card = match saved {
             Saved::Added(card) => {
                 insert_in_order(store, &CardObject::new(card.clone()));
@@ -286,7 +301,7 @@ impl DeckPage {
                 card
             }
         };
-        self.imp().focus_after_edit.replace(Some(card.id));
+        Some(card.id)
     }
 
     /// Deletes at once; the toast's Undo brings the card back.

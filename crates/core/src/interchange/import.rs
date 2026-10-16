@@ -190,8 +190,9 @@ pub(super) enum Outcome {
 /// `rest_equal` says whether every field but `deleted_at` is the same.
 /// Only a difference in `deleted_at` can be merged: deleted here and live
 /// in the file brings the row back; live here and deleted in the file
-/// leaves it live, as an import never deletes. Deleted on both sides at
-/// different times, like any other difference, is a conflict.
+/// leaves it live, as an import never deletes. Deleted on both sides is
+/// already present, whatever the stamps: merging it would change nothing.
+/// Any other difference is a conflict.
 pub(super) fn compare(
     rest_equal: bool,
     stored_deleted: Option<i64>,
@@ -201,10 +202,9 @@ pub(super) fn compare(
         return Outcome::Conflict;
     }
     match (stored_deleted, file_deleted) {
-        (None, _) => Outcome::Present,
         (Some(stamp), None) => Outcome::Revive(stamp),
-        (Some(s), Some(f)) if s == f => Outcome::Present,
-        (Some(_), Some(_)) => Outcome::Conflict,
+        // Live here, or deleted on both sides.
+        (None, _) | (Some(_), Some(_)) => Outcome::Present,
     }
 }
 

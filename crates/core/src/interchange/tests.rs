@@ -567,7 +567,7 @@ fn only_a_difference_in_deleted_at_can_be_merged() {
     assert_eq!(compare(true, Some(5), Some(5)), Outcome::Present);
     assert_eq!(compare(true, None, Some(5)), Outcome::Present);
     assert_eq!(compare(true, Some(5), None), Outcome::Revive(5));
-    assert_eq!(compare(true, Some(5), Some(6)), Outcome::Conflict);
+    assert_eq!(compare(true, Some(5), Some(6)), Outcome::Present);
     for (stored, file) in [
         (None, None),
         (Some(5), None),
@@ -857,23 +857,45 @@ fn a_plan_is_stale_even_if_the_changes_cancel_out_in_the_counts() {
 }
 
 #[test]
-fn a_row_deleted_on_both_sides_at_different_times_is_a_conflict() {
+fn a_row_deleted_on_both_sides_at_different_times_is_already_present() {
     let (source, deck, _) = sample_env();
     let mut target = Env::new();
     target.import(&source.export()).unwrap();
     let card = live_card_ids(&target.store, &deck)[1].clone();
     target.store.delete_card(&card).unwrap();
+    target.store.delete_deck(&deck).unwrap();
     let mut doc = json_of(&source.export());
     for c in doc["cards"].as_array_mut().unwrap() {
-        if c["id"] == card.as_str() {
-            c["deleted_at"] = json!(T0);
+        // The file's deck is deleted, so all its cards are, at stamps
+        // that differ from the database's.
+        if c["deck_id"] == deck.as_str() {
+            c["deleted_at"] = json!(if c["id"] == card.as_str() { T0 } else { T0 + 2 });
         }
     }
-    assert_conflicts(
-        &mut target,
-        &archive_of(&doc),
-        &[Conflict::CardDiffers(card)],
+    for d in doc["decks"].as_array_mut().unwrap() {
+        if d["id"] == deck.as_str() {
+            d["deleted_at"] = json!(T0 + 1);
+        }
+    }
+    let bytes = archive_of(&doc);
+    let before = target.export();
+    let backups = target.backups();
+
+    let plan = target.plan(&bytes).unwrap();
+    let summary = plan.summary();
+    assert!(summary.conflicts.is_empty(), "{:?}", summary.conflicts);
+    assert_eq!((summary.decks.new, summary.decks.revived), (0, 0));
+    assert_eq!((summary.cards.new, summary.cards.revived), (0, 0));
+    assert_eq!(summary.decks.present, 2);
+    assert_eq!(
+        summary.cards.present,
+        doc["cards"].as_array().unwrap().len()
     );
+    // Nothing to write: no change and no backup, and the database keeps
+    // its own delete stamps.
+    target.store.apply_import_at(&plan, T_EXPORT).unwrap();
+    assert_eq!(target.export(), before);
+    assert_eq!(target.backups(), backups);
 }
 
 // ------------------------------------------------------------- conflicts
@@ -1381,6 +1403,28 @@ fn text_limits_are_enforced() {
         plan(&doc),
         field("cards", 0, "back_md", FieldProblem::TooLong)
     );
+}
+
+#[test]
+fn a_nul_in_a_name_or_card_side_is_refused() {
+    let env = Env::new();
+    let plan = |doc: &Value| {
+        refused(
+            env.store
+                .plan_import_bytes(&archive_of(doc), &Limits::DEFAULT),
+        )
+    };
+    for (table, name) in [
+        ("decks", "name"),
+        ("cards", "front_md"),
+        ("cards", "back_md"),
+    ] {
+        let mut doc = sample_doc();
+        doc[table][0][name] = json!("a\u{0}b");
+        assert_eq!(plan(&doc), field(table, 0, name, FieldProblem::ContainsNul));
+    }
+    // Nothing was written.
+    assert_eq!(env.store.list_decks(T_EXPORT, 0).unwrap().len(), 0);
 }
 
 #[test]

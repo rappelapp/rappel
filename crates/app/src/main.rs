@@ -32,6 +32,8 @@ fn main() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
 
+    // `data/style.css` (table borders) needs no code: AdwApplication loads
+    // `style.css` from the resource base path, which is the app ID's.
     let app = adw::Application::builder()
         .application_id(cards_core::APP_ID)
         .build();

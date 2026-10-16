@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::format::{Document, FORMAT_VERSION, Header};
 use super::{FieldProblem, ImportProblem, Limits};
-use crate::domain::{Grade, deck_name_key};
+use crate::domain::{Grade, deck_name_key, has_nul};
 use crate::id::uuid_v7_ms;
 
 /// 9999-12-31T23:59:59.999Z, the latest timestamp a file may hold.
@@ -75,6 +75,9 @@ pub(super) fn check(doc: &Document, limits: &Limits) -> Result<(), ImportProblem
         if d.name.len() > limits.deck_name {
             return Err(at("name", FieldProblem::TooLong));
         }
+        if has_nul(&d.name) {
+            return Err(at("name", FieldProblem::ContainsNul));
+        }
         check_times(d.created_at, d.updated_at, d.deleted_at)
             .map_err(|f| at(f, FieldProblem::TimestampOutOfRange))?;
         if d.deleted_at.is_none() && !live_names.insert(deck_name_key(&d.name)) {
@@ -103,6 +106,12 @@ pub(super) fn check(doc: &Document, limits: &Limits) -> Result<(), ImportProblem
         }
         if c.back_md.len() > limits.card_text {
             return Err(at("back_md", FieldProblem::TooLong));
+        }
+        if has_nul(&c.front_md) {
+            return Err(at("front_md", FieldProblem::ContainsNul));
+        }
+        if has_nul(&c.back_md) {
+            return Err(at("back_md", FieldProblem::ContainsNul));
         }
         check_times(c.created_at, c.updated_at, c.deleted_at)
             .map_err(|f| at(f, FieldProblem::TimestampOutOfRange))?;

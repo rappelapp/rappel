@@ -267,6 +267,10 @@ pub enum Error {
         limit: usize,
     },
 
+    /// A deck name or card side with a NUL character (U+0000).
+    #[error("text cannot contain a NUL character")]
+    ContainsNul,
+
     /// A card front that is empty or only whitespace.
     #[error("the front of a card cannot be empty")]
     EmptyCardFront,

@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use super::decks::ensure_live_deck;
 use super::{Store, observe_max_id};
-use crate::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits};
+use crate::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits, has_nul};
 use crate::error::{Error, Result};
 use crate::time::now_ms;
 
@@ -193,12 +193,15 @@ pub(super) fn live_card(conn: &Connection, id: &str) -> Result<Card> {
     .ok_or_else(|| Error::CardNotFound(id.to_owned()))
 }
 
-/// A blank front, or a side too long to import again, is refused.
+/// A blank front, a side too long to import again, or a NUL is refused.
 fn check_sides(front_md: &str, back_md: &str) -> Result<()> {
     if front_md.trim().is_empty() {
         return Err(Error::EmptyCardFront);
     }
     for (side, text) in [(CardSide::Front, front_md), (CardSide::Back, back_md)] {
+        if has_nul(text) {
+            return Err(Error::ContainsNul);
+        }
         if !card_side_fits(text) {
             return Err(Error::CardSideTooLong {
                 side,

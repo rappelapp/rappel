@@ -5,6 +5,7 @@
 - Amends: SPEC §4.1 (one JSON file with base64 media)
 - Closes: #12
 - Amended: 2026-10-16, deleted rows are revived from the file instead of being conflicts (see Merge rules)
+- Amended: 2026-10-16, a row deleted on both sides is already present, whatever the stamps; a NUL in a name or card side refuses the file
 
 ## Context
 
@@ -34,7 +35,7 @@ So the same database exported at the same time gives identical bytes; only `expo
   | same value | same value | already present, skipped |
   | deleted | live | **revived**: `deleted_at` is cleared |
   | live | deleted | already present: an import never deletes |
-  | deleted | deleted at another time | conflict |
+  | deleted | deleted at another time | already present: nothing to merge, the database keeps its own stamp |
 - A revived deck also revives the database's cards in that deck that share its `deleted_at` stamp (the batch deleted with it, exactly as `undelete_deck` does, ADR 0012) and that are not in the file. Cards that are in the file are decided by their own row: live in the file, they are revived; deleted in the file, they stay deleted.
 - A review event with the same id and the same content is present; any difference is a conflict.
 - A live deck in the file (new, present or revived) whose name key is used by another live deck in the database is a conflict too.
@@ -53,6 +54,7 @@ Any conflict refuses the whole import. Merging content field by field would need
 - A card's deck or an event's card is not in the file.
 - A grade is invalid, a duration is negative, or a timestamp falls outside 1970 to 9999.
 - A deck name is empty or untrimmed, a card front is empty, a card side is over 1 MiB, or a deck name is over 1 KiB.
+- A deck name or card side has a NUL character (U+0000). GTK takes C strings, and glib-rs asserts there is no NUL in debug builds, so the app would panic showing such a name. It is refused, not replaced: a replaced name would differ from the file's, so importing the same file again would be a conflict and an export would not round-trip. The store refuses a NUL in a name or side too (`Error::ContainsNul`), so the app never writes one.
 - Two live decks in the file share a name key, or a live card is in a deleted deck (states the app never produces).
 - `settings` or `media` is not empty.
 
@@ -76,5 +78,5 @@ An in-memory store has no backup directory and refuses to import.
 - A review dated in the future (up to the year 9999) is accepted. Refusing reviews after `exported_at` would also refuse the app's own exports after its clock went backwards. Such a review keeps that card's later reviews at its date (`max(now, last review)`, ADR 0008).
 - Each import that adds or revives rows makes a backup, and pruning keeps the newest 14. Many imports in one day can push the older daily backups out (ADR 0007).
 - Cards that come back with their deck without being in the file (added here after the export, then deleted with the deck) are changed by an import that does not mention them. This follows `undelete_deck`, so the deck comes back as it was when it was deleted.
-- Deleted on both sides at different times is still a conflict, although merging it would change nothing. It needs a delete, an undo and another delete after the export, so it is rare.
+- Deleted on both sides at different times (a delete, an undo and another delete after the export) is already present. Both rows are deleted, so merging it would change nothing; the database keeps its own stamp, which `undelete_deck` needs to find the cards deleted with a deck. Any other difference in such a row is still a conflict.
 - Imported cards get new internal `seq` values, so in a deck's card list they appear after the cards that were already there, even if they were created earlier.

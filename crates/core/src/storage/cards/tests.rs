@@ -80,6 +80,23 @@ fn sides_longer_than_the_import_limit_are_refused() {
 }
 
 #[test]
+fn a_nul_in_a_side_is_refused() {
+    let (mut store, deck) = store_with_deck();
+    let card = store.add_card_at(&deck, "q", "a", T0).unwrap();
+    for (front, back) in [("q\0", "a"), ("q", "\0a")] {
+        assert!(matches!(
+            store.add_card_at(&deck, front, back, T0),
+            Err(Error::ContainsNul)
+        ));
+        assert!(matches!(
+            store.edit_card_at(&card.id, front, back, T0 + 5),
+            Err(Error::ContainsNul)
+        ));
+    }
+    assert_eq!(store.list_cards(&deck).unwrap(), [card]);
+}
+
+#[test]
 fn add_needs_a_live_deck() {
     let (mut store, _) = store_with_deck();
     assert!(matches!(

@@ -189,6 +189,14 @@ pub fn deck_name_fits(name: &str) -> bool {
     name.trim().len() <= MAX_DECK_NAME_BYTES
 }
 
+/// Whether `text` has a NUL (U+0000). GTK takes C strings, which end at a
+/// NUL (glib-rs asserts there is none in debug builds), so a name or card
+/// side with one is refused when written and when imported.
+#[must_use]
+pub fn has_nul(text: &str) -> bool {
+    text.contains('\0')
+}
+
 /// Whether one card side is within [`MAX_CARD_SIDE_BYTES`].
 #[must_use]
 pub fn card_side_fits(text: &str) -> bool {

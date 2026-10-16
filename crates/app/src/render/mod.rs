@@ -16,8 +16,8 @@ use gtk::AccessibleRole as Role;
 use gtk::pango;
 use gtk::prelude::*;
 
-pub use style::{Side, back_shown};
-use style::{Style, heading_class, list_marker, widget_cost};
+pub use style::back_shown;
+use style::{heading_class, list_marker, table_cell_classes, widget_cost};
 
 /// At most this many widgets per side. A hostile card (a 1 MiB list)
 /// would otherwise build hundreds of thousands; what does not fit is shown
@@ -27,11 +27,10 @@ const MAX_WIDGETS: usize = 2_000;
 /// Space between blocks, in pixels.
 const BLOCK_SPACING: i32 = 12;
 
-/// The widgets of `doc` shown on `side`, in a vertical box.
-pub fn render(doc: &Document, side: Side) -> gtk::Box {
-    let renderer = Renderer {
-        style: Style::of(doc, side),
-    };
+/// The widgets of `doc`, in a vertical box. Both sides of a card look the
+/// same: body text, normal weight, aligned to the start. Only the
+/// constructs have styles of their own (headings, code, quotes, tables).
+pub fn render(doc: &Document) -> gtk::Box {
     let container = blocks_box();
     // A block's cost counts everything inside it, so the budget is spent
     // on top-level blocks only.
@@ -42,114 +41,101 @@ pub fn render(doc: &Document, side: Side) -> gtk::Box {
             let rest = Document {
                 blocks: doc.blocks[i..].to_vec(),
             };
-            container.append(&plain_label(&plain_text(&rest), renderer.style.centred()));
+            container.append(&plain_label(&plain_text(&rest), false));
             break;
         }
         budget -= cost;
-        container.append(&renderer.block(block, 0));
+        container.append(&block_widget(block, 0));
     }
     container
 }
 
-#[derive(Debug)]
-struct Renderer {
-    style: Style,
+/// `blocks` in a vertical box. `lists` is how many lists deep they are.
+fn blocks_widget(blocks: &[Block], lists: usize) -> gtk::Box {
+    let container = blocks_box();
+    for block in blocks {
+        container.append(&block_widget(block, lists));
+    }
+    container
 }
 
-impl Renderer {
-    /// `blocks` in a vertical box. `lists` is how many lists deep they are.
-    fn blocks(&self, blocks: &[Block], lists: usize) -> gtk::Box {
-        let container = blocks_box();
-        for block in blocks {
-            container.append(&self.block(block, lists));
+fn block_widget(block: &Block, lists: usize) -> gtk::Widget {
+    match block {
+        Block::Paragraph(inlines) => text_label(inlines, false, None, Role::Label).upcast(),
+        Block::Heading { level, content } => {
+            let label = text_label(content, false, Some(heading_class(*level)), Role::Heading);
+            label.update_property(&[gtk::accessible::Property::Level(i32::from(*level))]);
+            label.upcast()
         }
-        container
-    }
-
-    fn block(&self, block: &Block, lists: usize) -> gtk::Widget {
-        match block {
-            Block::Paragraph(inlines) => text_label(
-                inlines,
-                self.style.centred(),
-                self.style.paragraph_class(),
-                Role::Label,
-            )
-            .upcast(),
-            Block::Heading { level, content } => {
-                let label = text_label(
-                    content,
-                    self.style.centred(),
-                    Some(heading_class(*level)),
-                    Role::Heading,
-                );
-                label.update_property(&[gtk::accessible::Property::Level(i32::from(*level))]);
-                label.upcast()
-            }
-            Block::List { start, items } => self.list(*start, items, lists).upcast(),
-            Block::CodeBlock { code, .. } => {
-                let label = plain_label(code, false);
-                label.add_css_class("monospace");
-                label.set_margin_top(12);
-                label.set_margin_bottom(12);
-                label.set_margin_start(12);
-                label.set_margin_end(12);
-                let frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
-                frame.add_css_class("card");
-                frame.append(&label);
-                frame.upcast()
-            }
-            Block::BlockQuote(blocks) => {
-                let quote = gtk::Box::new(gtk::Orientation::Horizontal, BLOCK_SPACING);
-                quote.append(&gtk::Separator::new(gtk::Orientation::Vertical));
-                let inner = self.blocks(blocks, lists);
-                inner.add_css_class("dim-label");
-                inner.set_hexpand(true);
-                quote.append(&inner);
-                quote.upcast()
-            }
-            Block::Rule => gtk::Separator::new(gtk::Orientation::Horizontal).upcast(),
-            Block::Table {
-                align,
-                header,
-                rows,
-            } => table(align, header, rows).upcast(),
-            Block::DisplayMath(source) => {
-                // The source until math rendering comes (SPEC §4.2's
-                // fallback), centred like a formula.
-                let label = plain_label(source, true);
-                label.add_css_class("monospace");
-                label.upcast()
-            }
+        Block::List { start, items } => list(*start, items, lists).upcast(),
+        Block::CodeBlock { code, .. } => {
+            let label = plain_label(code, false);
+            label.add_css_class("monospace");
+            label.set_margin_top(12);
+            label.set_margin_bottom(12);
+            label.set_margin_start(12);
+            label.set_margin_end(12);
+            let frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            frame.add_css_class("card");
+            frame.append(&label);
+            frame.upcast()
+        }
+        Block::BlockQuote(blocks) => {
+            let quote = gtk::Box::new(gtk::Orientation::Horizontal, BLOCK_SPACING);
+            quote.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+            let inner = blocks_widget(blocks, lists);
+            inner.add_css_class("dim-label");
+            inner.set_hexpand(true);
+            quote.append(&inner);
+            quote.upcast()
+        }
+        Block::Rule => gtk::Separator::new(gtk::Orientation::Horizontal).upcast(),
+        Block::Table {
+            align,
+            header,
+            rows,
+        } => table(align, header, rows).upcast(),
+        Block::DisplayMath(source) => {
+            // The source until math rendering comes (SPEC §4.2's
+            // fallback), centred like a formula.
+            let label = plain_label(source, true);
+            label.add_css_class("monospace");
+            label.upcast()
         }
     }
+}
 
-    fn list(&self, start: Option<u64>, items: &[Vec<Block>], lists: usize) -> gtk::Grid {
-        let grid = gtk::Grid::builder()
-            .column_spacing(8)
-            .row_spacing(6)
+fn list(start: Option<u64>, items: &[Vec<Block>], lists: usize) -> gtk::Grid {
+    let grid = gtk::Grid::builder()
+        .column_spacing(8)
+        .row_spacing(6)
+        .build();
+    for (i, item) in items.iter().enumerate() {
+        let row = i32::try_from(i).unwrap_or(i32::MAX);
+        let marker = gtk::Label::builder()
+            .label(list_marker(start, i, lists))
+            .xalign(1.0)
+            .valign(gtk::Align::Start)
             .build();
-        for (i, item) in items.iter().enumerate() {
-            let row = i32::try_from(i).unwrap_or(i32::MAX);
-            let marker = gtk::Label::builder()
-                .label(list_marker(start, i, lists))
-                .xalign(1.0)
-                .valign(gtk::Align::Start)
-                .build();
-            let content = self.blocks(item, lists + 1);
-            content.set_hexpand(true);
-            grid.attach(&marker, 0, row, 1, 1);
-            grid.attach(&content, 1, row, 1, 1);
-        }
-        grid
+        let content = blocks_widget(item, lists + 1);
+        content.set_hexpand(true);
+        grid.attach(&marker, 0, row, 1, 1);
+        grid.attach(&content, 1, row, 1, 1);
     }
+    grid
 }
 
 /// A table in a horizontal scroller, so a wide one fits a narrow window.
+/// The grid has a border, a line between cells and a shaded header row,
+/// from the classes of [`table_cell_classes`] and `data/style.css`.
 fn table(align: &[Align], header: &[Cell], rows: &[Vec<Cell>]) -> gtk::ScrolledWindow {
-    let grid = gtk::Grid::builder()
-        .column_spacing(18)
-        .row_spacing(6)
-        .build();
+    let grid = gtk::Grid::new();
+    grid.add_css_class("card-table");
+    // GTK CSS has no `overflow`; this clips the shaded header to the
+    // rounded border.
+    grid.set_overflow(gtk::Overflow::Hidden);
+    let row_count = rows.len() + 1;
+    let column_count = header.len();
     let all_rows =
         std::iter::once((header, Some("heading"))).chain(rows.iter().map(|r| (r.as_slice(), None)));
     for (r, (cells, class)) in all_rows.enumerate() {
@@ -157,6 +143,9 @@ fn table(align: &[Align], header: &[Cell], rows: &[Vec<Cell>]) -> gtk::ScrolledW
         for (c, cell) in cells.iter().enumerate() {
             let column = i32::try_from(c).unwrap_or(i32::MAX);
             let label = text_label(cell, false, class, Role::Label);
+            for class in table_cell_classes(r, c, row_count, column_count) {
+                label.add_css_class(class);
+            }
             // A cell keeps its line; the scroller handles the width.
             label.set_wrap(false);
             label.set_xalign(match align.get(c).copied().unwrap_or(Align::None) {

@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-16
 - Amends: ADR 0014 (the review page shows rendered Markdown, not plain text)
+- Amended: 2026-10-16, every side has the same layout (no large centred single paragraph); tables get a border and a header row
 
 ## Context
 
@@ -36,14 +37,15 @@ This UI is built from data, so it is the one place where widgets are made in Rus
 - **Escaping.** Every piece of card text goes through `glib::markup_escape_text`, and the only tags are ours (`<b> <i> <s> <tt> <u>`). Code and display math use labels with markup off. A test parses every produced markup with Pango and checks the shown text.
 - **Links are not clickable.** There is no `<a>`, so there is no click, no hand cursor and no focusable link. A link is underlined, and its URL shows as the tooltip when the pointer rests on it: `query-tooltip` maps the pointer to a Pango layout index, and that index is looked up in the link ranges the markup builder recorded. No label is selectable or focusable, and neither is a table's scroller, so the review page's focus and keys (Space, Enter, 1, 2) keep working. Headings have the accessible role Heading and their level.
 - **Images.** A media image is a placeholder, `[image: alt]` in italics, until the media slice. Any other image is shown as the Markdown that was typed, never fetched (SPEC §4.3).
-- **Layout.** A side that is one paragraph keeps the look cards had before: large (`title-2` front, `title-3` back) and centred. Anything else is body text aligned to the start.
+- **Layout.** Every side looks the same whatever its structure: body text, normal weight, aligned to the start (amended: a one-paragraph side used to be large and centred, which made cards look different for no reason a user can see). Headings, code, quotes, tables and display math keep their own styles.
+- **Tables.** The grid has a border, lines between cells and a shaded header row. This is the app's only stylesheet (`data/style.css`, loaded by `AdwApplication` from the resource base path). It has no literal colours: lines and shading are the text colour at a low opacity, so they follow light and dark themes. In high contrast they are as faint as in normal mode; strengthening them needs a libadwaita newer than the 1.6 floor (ADR 0002).
 - **Widget budget.** At most 2,000 widgets per side, counted per top-level block. A block that does not fit, and everything after it, is shown as plain text in one label. A hostile 1 MiB list would otherwise build hundreds of thousands of widgets.
 
 **Review.** The front is rendered when a card is shown and the back when it is revealed. If the back is empty (blank), the reveal shows no separator and no back, only Fail and Pass. The card area's accessible label is the front's plain text, and its description the back's once shown.
 
 ## Consequences
 
-- Cards with several paragraphs now render as body text aligned to the start, no longer large and centred.
+- Cards now render as body text aligned to the start, no longer large and centred, whatever their structure.
 - A wide table scrolls with the pointer only, not the keyboard.
 - A link's URL can be seen only by hovering. Keyboard and screen reader users get the link text but not the URL. A follow-up could add the URLs to the accessible description.
 - `fill_scratch_db --markdown` adds a deck with one card per construct, to check them by eye.

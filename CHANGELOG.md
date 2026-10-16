@@ -7,6 +7,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Edit a card during review: **E** or the pencil button in the header bar opens the card editor on the current card. After saving, the card is drawn again in place, and the answer, the timer and the session carry on (time in the editor counts towards the answer time, which is capped at 60 s as always); closing without saving changes nothing. The deck page's list shows the edit when you go back.
 - Markdown cards (ADR 0019). Studying shows both sides rendered: paragraphs, headings, nested lists, code blocks, block quotes, rules, tables, emphasis, strong, strikethrough and inline code. Math (`$…$`, `$$…$$`) is shown as monospace source for now, and dollars used as prices (`$5-$10`, `\$`) stay text. Links are underlined and show their URL when hovered; they cannot be clicked. Images are a placeholder, and remote images are shown as text, never fetched. Raw HTML is shown as typed. A card whose back is empty shows only Fail and Pass after Show Answer. The card list shows each front without Markdown syntax.
 - `cards-core`: the `content` module: `parse` (Markdown → `Document`, nesting capped at 16 levels), `plain_text` and `plain_summary`. New dependency: `pulldown-cmark`.
 - `fill_scratch_db --markdown`: a deck with one card per Markdown construct. A count of 0 now adds no scratch deck.
@@ -19,12 +20,16 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - Tests: the cache property test also adds, deletes and undeletes cards and decks; a file-backed store is reopened; a v2 backup is restored; migration 0005 moves the due date of a late Pass (#13).
 
 ### Changed
+- Every card side looks the same: body text, normal weight, aligned to the start. A card that is one paragraph is no longer large and centred. Headings, code, quotes and tables keep their own styles.
+- Tables have a border, lines between cells and a shaded header row, using theme colours only (`data/style.css`, the app's first stylesheet; ADR 0019).
+- A deck or card deleted on both sides at different times counts as already present in an import, not as a conflict (ADR 0017).
 - Deck names are limited to 1 KiB and card sides to 1 MiB (in bytes), the limits an import accepts, so every export can be imported again. The deck name dialog and the card editor explain a too long text under the field and disable saving; the store refuses it (`Error::DeckNameTooLong`, `Error::CardSideTooLong`).
 - The deck list's "N new · N due" counts like the deck page: new cards still allowed today (20 a day), and due reviews plus step cards due within 20 minutes. `Store::list_decks` takes the study day's start.
 - The deck page's subtitle and Study button update by themselves when a card becomes due or a new study day begins.
 - Docs: CLAUDE.md and README say v0 is released as 0.1.0.
 
 ### Fixed
+- An imported deck name with a NUL character crashed debug builds. Names and card sides with a NUL are now refused, by the import (a precise error naming the field) and when written (`Error::ContainsNul`).
 - Closing the window with unsaved text in the card editor asks "Discard Changes?" first, as Escape does.
 - The deck list cannot push a second page of the same deck when a row is activated again before the first push shows (#20).
 

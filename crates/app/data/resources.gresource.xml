@@ -15,5 +15,7 @@
     <file preprocess="xml-stripblanks">discard_dialog.ui</file>
     <file preprocess="xml-stripblanks">review_page.ui</file>
     <file preprocess="xml-stripblanks">import_dialog.ui</file>
+      <!-- Not compiled: plain CSS, loaded by AdwApplication. -->
+    <file>style.css</file>
   </gresource>
 </gresources>

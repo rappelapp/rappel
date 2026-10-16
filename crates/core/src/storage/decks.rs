@@ -5,7 +5,9 @@ use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior, pa
 
 use super::review::study_input_in;
 use super::{Store, observe_max_id};
-use crate::domain::{Deck, DeckSummary, MAX_DECK_NAME_BYTES, deck_name_fits, deck_name_key};
+use crate::domain::{
+    Deck, DeckSummary, MAX_DECK_NAME_BYTES, deck_name_fits, deck_name_key, has_nul,
+};
 use crate::error::{Error, Result};
 use crate::time::now_ms;
 
@@ -204,6 +206,8 @@ fn deck_name(name: &str) -> Result<&str> {
     let name = name.trim();
     if name.is_empty() {
         Err(Error::EmptyDeckName)
+    } else if has_nul(name) {
+        Err(Error::ContainsNul)
     } else if !deck_name_fits(name) {
         Err(Error::DeckNameTooLong {
             limit: MAX_DECK_NAME_BYTES,

@@ -193,8 +193,8 @@ const MARKDOWN_CARDS: [(&str, &str); 20] = [
         "- 1\n  - 2\n    - 3\n      - 4\n        - 5\n          - 6\n            - 7\n              - 8\n                - 9\n                  - 10\n                    - 11\n                      - 12\n                        - 13\n                          - 14\n                            - 15\n                              - 16\n                                - 17\n                                  - 18",
     ),
     (
-        "A simple front: one short paragraph, large and centred.",
-        "A simple back, also centred.",
+        "A simple front: one short paragraph, like every other card.",
+        "A simple back.",
     ),
     (
         "# A long mixed card\n\nScroll it at 360 px. It has a paragraph with **strong** text and a [link](https://example.org).\n\n- a list item with `code`\n- another, with $x^2$\n\n> a quote\n\n```\ncode block\n```\n\n| a | b |\n|--|--|\n| 1 | 2 |\n\n$$\\sum_{k=1}^{n} k = \\frac{n(n+1)}{2}$$\n\n---\n\nThe end of the front.",
