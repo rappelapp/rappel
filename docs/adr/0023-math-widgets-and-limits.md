@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-16
 - Amends: ADR 0021 point 3 (inline formulas add no widgets) and point 6 (the widget count, the 64 em starting point)
+- Amended: 2026-10-16, by ADR 0024: an inline formula's scroller has no scrollbar (point 1)
 
 ## Context
 

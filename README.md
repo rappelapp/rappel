@@ -24,6 +24,8 @@ scripts/check.sh                           # format, lint, test, licence/advisor
 scripts/install-hooks.sh                   # once per clone: run checks before every commit
 ```
 
+Some tests start GTK, so `scripts/check.sh` needs a display: a desktop session, or `xvfb-run -a scripts/check.sh` without one (as CI does).
+
 To try the app on scratch data instead of your own (60 cards, 30 of them due now):
 
 ```sh

@@ -13,6 +13,7 @@
 - Explain decisions in plain language in your end-of-slice summary, not in long chat messages while working.
 
 ## Hard rules
+- Never discard uncommitted work, yours or mine. If something must be undone, commit or stash it first, and say so. `.claude/settings.json` denies the usual discarding commands (`git restore`, `git checkout --`, `git reset --hard`, `git clean`, force pushes, `git branch -D`, `rm -rf`); do not work around it.
 - `crates/core` never depends on gtk4, glib, gio, libadwaita, or anything UI.
 - `review_events` is append-only. Undo is done with a new event that sets `undoes`.
 - Schema changes only through a new numbered migration, with a test that migrates a DB created by the previous version. Never edit an existing migration.

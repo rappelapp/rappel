@@ -83,33 +83,36 @@ template $RappelCardEditor: Adw.Dialog {
             ]
           }
 
-          Gtk.ScrolledWindow {
-            hscrollbar-policy: never;
-            min-content-height: 96;
-            vexpand: true;
+          // A frame, not a card: GtkFrame clips its child to its rounded
+          // corners (`gtk_frame_init` sets overflow hidden), and libadwaita
+          // draws it as a 1 px border that follows light, dark and high
+          // contrast. A card on the scroller had its corners painted over by
+          // the view's square background, cutting its shadow. The background
+          // is the Adwaita style scheme's (the view colour; mod.rs). No
+          // `inline` class: libadwaita 1.10's style-class docs say it "cannot
+          // be used with GtkSourceView"
+          // (gnome.pages.gitlab.gnome.org/libadwaita/doc/1.10/style-classes.html).
+          Gtk.Frame {
+            child: Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+              min-content-height: 96;
+              vexpand: true;
 
-            styles [
-              "card",
-            ]
+              child: GtkSource.View front_view {
+                buffer: GtkSource.Buffer front_buffer {};
+                monospace: true;
+                wrap-mode: word_char;
+                accepts-tab: false;
+                top-margin: 12;
+                bottom-margin: 12;
+                left-margin: 12;
+                right-margin: 12;
 
-            child: GtkSource.View front_view {
-              buffer: GtkSource.Buffer front_buffer {};
-              monospace: true;
-              wrap-mode: word_char;
-              accepts-tab: false;
-              top-margin: 12;
-              bottom-margin: 12;
-              left-margin: 12;
-              right-margin: 12;
-
-              accessibility {
-                labelled-by: front_label;
-                described-by: front_error;
-              }
-
-              styles [
-                "inline",
-              ]
+                accessibility {
+                  labelled-by: front_label;
+                  described-by: front_error;
+                }
+              };
             };
           }
 
@@ -134,33 +137,27 @@ template $RappelCardEditor: Adw.Dialog {
             ]
           }
 
-          Gtk.ScrolledWindow {
-            hscrollbar-policy: never;
-            min-content-height: 96;
-            vexpand: true;
+          Gtk.Frame {
+            child: Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+              min-content-height: 96;
+              vexpand: true;
 
-            styles [
-              "card",
-            ]
+              child: GtkSource.View back_view {
+                buffer: GtkSource.Buffer back_buffer {};
+                monospace: true;
+                wrap-mode: word_char;
+                accepts-tab: false;
+                top-margin: 12;
+                bottom-margin: 12;
+                left-margin: 12;
+                right-margin: 12;
 
-            child: GtkSource.View back_view {
-              buffer: GtkSource.Buffer back_buffer {};
-              monospace: true;
-              wrap-mode: word_char;
-              accepts-tab: false;
-              top-margin: 12;
-              bottom-margin: 12;
-              left-margin: 12;
-              right-margin: 12;
-
-              accessibility {
-                labelled-by: back_label;
-                described-by: back_error;
-              }
-
-              styles [
-                "inline",
-              ]
+                accessibility {
+                  labelled-by: back_label;
+                  described-by: back_error;
+                }
+              };
             };
           }
 

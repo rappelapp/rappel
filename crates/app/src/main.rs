@@ -7,6 +7,8 @@ mod pages;
 mod render;
 mod startup;
 mod state;
+#[cfg(test)]
+mod testing;
 mod ui;
 mod widgets;
 mod window;

@@ -36,10 +36,12 @@ jobs:
           # First line: build dependencies from README.md.
           # Second line: what the bare container lacks for checkout, rustup,
           # install-action (jq) and linking.
+          # Third line: an X server for the tests that need GTK (ADR 0024).
           apt-get install -y --no-install-recommends \
             libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev gir1.2-gtksource-5 \
             blueprint-compiler libglib2.0-dev-bin \
-            git ca-certificates curl jq build-essential pkg-config
+            git ca-certificates curl jq build-essential pkg-config \
+            xvfb xauth
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -66,5 +68,6 @@ jobs:
           # Only the checksum-verified prebuilt binary; never build from source.
           fallback: none
 
+      # Some tests start GTK, which needs a display; Xvfb is one without a screen.
       - name: Quality gate
-        run: scripts/check.sh
+        run: xvfb-run -a scripts/check.sh

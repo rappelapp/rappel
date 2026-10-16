@@ -15,12 +15,19 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - `scripts/check.sh` runs `cargo deny check -D license-exception-not-encountered`, so a changed licence file of the KaTeX fonts fails the gate (ADR 0023). `deny.toml`: `OFL-1.1` is allowed for `ratex-katex-fonts` only, and RUSTSEC-2026-0192 (`ttf-parser` unmaintained) is ignored with a reason.
+- The quality gate needs a display, because a test starts GTK: CI runs it under Xvfb (`xvfb-run -a scripts/check.sh`, ADR 0024).
 - **Review `RUSTSEC-2026-0192` in `deny.toml` by 2027-01-16**, earlier when RaTeX, `ab_glyph` or `fontdb` update, and remove it once RaTeX moves off `ttf-parser`. Every `ratex-*` bump: read `FONT_NOTICE.txt` of `ratex-katex-fonts` and recompute its hash in `deny.toml`, and check whether `third_party/ratex-cairo` can go.
 
 ### Documentation
 - ADR 0021 (accepted): math rendering with RaTeX, from the `spike/math` experiment. SPEC §1 principle 5 and §4.2 amended. `\oiint` is a known limitation.
 - ADR 0023: math widgets, the 128 em cap, measured costs and the licence gate.
 - CLAUDE.md: don't launch the GUI beyond a quick start check.
+- ADR 0024: inline formula scrollers have no scrollbar, and the tests need a display.
+- CLAUDE.md: never discard uncommitted work. `.claude/settings.json` denies the usual discarding commands for Claude Code (`git restore`, `git checkout --` / `.` / `-f`, `git switch -f`, `git stash drop` / `clear`, `git reset --hard`, `git clean`, `--force`, `-f` and `+refspec` pushes, `git branch -D`, `rm -rf`). `--force-with-lease` stays allowed for rebased slice branches. It is a guard rail for the usual spellings, not a sandbox.
+
+### Fixed
+- An inline formula no longer leaves a gap after it. Pango reserved the width of its scroller's hidden scrollbar (about 46 px) whenever the formula was narrower than that, so `$x$` had some 35 px of blank space after it. Inline formulas now have a scroller without a scrollbar (ADR 0024); one wider than the card still scrolls with a touchpad swipe, touch, a tilt wheel or Shift+wheel (not a plain wheel), with the fade at its edge as the only hint.
+- The card editor's front and back boxes have clean edges: a frame (1 px border, rounded corners that clip the text area) instead of a card whose shadow was cut by the text area's square corners. The background is still the view colour, darker in dark mode.
 
 ## 0.2.0-alpha.1 — 2026-10-16
 

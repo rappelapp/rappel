@@ -57,18 +57,17 @@ mod tests {
         guard.remove();
     }
 
-    /// One test, not three: `Debounce` uses the process-wide default main
-    /// context (`glib::timeout_add_local_once`), which one thread at a time
-    /// may own, and tests run on parallel threads.
+    /// `Debounce` uses the process-wide default main context
+    /// (`glib::timeout_add_local_once`), which one thread at a time may own,
+    /// and tests run on parallel threads: the body runs on the thread that
+    /// owns it (`crate::testing`).
     #[test]
     fn debounce_on_the_default_main_context() {
-        let context = glib::MainContext::default();
-        let _owner = context
-            .acquire()
-            .expect("no other test uses the default main context");
-        only_the_last_restart_runs();
-        a_cancelled_run_never_happens();
-        a_run_may_restart_itself();
+        crate::testing::on_main_context(|| {
+            only_the_last_restart_runs();
+            a_cancelled_run_never_happens();
+            a_run_may_restart_itself();
+        });
     }
 
     fn only_the_last_restart_runs() {

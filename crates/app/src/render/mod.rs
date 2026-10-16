@@ -294,6 +294,26 @@ fn math_scroller(view: &MathView) -> gtk::ScrolledWindow {
     scroller
 }
 
+/// The scroller for a formula in a line of text (ADR 0024). It has no
+/// scrollbar, so its minimum width is 0 and the box Pango reserves for it is
+/// the formula's own width. With a scrollbar policy of `Automatic` (as
+/// [`math_scroller`]), `gtk_scrolled_window_measure` (GTK 4.24) takes
+/// `MAX (minimum_req, min_scrollbar_width + …)` even while the bar is hidden,
+/// which left a gap of about 35 px after a short formula. `External` still
+/// scrolls a formula wider than the line: `may_hscroll` is true for it, and
+/// the scroll and touch handlers check only that. So a horizontal touchpad
+/// swipe, a tilt wheel, Shift+wheel (`scrolled_window_scroll` swaps the
+/// axes) and a touch drag scroll it; a plain wheel and a mouse drag do not
+/// (the drag and pan gestures are touch-only). A vertical wheel event
+/// propagates (`scrolled_in_non_scrollable_dir`), so the page still scrolls
+/// over a formula, and the `undershoot` fade is drawn from the adjustment,
+/// whatever the policy.
+fn inline_math_scroller(view: &MathView) -> gtk::ScrolledWindow {
+    let scroller = math_scroller(view);
+    scroller.set_hscrollbar_policy(gtk::PolicyType::External);
+    scroller
+}
+
 /// A wrapping label of plain `text` (markup off: nothing to escape).
 fn plain_label(text: &str, centred: bool) -> gtk::Label {
     let label = wrapping_label(centred, Role::Label);

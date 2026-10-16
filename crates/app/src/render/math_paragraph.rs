@@ -4,9 +4,10 @@
 //! logical rectangle starts `baseline` above the line, so the formula's
 //! baseline lands on the text's baseline and tall formulas push their line
 //! apart, as in a browser. Each formula is a [`MathView`] in a horizontal
-//! scroller, put where Pango put its box. The box is never wider than the
-//! line, so the text still wraps at the card width, and a formula that is
-//! wider than the line scrolls by itself (ADR 0021, point 3).
+//! scroller without a scrollbar (ADR 0024), put where Pango put its box. The
+//! box is as wide as the formula but never wider than the line, so the text
+//! still wraps at the card width, and a formula that is wider than the line
+//! scrolls by itself (ADR 0021, point 3).
 //!
 //! Text goes through [`markup::Markup`], so it is escaped exactly as in a
 //! label. The widget is not focusable.
@@ -91,7 +92,7 @@ mod imp {
         attrs: RefCell<Option<pango::AttrList>>,
         formulas: RefCell<Vec<Formula>>,
         links: RefCell<Vec<(Range<usize>, String)>>,
-        views: RefCell<Vec<(MathView, gtk::ScrolledWindow)>>,
+        pub(super) views: RefCell<Vec<(MathView, gtk::ScrolledWindow)>>,
         wrap: Cell<bool>,
         /// The last two layouts: GTK alternates between the unlimited width
         /// (the horizontal measure) and the real one.
@@ -201,7 +202,7 @@ mod imp {
             self.wrap.set(wrap);
             for formula in &formulas {
                 let view = MathView::new(&formula.source, formula.display);
-                let scroller = crate::render::math_scroller(&view);
+                let scroller = crate::render::inline_math_scroller(&view);
                 scroller.set_parent(obj);
                 self.views.borrow_mut().push((view, scroller));
             }
@@ -213,7 +214,7 @@ mod imp {
 
         /// The Pango layout for `width` pixels (-1: no limit), made again
         /// only when something it depends on changed.
-        fn layout(&self, width: i32) -> pango::Layout {
+        pub(super) fn layout(&self, width: i32) -> pango::Layout {
             let obj = self.obj();
             let settings = obj.settings();
             let fingerprint = Fingerprint {
@@ -248,8 +249,9 @@ mod imp {
                 self.formulas.borrow().iter().zip(&*self.views.borrow())
             {
                 // The box is what the scroller will be allocated: the
-                // formula's size, or the scroller's minimum if that is more
-                // (with permanent scrollbars it adds the bar), so the
+                // formula's size. The scroller has no scrollbar, so its
+                // minimum is 0 (`inline_math_scroller`); taking the larger
+                // of the two keeps box and allocation equal even so, and the
                 // scroller never covers the text after it.
                 let size = view.size();
                 let baseline = math_view::baseline_px(view);
@@ -338,5 +340,73 @@ mod tests {
         assert_eq!(accessible_text("é", &[]), "é");
         assert_eq!(accessible_text("é", &[formula(1, "x")]), "é");
         assert_eq!(accessible_text("ab", &[formula(40, "x")]), "ab");
+    }
+
+    /// The width Pango reserves for each formula, and the formula's own
+    /// width, in pixels, for "a $source$ b" at the current settings.
+    fn reserved_and_drawn(source: &str) -> (f64, f64) {
+        let markup = Markup {
+            markup: format!("a {} b", markup::PLACEHOLDER),
+            links: Vec::new(),
+            formulas: vec![formula(2, source)],
+        };
+        let paragraph = MathParagraph::new(&markup, true, gtk::AccessibleRole::Paragraph);
+        let layout = paragraph.imp().layout(-1);
+        let reserved = super::super::math::from_pango_units(layout.index_to_pos(2).width());
+        let views = paragraph.imp().views.borrow();
+        let (view, _) = views.first().expect("the paragraph has one formula");
+        (reserved, f64::from(view.size().width))
+    }
+
+    /// "Scale" is the text scaling factor (`gtk-xft-dpi`), which sets the
+    /// font and so the formula size. A `HiDPI` scale factor cannot enter:
+    /// formula sizes, Pango units and allocations are all logical pixels.
+    /// Needs a display; CI runs the tests under Xvfb (ADR 0024). The theme
+    /// is GTK's default, not libadwaita's: the scroller's minimum without a
+    /// scrollbar does not depend on it, but a theme-dependent size would
+    /// not be covered here.
+    #[test]
+    fn the_box_for_an_inline_formula_is_as_wide_as_the_formula() {
+        const SOURCES: [&str; 4] = [
+            "x",
+            r"\alpha",
+            r"\frac{a}{b}+c^2",
+            r"\sum_{i=1}^{n} i^2 = \frac{n(n+1)(2n+1)}{6}",
+        ];
+        /// Puts the text scale back even if the body panics, so later
+        /// tests on the same GTK thread see the default.
+        struct RestoreDpi(gtk::Settings, i32);
+        impl Drop for RestoreDpi {
+            fn drop(&mut self) {
+                self.0.set_gtk_xft_dpi(self.1);
+            }
+        }
+        // (reserved, drawn) for each source at 1×, then at 2×.
+        let widths = crate::testing::with_gtk(|| {
+            let settings = gtk::Settings::default().expect("GTK is initialised");
+            let _restore = RestoreDpi(settings.clone(), settings.gtk_xft_dpi());
+            let mut widths = Vec::new();
+            for scale in [1, 2] {
+                settings.set_gtk_xft_dpi(96 * 1024 * scale);
+                widths.extend(SOURCES.map(reserved_and_drawn));
+            }
+            widths
+        });
+        let (one, two) = widths.split_at(SOURCES.len());
+        for ((source, &(reserved_1, drawn_1)), &(reserved_2, drawn_2)) in
+            SOURCES.iter().zip(one).zip(two)
+        {
+            for (scale, reserved, drawn) in [(1, reserved_1, drawn_1), (2, reserved_2, drawn_2)] {
+                assert!(
+                    (reserved - drawn).abs() <= 1.0,
+                    "{source} at {scale}×: Pango reserves {reserved} px for a formula {drawn} px wide"
+                );
+            }
+            // The text scale really changed the formula's size.
+            assert!(
+                (1.8..=2.2).contains(&(drawn_2 / drawn_1)),
+                "{source}: {drawn_1} px at 1×, {drawn_2} px at 2×"
+            );
+        }
     }
 }
