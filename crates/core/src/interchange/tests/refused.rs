@@ -148,22 +148,6 @@ fn a_repeated_entry_name_is_refused() {
     ));
 }
 
-fn replace_all(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
-    assert_eq!(from.len(), to.len());
-    let mut out = bytes.to_vec();
-    let mut i = 0;
-    let mut n = 0;
-    while i + from.len() <= out.len() {
-        if &out[i..i + from.len()] == from {
-            out[i..i + from.len()].copy_from_slice(to);
-            n += 1;
-        }
-        i += 1;
-    }
-    assert!(n > 0);
-    out
-}
-
 #[test]
 fn a_corrupted_entry_fails_its_crc() {
     let bytes = zip_with(&[(JSON_ENTRY, Some(FIXTURE.as_bytes())), ("media/", None)]);
@@ -588,4 +572,43 @@ fn a_plan_debug_prints_only_the_summary() {
     let shown = format!("{plan:?}");
     assert!(shown.contains("summary"), "{shown}");
     assert!(!shown.contains("2 + 2"), "{shown}");
+}
+
+/// Only a regular file is read. A FIFO would block the import forever (on
+/// open, waiting for a writer), and a device such as `/dev/zero` is
+/// endless; a directory cannot be read at all.
+#[test]
+fn only_regular_files_are_imported() {
+    let env = Env::new();
+    let plan = |path: PathBuf| {
+        let store = Store::open_concurrent(&env.tmp.path().join("data")).unwrap();
+        crate::test_support::within(
+            Duration::from_secs(5),
+            "planning a special file",
+            move || store.plan_import(&path),
+        )
+    };
+    let mut special = vec![env.tmp.path().to_path_buf(), PathBuf::from("/dev/null")];
+    if Path::new("/dev/zero").exists() {
+        special.push(PathBuf::from("/dev/zero"));
+    }
+    let fifo = env.tmp.path().join("pipe.rappel");
+    match std::process::Command::new("mkfifo").arg(&fifo).status() {
+        Ok(status) if status.success() => special.push(fifo),
+        _ => eprintln!("mkfifo is not available: the FIFO case is skipped"),
+    }
+    for path in special {
+        assert_eq!(
+            refused(plan(path.clone())),
+            ImportProblem::NotAFile,
+            "{}",
+            path.display()
+        );
+    }
+    // A symbolic link to a regular file is followed.
+    let file = env.tmp.path().join("real.rappel");
+    fs::write(&file, sample_env().0.export()).unwrap();
+    let link = env.tmp.path().join("link.rappel");
+    std::os::unix::fs::symlink(&file, &link).unwrap();
+    assert!(plan(link).is_ok());
 }

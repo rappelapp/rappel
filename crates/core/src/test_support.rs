@@ -62,3 +62,42 @@ pub(crate) fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     name.push(suffix);
     PathBuf::from(name)
 }
+
+/// The stack hostile input is parsed on in tests: a quarter of what a
+/// spawned thread gets by default (2 MiB) and a sixteenth of the main
+/// thread's usual 8 MiB, so a recursion that only just passes here has a
+/// wide margin in the app. A stack overflow aborts the process; it cannot
+/// be caught.
+pub(crate) const SMALL_STACK: usize = 512 * 1024;
+
+/// Runs `f` on a new thread with a [`SMALL_STACK`] and returns its result,
+/// failing the test if it takes longer than `limit`. A hang fails the test
+/// instead of blocking the run (the thread is left behind; the test
+/// process ends anyway).
+pub(crate) fn within<T: Send + 'static>(
+    limit: Duration,
+    what: &str,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let start = std::time::Instant::now();
+    std::thread::Builder::new()
+        .stack_size(SMALL_STACK)
+        .spawn(move || {
+            // The receiver is gone only if the test already failed.
+            let _ = tx.send(f());
+        })
+        .unwrap();
+    match rx.recv_timeout(limit) {
+        Ok(value) => {
+            if std::env::var_os("RAPPEL_TIMINGS").is_some() {
+                eprintln!("{what}: {:?}", start.elapsed());
+            }
+            value
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("{what} took longer than {limit:?}")
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!("{what} panicked"),
+    }
+}

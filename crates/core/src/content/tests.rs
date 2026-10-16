@@ -517,3 +517,191 @@ proptest! {
         prop_assert!(depth(&doc.blocks) <= MAX_DEPTH + 2);
     }
 }
+
+/// About 1 MiB, the largest card side.
+const MIB: usize = 1 << 20;
+
+/// `unit` repeated to about 1 MiB.
+fn mib_of(unit: &str) -> String {
+    unit.repeat(MIB / unit.len())
+}
+
+/// Pathological card sides of about 1 MiB each: deep nesting, long runs of
+/// delimiters that never close, huge tables, one huge line.
+fn hostile_sides() -> Vec<(&'static str, String)> {
+    let mut nested_lists = String::new();
+    for i in 0..1_000 {
+        nested_lists.push_str(&"  ".repeat(i % 400));
+        nested_lists.push_str("- x\n");
+    }
+    vec![
+        ("block quotes", format!("{}x", ">".repeat(MIB))),
+        ("spaced block quotes", format!("{}x", mib_of("> "))),
+        ("list markers", format!("{}x", mib_of("- "))),
+        ("ordered list markers", format!("{}x", mib_of("1. "))),
+        (
+            "indented lists",
+            nested_lists.repeat(MIB / nested_lists.len()),
+        ),
+        ("open brackets", mib_of("[")),
+        ("open image brackets", mib_of("![")),
+        ("bracket pairs", mib_of("[a](")),
+        (
+            "nested links",
+            format!("{}x{}", "[".repeat(MIB / 4), "](u)".repeat(MIB / 16)),
+        ),
+        ("stars", mib_of("*")),
+        ("alternating emphasis", mib_of("*_")),
+        ("emphasis openers", mib_of("*a ")),
+        ("underscores in words", mib_of("a_")),
+        ("tildes", mib_of("~")),
+        ("backticks", mib_of("`")),
+        (
+            "growing backtick runs",
+            (1..1_400).map(|n| "`".repeat(n) + "x").collect(),
+        ),
+        ("dollars", mib_of("$")),
+        ("double dollars", mib_of("$$")),
+        ("dollar text", mib_of("$a")),
+        ("display math lines", mib_of("$$\n")),
+        ("less-than", mib_of("<")),
+        ("html openers", mib_of("<a ")),
+        ("html blocks", mib_of("<div>\n")),
+        ("autolinks", mib_of("<http://a")),
+        ("entities", mib_of("&#")),
+        ("backslashes", mib_of("\\")),
+        ("hard breaks", mib_of("a\\\n")),
+        ("headings", mib_of("# ")),
+        ("setext", mib_of("a\n=\n")),
+        ("rules", mib_of("---\n")),
+        (
+            "table columns",
+            format!(
+                "{}\n{}\n{}",
+                mib_of("|a").chars().take(MIB / 3).collect::<String>(),
+                "|-".repeat(MIB / 6),
+                "|b".repeat(MIB / 6)
+            ),
+        ),
+        ("table rows", format!("|a|b|\n|-|-|\n{}", mib_of("|c|d|\n"))),
+        ("pipes", mib_of("|")),
+        ("link definitions", mib_of("[a]: b\n")),
+        ("link references", format!("[a]: u\n{}", mib_of("[a]"))),
+        ("fenced code openers", mib_of("```\n")),
+        ("indented code", mib_of("    x\n")),
+        ("one long line", mib_of("word ")),
+        ("blank lines", mib_of("\n")),
+        ("nul characters", mib_of("\0")),
+        ("replacement characters", mib_of("\u{FFFD}")),
+        ("combining marks", format!("a{}", mib_of("\u{0301}"))),
+        ("right-to-left overrides", mib_of("\u{202E}a")),
+        ("mixed", mib_of("> - [*`$<|#\\")),
+    ]
+}
+
+/// How many nodes `blocks` has, counting every block, inline, list item
+/// and table cell.
+fn node_count(blocks: &[Block]) -> usize {
+    blocks
+        .iter()
+        .map(|block| {
+            1 + match block {
+                Block::Paragraph(inlines)
+                | Block::Heading {
+                    content: inlines, ..
+                } => inline_count(inlines),
+                Block::List { items, .. } => items.iter().map(|item| 1 + node_count(item)).sum(),
+                Block::BlockQuote(blocks) => node_count(blocks),
+                Block::Table { header, rows, .. } => std::iter::once(header)
+                    .chain(rows)
+                    .flatten()
+                    .map(|cell| 1 + inline_count(cell))
+                    .sum(),
+                Block::CodeBlock { .. } | Block::Rule | Block::DisplayMath(_) => 0,
+            }
+        })
+        .sum()
+}
+
+fn inline_count(inlines: &[Inline]) -> usize {
+    inlines
+        .iter()
+        .map(|inline| {
+            1 + match inline {
+                Inline::Emphasis(inner)
+                | Inline::Strong(inner)
+                | Inline::Strikethrough(inner)
+                | Inline::Link { content: inner, .. } => inline_count(inner),
+                _ => 0,
+            }
+        })
+        .sum()
+}
+
+/// The text the tree holds, in bytes: what it costs in memory besides
+/// the nodes.
+fn text_bytes(doc: &Document) -> usize {
+    plain_text(doc).len()
+}
+
+#[test]
+fn hostile_sides_parse_quickly_on_a_small_stack_and_stay_bounded() {
+    for (name, md) in hostile_sides() {
+        let len = md.len();
+        assert!(len <= MIB + 64, "{name}: {len} bytes");
+        let doc = crate::test_support::within(
+            std::time::Duration::from_secs(HOSTILE_PARSE_SECS),
+            name,
+            move || parse(&md),
+        );
+        assert!(depth(&doc.blocks) <= MAX_DEPTH + 2, "{name}");
+        // No blow-up: never more nodes than input bytes, and the text is
+        // at most the input with each NUL (1 byte) as U+FFFD (3 bytes)
+        // and a line break per block.
+        let nodes = node_count(&doc.blocks);
+        assert!(nodes <= len, "{name}: {nodes} nodes for {len} bytes");
+        let text = text_bytes(&doc);
+        assert!(text <= 3 * len + nodes, "{name}: {text} bytes of text");
+    }
+}
+
+#[test]
+fn hostile_sides_summarise_quickly() {
+    for (name, md) in hostile_sides() {
+        let summary = crate::test_support::within(
+            std::time::Duration::from_secs(HOSTILE_SUMMARY_SECS),
+            name,
+            move || plain_summary(&md),
+        );
+        assert!(summary.chars().count() <= PREVIEW_CHARS, "{name}");
+    }
+}
+
+/// Bound on parsing one 1 MiB hostile side in a debug test build: about
+/// 10 times the slowest measured, 0.56 s (ADR 0025).
+const HOSTILE_PARSE_SECS: u64 = 6;
+/// Bound on the one-line summary of a hostile side, which parses only the
+/// first 16 KiB.
+const HOSTILE_SUMMARY_SECS: u64 = 2;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+
+    /// A random run of syntax repeated to 256 KiB: the shape of the
+    /// hostile sides above, found by search instead of by hand.
+    #[test]
+    fn repeated_random_syntax_parses_quickly_and_stays_bounded(unit in markdownish()) {
+        prop_assume!(!unit.is_empty());
+        let md = unit.repeat((256 * 1024) / unit.len() + 1);
+        let len = md.len();
+        let doc = crate::test_support::within(
+            std::time::Duration::from_secs(HOSTILE_PARSE_SECS),
+            "repeated random syntax",
+            move || parse(&md),
+        );
+        prop_assert!(depth(&doc.blocks) <= MAX_DEPTH + 2);
+        let nodes = node_count(&doc.blocks);
+        prop_assert!(nodes <= len, "{} nodes for {} bytes", nodes, len);
+        prop_assert!(text_bytes(&doc) <= 3 * len + nodes);
+    }
+}

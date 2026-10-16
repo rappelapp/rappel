@@ -172,5 +172,6 @@ mod cache;
 mod fresh;
 mod integrity;
 mod migrations;
+mod perf;
 mod reopen;
 mod schema_rules;

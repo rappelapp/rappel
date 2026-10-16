@@ -291,6 +291,35 @@ fn list_is_sorted_by_name_ignoring_case() {
 }
 
 #[test]
+fn decks_and_deck_read_live_decks_without_counts() {
+    let mut store = Store::in_memory();
+    for name in ["physics", "Algebra", "Écologie", "biology"] {
+        store.create_deck_at(name, T0).unwrap();
+    }
+    let gone = store.create_deck_at("Gone", T0).unwrap();
+    store.delete_deck_at(&gone.id, T0).unwrap();
+
+    let listed: Vec<Deck> = store
+        .list_decks(T0, T0)
+        .unwrap()
+        .into_iter()
+        .map(|s| s.deck)
+        .collect();
+    let decks = store.decks().unwrap();
+    assert_eq!(decks, listed);
+    assert_eq!(decks.len(), 4);
+    for deck in &decks {
+        assert_eq!(&store.deck(&deck.id).unwrap(), deck);
+    }
+
+    let missing = "01920000-0000-7000-8000-00000000dead";
+    assert!(matches!(store.deck(missing), Err(Error::DeckNotFound(id)) if id == missing));
+    assert!(matches!(store.deck(&gone.id), Err(Error::DeckNotFound(_))));
+    store.undelete_deck(&gone.id).unwrap();
+    assert_eq!(store.deck(&gone.id).unwrap().name, "Gone");
+}
+
+#[test]
 fn counts_new_and_due_live_cards() {
     let mut store = Store::in_memory();
     let maths = store.create_deck_at("Maths", T0).unwrap();

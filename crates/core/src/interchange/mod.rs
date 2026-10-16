@@ -187,6 +187,9 @@ pub enum ImportProblem {
         /// The limit, in bytes.
         limit: u64,
     },
+    /// The path is not a regular file (a directory, a pipe, a device).
+    #[error("it is not a regular file (a folder, a pipe or a device)")]
+    NotAFile,
     /// The file is not a zip archive, or a damaged one (`0` says what the
     /// zip reader found).
     #[error("not a valid Rappel export: {0}")]

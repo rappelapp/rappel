@@ -7,6 +7,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `Store::deck` and `Store::decks` read decks without counting their cards (for the deck list, issue #42).
 - The card editor is a Markdown editor (SPEC §4.4, ADR 0022): front and back use GtkSourceView with Markdown highlighting, a monospace font and line wrapping, in colours that follow the light or dark style. A live preview, rendered as on the review page, sits beside the text when the dialog is wide and below it when narrow; the Preview button in the header bar shows or hides it. The preview updates a quarter of a second after typing pauses, and shows only the first 32 KiB of each side (with a note), because laying out a very long paragraph froze the editor. **Ctrl+B** / **Ctrl+I** wrap the selection in `**bold**` / `*italic*` markers, or insert empty ones at the cursor; Ctrl+Z undoes them in one step. The dialog opens larger (960 × 640) and is still a bottom sheet on a narrow window.
 - New dependency: `sourceview5` (Rust bindings for GtkSourceView 5). Building now needs the GtkSourceView 5 development files and introspection data (see README).
 - Math is drawn (SPEC §4.2, ADR 0021, 0023). `$…$` sits in the text on the text baseline and wraps with it; `$$…$$` is a centred block. Both follow the light or dark theme live (drawn as vectors, meant to stay sharp on HiDPI screens), work on the review page and in the editor's preview, and carry their LaTeX source as the accessible label. HiDPI and screen readers are still to be checked in the running app. A formula wider than the card scrolls sideways on its own. Invalid LaTeX is shown as its source in the error style. Limits: 200 formulas per card side (the rest stay source), sources over 4 KiB and formulas over 128 em in either direction stay source. `\href` and `\url` show their text and are never links. Known limits: `\oiint` draws wrongly, `\mathbb{1}` is an upright 1.
@@ -14,7 +15,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - New dependencies: `ratex-parser`, `ratex-layout`, `ratex-types` (MIT) and `ratex-cairo` (MIT, vendored in `third_party/ratex-cairo` with `cairo-rs` bumped to 0.22, used through `[patch.crates-io]`), which also bring `ratex-katex-fonts` (the KaTeX fonts, SIL OFL 1.1; credited in the README, licence text in `LICENSES/`). About 60 more packages in all, and up to 5 MB in the binary.
 
 ### Changed
-- `scripts/check.sh` runs `cargo deny check -D license-exception-not-encountered`, so a changed licence file of the KaTeX fonts fails the gate (ADR 0023). `deny.toml`: `OFL-1.1` is allowed for `ratex-katex-fonts` only, and RUSTSEC-2026-0192 (`ttf-parser` unmaintained) is ignored with a reason.
+- Attack tests in the gate (issue #42): 1 MiB hostile Markdown sides and random syntax, damaged and lying zip archives, random and damaged JSON, all within time bounds on a small stack; speed bounds at 5,000 cards with 2,000 due; the import's peak memory.- `scripts/check.sh` runs `cargo deny check -D license-exception-not-encountered`, so a changed licence file of the KaTeX fonts fails the gate (ADR 0023). `deny.toml`: `OFL-1.1` is allowed for `ratex-katex-fonts` only, and RUSTSEC-2026-0192 (`ttf-parser` unmaintained) is ignored with a reason.
 - The quality gate needs a display, because a test starts GTK: CI runs it under Xvfb (`xvfb-run -a scripts/check.sh`, ADR 0024).
 - `rappel-core` makes public only what the app or `fill_scratch_db` uses. Items no front end used (e.g. `Scheduler`, `NEW_PER_DAY`, `interleave`, `has_nul`, `MAX_DEPTH`, `FORMAT_VERSION`, `DB_FILE_NAME`) are crate-private now, and the few only tests used (`is_valid_app_id`, `Scheduler::new`) are test-only. No behaviour change.
 - Core tests share their helpers (`test_support.rs`), and the export/import and store tests are split by topic into `tests/` directories. The import file checks are one function per table, in the same order. No test was changed or dropped.
@@ -22,6 +23,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - **Review `RUSTSEC-2026-0192` in `deny.toml` by 2027-01-16**, earlier when RaTeX, `ab_glyph` or `fontdb` update, and remove it once RaTeX moves off `ttf-parser`. Every `ratex-*` bump: read `FONT_NOTICE.txt` of `ratex-katex-fonts` and recompute its hash in `deny.toml`, and check whether `third_party/ratex-cairo` can go.
 
 ### Documentation
+- ADR 0025: a review of every place untrusted input comes in, each finding fixed or accepted, and the time and memory limits measured (issue #42).
 - SPEC §1 principle 6: adaptive from phone (360 px) to desktop, touch-friendly, ready for mobile Linux. SPEC §2 no longer says the app uses `anyhow`.
 - CLAUDE.md: the quality gate needs a display (`xvfb-run -a scripts/check.sh` without one; CI uses Xvfb), the gate command matches `scripts/check.sh`, and the status line points to SPEC.
 - ADRs that later ADRs amend now say so in an `Amended by:` header line (ADR 0001 describes these lines).
@@ -32,6 +34,9 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - CLAUDE.md: never discard uncommitted work. `.claude/settings.json` denies the usual discarding commands for Claude Code (`git restore`, `git checkout --` / `.` / `-f`, `git switch -f`, `git stash drop` / `clear`, `git reset --hard`, `git clean`, `--force`, `-f` and `+refspec` pushes, `git branch -D`, `rm -rf`). `--force-with-lease` stays allowed for rebased slice branches. It is a guard rail for the usual spellings, not a sandbox.
 
 ### Fixed
+- Importing a named pipe no longer hangs the import (and Import and Export with it) until restart, and a device such as `/dev/zero` is not read: only regular files are imported (ADR 0025).
+- Import refuses a zip whose entries overlap (two records pointing at the same bytes). Rappel never writes such files.
+- Planning an import needs less memory at its peak: the archive and the decompressed JSON are freed as soon as they are no longer needed (extrapolated to the 256 MiB limit: at most about 895 MiB instead of 1,150 MiB).
 - An inline formula no longer leaves a gap after it. Pango reserved the width of its scroller's hidden scrollbar (about 46 px) whenever the formula was narrower than that, so `$x$` had some 35 px of blank space after it. Inline formulas now have a scroller without a scrollbar (ADR 0024); one wider than the card still scrolls with a touchpad swipe, touch, a tilt wheel or Shift+wheel (not a plain wheel), with the fade at its edge as the only hint.
 - The card editor's front and back boxes have clean edges: a frame (1 px border, rounded corners that clip the text area) instead of a card whose shadow was cut by the text area's square corners. The background is still the view colour, darker in dark mode.
 

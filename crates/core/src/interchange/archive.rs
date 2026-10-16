@@ -18,6 +18,9 @@ pub(super) const JSON_ENTRY: &str = "cards.json";
 /// The media directory's entry name (empty in format version 1).
 pub(super) const MEDIA_DIR: &str = "media/";
 
+/// Length of a local file header without its name and extra field.
+const LOCAL_HEADER_LEN: u64 = 30;
+
 /// Length of the end of central directory record without a comment.
 const EOCD_LEN: usize = 22;
 const EOCD_SIGNATURE: [u8; 4] = *b"PK\x05\x06";
@@ -51,8 +54,9 @@ pub(super) fn read_cards_json(bytes: &[u8], limits: &Limits) -> Result<Vec<u8>, 
         ));
     }
 
-    let mut json_index = None;
-    let mut media_seen = false;
+    // cards.json's index and the bytes it takes; the bytes `media/` takes.
+    let mut json = None;
+    let mut media_span = None;
     for i in 0..zip.len() {
         // Raw: only the metadata is looked at, nothing is decompressed.
         let entry = zip.by_index_raw(i).map_err(|e| invalid(&e))?;
@@ -65,20 +69,28 @@ pub(super) fn read_cards_json(bytes: &[u8], limits: &Limits) -> Result<Vec<u8>, 
                 if entry.encrypted() || !entry.is_file() || !stored_ok {
                     return Err(ImportProblem::UnsupportedEntry(JSON_ENTRY));
                 }
-                json_index = Some(i);
+                json = Some((i, span(&entry, name)));
             }
             name if name == MEDIA_DIR.as_bytes() => {
                 if entry.encrypted() || !entry.is_dir() || entry.size() != 0 {
                     return Err(ImportProblem::UnsupportedEntry(MEDIA_DIR));
                 }
-                media_seen = true;
+                media_span = Some(span(&entry, name));
             }
             other => return Err(ImportProblem::UnexpectedEntry(shown_name(other))),
         }
     }
-    let json_index = json_index.ok_or(ImportProblem::MissingEntry(JSON_ENTRY))?;
-    if !media_seen {
-        return Err(ImportProblem::MissingEntry(MEDIA_DIR));
+    let (json_index, json_span) = json.ok_or(ImportProblem::MissingEntry(JSON_ENTRY))?;
+    let media_span = media_span.ok_or(ImportProblem::MissingEntry(MEDIA_DIR))?;
+    // Two central records may point at the same bytes (overlapping
+    // entries, the trick of the "better" zip bombs). Only cards.json is
+    // ever read, so this is refused as a malformed file rather than as a
+    // danger: the entries must not overlap, and both must end before the
+    // central directory starts.
+    let cd_start = zip.central_directory_start();
+    let overlap = json_span.start < media_span.end && media_span.start < json_span.end;
+    if overlap || json_span.end > cd_start || media_span.end > cd_start {
+        return Err(not_layout());
     }
 
     // The declared size is not trusted: reading stops one byte past the
@@ -120,6 +132,25 @@ fn declared_entries(bytes: &[u8]) -> Result<usize, ImportProblem> {
         return Err(not_cards());
     }
     Ok(usize::from(total))
+}
+
+/// The bytes `entry` takes: from its local header to the end of its
+/// data. `by_index_raw` has read the local header, so the data start is
+/// known; if it were not, the header without its extra field is the least
+/// the entry takes. A data descriptor after the data is not counted.
+fn span(entry: &zip::read::ZipFile<'_, Cursor<&[u8]>>, name: &[u8]) -> std::ops::Range<u64> {
+    let start = entry.header_start();
+    let data = entry.data_start().unwrap_or_else(|| {
+        start
+            .saturating_add(LOCAL_HEADER_LEN)
+            .saturating_add(name.len() as u64)
+    });
+    start..data.saturating_add(entry.compressed_size())
+}
+
+/// Entries that overlap or reach into the central directory.
+fn not_layout() -> ImportProblem {
+    ImportProblem::InvalidArchive("entries overlap or are out of place".to_owned())
 }
 
 fn invalid(err: &zip::result::ZipError) -> ImportProblem {

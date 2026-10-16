@@ -64,6 +64,24 @@ fn archive_of(value: &Value) -> Vec<u8> {
     write_archive(&serde_json::to_vec(value).unwrap()).unwrap()
 }
 
+/// `bytes` with every `from` replaced by `to`, the same length; `from`
+/// must occur.
+fn replace_all(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
+    assert_eq!(from.len(), to.len());
+    let mut out = bytes.to_vec();
+    let mut i = 0;
+    let mut n = 0;
+    while i + from.len() <= out.len() {
+        if &out[i..i + from.len()] == from {
+            out[i..i + from.len()].copy_from_slice(to);
+            n += 1;
+        }
+        i += 1;
+    }
+    assert!(n > 0);
+    out
+}
+
 /// A small but varied database: a renamed deck, a deleted deck, edited,
 /// deleted and undeleted cards, and reviews on live and deleted cards.
 /// Returns the store and the ids of the live deck and its first card.
@@ -190,6 +208,7 @@ fn diverged() -> (Env, Env, String, String) {
 mod concurrent;
 mod conflicts;
 mod format;
+mod fuzz;
 mod large;
 mod property;
 mod refused;

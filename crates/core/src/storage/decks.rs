@@ -90,20 +90,7 @@ impl Store {
     /// SQLite errors.
     pub fn list_decks(&self, now: i64, day_start: i64) -> Result<Vec<DeckSummary>> {
         let tx = self.conn.unchecked_transaction()?;
-        let decks = {
-            let mut stmt = tx.prepare(
-                "SELECT id, name, created_at, updated_at FROM decks WHERE deleted_at IS NULL",
-            )?;
-            stmt.query_map([], |r| {
-                Ok(Deck {
-                    id: r.get(0)?,
-                    name: r.get(1)?,
-                    created_at: r.get(2)?,
-                    updated_at: r.get(3)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-        };
+        let decks = live_decks(&tx)?;
         let mut summaries = Vec::with_capacity(decks.len());
         for deck in decks {
             // The deck page's own rules (ADR 0014), so both always agree.
@@ -116,8 +103,33 @@ impl Store {
         }
         // Read only: ending it commits nothing.
         tx.finish()?;
-        summaries.sort_by_cached_key(|d| (deck_name_key(&d.deck.name), d.deck.id.clone()));
         Ok(summaries)
+    }
+
+    /// Every live deck, sorted as in [`Self::list_decks`], without the
+    /// counts: one query, whatever the number of cards.
+    ///
+    /// # Errors
+    /// SQLite errors.
+    pub fn decks(&self) -> Result<Vec<Deck>> {
+        live_decks(&self.conn)
+    }
+
+    /// Live deck `id`, without its counts.
+    ///
+    /// # Errors
+    /// [`Error::DeckNotFound`] if there is no such deck or it was deleted,
+    /// SQLite errors.
+    pub fn deck(&self, id: &str) -> Result<Deck> {
+        self.conn
+            .query_row(
+                "SELECT id, name, created_at, updated_at FROM decks
+                 WHERE id = ?1 AND deleted_at IS NULL",
+                [id],
+                deck_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| Error::DeckNotFound(id.to_owned()))
     }
 
     /// Soft-deletes deck `id` and its live cards. They all get the same
@@ -199,6 +211,26 @@ impl Store {
         tx.commit()?;
         Ok(deck)
     }
+}
+
+/// Every live deck, sorted by name key ([`deck_name_key`]), then id.
+fn live_decks(conn: &Connection) -> Result<Vec<Deck>> {
+    let mut stmt = conn
+        .prepare("SELECT id, name, created_at, updated_at FROM decks WHERE deleted_at IS NULL")?;
+    let mut decks = stmt
+        .query_map([], deck_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    decks.sort_by_cached_key(|d| (deck_name_key(&d.name), d.id.clone()));
+    Ok(decks)
+}
+
+fn deck_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Deck> {
+    Ok(Deck {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        created_at: r.get(2)?,
+        updated_at: r.get(3)?,
+    })
 }
 
 /// `name` trimmed, if it is not empty and not too long to import again.

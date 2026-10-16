@@ -2,7 +2,7 @@
 //! apply (back up, then one transaction).
 
 use std::collections::{BTreeSet, HashSet};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
@@ -37,15 +37,30 @@ impl Store {
     }
 
     /// [`Self::plan_import`] with explicit limits, for tests.
+    ///
+    /// Each buffer is dropped as soon as the next one is made, so the peak
+    /// is the larger of archive + JSON and JSON + document, not their sum
+    /// (ADR 0025).
     pub(crate) fn plan_import_with(&self, path: &Path, limits: &Limits) -> Result<ImportPlan> {
-        let bytes = read_limited(path, limits.archive)?;
-        self.plan_import_bytes(&bytes, limits)
+        let json = {
+            let bytes = read_limited(path, limits.archive)?;
+            archive::read_cards_json(&bytes, limits).map_err(Error::ImportRefused)?
+        };
+        self.plan_import_json(json, limits)
     }
 
     /// [`Self::plan_import`] on the archive bytes.
+    #[cfg(test)]
     pub(crate) fn plan_import_bytes(&self, bytes: &[u8], limits: &Limits) -> Result<ImportPlan> {
         let json = archive::read_cards_json(bytes, limits).map_err(Error::ImportRefused)?;
+        self.plan_import_json(json, limits)
+    }
+
+    /// [`Self::plan_import`] on the decompressed `cards.json`, which is
+    /// dropped once parsed.
+    fn plan_import_json(&self, json: Vec<u8>, limits: &Limits) -> Result<ImportPlan> {
         let document = validate::parse(&json, limits).map_err(Error::ImportRefused)?;
+        drop(json);
         let tx = self.conn.unchecked_transaction()?;
         let classified = classify(&tx, &document)?;
         // Read only: ending the transaction cannot lose anything.
@@ -145,9 +160,23 @@ fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>> {
         path: path.to_path_buf(),
         source,
     };
+    // Only a regular file: opening a FIFO blocks until something writes
+    // to it (the import would never end), and a device such as /dev/zero
+    // never ends. Checked before opening, through symbolic links, and
+    // again on the open file. A FIFO swapped in between the two checks
+    // would still block; the path comes from the user's own file chooser,
+    // so that race is accepted (ADR 0025).
+    let not_a_file = || Error::ImportRefused(ImportProblem::NotAFile);
+    if !fs::metadata(path).map_err(io_err)?.is_file() {
+        return Err(not_a_file());
+    }
     let file = File::open(path).map_err(io_err)?;
+    let metadata = file.metadata().map_err(io_err)?;
+    if !metadata.is_file() {
+        return Err(not_a_file());
+    }
     let too_large = Error::ImportRefused(ImportProblem::FileTooLarge { limit });
-    if file.metadata().map_err(io_err)?.len() > limit {
+    if metadata.len() > limit {
         return Err(too_large);
     }
     let mut bytes = Vec::new();
