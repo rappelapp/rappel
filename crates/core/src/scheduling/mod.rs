@@ -22,7 +22,9 @@
 //! `storage::record_review` observes the log's largest id first).
 
 pub(crate) mod fuzz;
-pub mod session;
+pub(crate) mod session;
+
+pub use session::{Due, Session, StudyInput, Summary, capped};
 
 use fsrs::{FSRS, MemoryState};
 

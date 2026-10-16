@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use rappel_core::domain::{Card, CardState, Deck, DeckSummary, Grade, ReviewEvent};
 use rappel_core::interchange::{ExportSummary, ImportPlan, ImportReport};
-use rappel_core::scheduling::session::StudyInput;
+use rappel_core::scheduling::StudyInput;
 use rappel_core::storage::{self, BackupInfo, OpenWarning, Restored, Store};
 
 use crate::clock::local_day_start_ms;
@@ -154,14 +154,13 @@ impl AppState {
         self.0.store.borrow().card(id)
     }
 
-    /// What a deck has to study (see [`Store::study_input`]).
-    pub fn study_input(
-        &self,
-        deck_id: &str,
-        now: i64,
-        day_start: i64,
-    ) -> rappel_core::Result<StudyInput> {
-        self.0.store.borrow().study_input(deck_id, now, day_start)
+    /// What a deck has to study at `now`, with the study day starting at
+    /// 04:00 local (`local_day_start_ms`; see [`Store::study_input`]).
+    pub fn study_input(&self, deck_id: &str, now: i64) -> rappel_core::Result<StudyInput> {
+        self.0
+            .store
+            .borrow()
+            .study_input(deck_id, now, local_day_start_ms(now))
     }
 
     /// When what a deck has to study next changes (see

@@ -2,13 +2,13 @@
 
 mod clock;
 mod dialogs;
-mod interchange;
 mod pages;
 mod render;
 mod startup;
 mod state;
 #[cfg(test)]
 mod testing;
+mod transfer;
 mod ui;
 mod widgets;
 mod window;

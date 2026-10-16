@@ -23,20 +23,19 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 use rappel_core::content::{self, Document};
 use rappel_core::domain::{CardState, Deck, Grade};
-use rappel_core::scheduling::session::{Session, Summary, capped};
+use rappel_core::scheduling::{Session, Summary, capped};
 
-use crate::clock::local_day_start_ms;
 use crate::dialogs::card_editor::{CardEditor, Saved};
 use crate::render::{back_shown, clear, fill};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
-use crate::ui::toast::{log_failure, persistent_toast, show_toast_from};
 use crate::ui::{init_once, nav};
 
 type OnSaved = dyn Fn(Saved);
 
 mod imp {
     use std::cell::{Cell, OnceCell, RefCell};
+    use std::rc::Rc;
     use std::time::Instant;
 
     use adw::prelude::*;
@@ -44,11 +43,12 @@ mod imp {
     use gtk::glib;
     use rappel_core::content::Document;
     use rappel_core::domain::Deck;
-    use rappel_core::scheduling::session::Session;
+    use rappel_core::scheduling::Session;
 
     use super::OnSaved;
     use crate::state::AppState;
     use crate::ui::callback::Callback;
+    use crate::ui::toast::ErrorSlot;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
     #[template(resource = "/io/github/rsmirke/Rappel/review_page.ui")]
@@ -87,9 +87,9 @@ mod imp {
         pub revealed_at: Cell<Option<Instant>>,
         /// The last error toast, replaced rather than stacked when saving
         /// keeps failing.
-        pub error_toast: RefCell<Option<adw::Toast>>,
+        pub errors: ErrorSlot,
         /// Whether the card editor is open.
-        pub editing: Cell<bool>,
+        pub editing: Rc<Cell<bool>>,
         /// Told about every save made from this page's editor.
         pub on_saved: OnceCell<Callback<OnSaved>>,
     }
@@ -204,7 +204,7 @@ impl ReviewPage {
         on_saved: impl Fn(Saved) + 'static,
     ) -> rappel_core::Result<Self> {
         let now = rappel_core::time::now_ms();
-        let input = state.study_input(&deck.id, now, local_day_start_ms(now))?;
+        let input = state.study_input(&deck.id, now)?;
         let page: Self = glib::Object::new();
         let imp = page.imp();
         // Deck names are untrusted; AdwWindowTitle shows plain text.
@@ -301,16 +301,10 @@ impl ReviewPage {
                 return;
             }
         };
-        let front = content::parse(&card.front_md);
-        fill(&imp.front_box, &front);
+        self.show_front(&content::parse(&card.front_md));
         clear(&imp.back_box);
         imp.back_box.set_visible(false);
         imp.back_separator.set_visible(false);
-        // Screen readers read the front when the card area has the focus.
-        imp.card_area
-            .update_property(&[gtk::accessible::Property::Label(&content::plain_text(
-                &front,
-            ))]);
         imp.card_area
             .reset_property(gtk::AccessibleProperty::Description);
         imp.back.replace(content::parse(&card.back_md));
@@ -335,6 +329,17 @@ impl ReviewPage {
         self.show_back(&back);
         self.set_controls(Controls::Grade);
         imp.card_area.grab_focus();
+    }
+
+    /// Shows `front`. Screen readers read it when the card area has the
+    /// focus.
+    fn show_front(&self, front: &Document) {
+        let imp = self.imp();
+        fill(&imp.front_box, front);
+        imp.card_area
+            .update_property(&[gtk::accessible::Property::Label(&content::plain_text(
+                front,
+            ))]);
     }
 
     /// Shows `back` under the front, or nothing when it is empty: then
@@ -367,19 +372,20 @@ impl ReviewPage {
         ) else {
             return;
         };
-        if imp.editing.replace(true) {
+        if imp.editing.get() {
             return;
         }
         // Read again, so the editor starts from what is stored.
         let card = match state.card(&id) {
             Ok(card) => card,
             Err(err) => {
-                imp.editing.set(false);
                 self.error_toast(&format!("The card could not be read: {err}"));
                 return;
             }
         };
-        let editor = CardEditor::new(
+        CardEditor::open(
+            self,
+            &imp.editing,
             state.clone(),
             &deck.id,
             Some(&card),
@@ -388,18 +394,14 @@ impl ReviewPage {
                 self,
                 move |saved| page.saved(saved)
             ),
-        );
-        editor.connect_closed(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move |_| {
-                page.imp().editing.set(false);
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
                 // Set here, not left to whatever focus the dialog restores:
                 // the card area must have it for the keys to work.
-                page.park_focus();
-            }
-        ));
-        editor.show(self);
+                move || page.park_focus()
+            ),
+        );
     }
 
     /// A save made from the editor: shows the card on screen again if it
@@ -420,12 +422,7 @@ impl ReviewPage {
     /// changes: the reveal, the timers and the session stay as they are.
     fn redraw(&self, front_md: &str, back_md: &str) {
         let imp = self.imp();
-        let front = content::parse(front_md);
-        fill(&imp.front_box, &front);
-        imp.card_area
-            .update_property(&[gtk::accessible::Property::Label(&content::plain_text(
-                &front,
-            ))]);
+        self.show_front(&content::parse(front_md));
         let back = content::parse(back_md);
         if imp.revealed.get() {
             self.show_back(&back);
@@ -510,12 +507,7 @@ impl ReviewPage {
     /// Shows `message`, dismissing the previous error toast of this page
     /// first, so a toast that stays until dismissed does not hold it back.
     fn error_toast(&self, message: &str) {
-        log_failure("a review operation", message);
-        let toast = persistent_toast(message);
-        if let Some(old) = self.imp().error_toast.replace(Some(toast.clone())) {
-            old.dismiss();
-        }
-        show_toast_from(self, toast);
+        self.imp().errors.show(self, "a review operation", message);
     }
 }
 

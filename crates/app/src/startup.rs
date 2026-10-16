@@ -121,6 +121,16 @@ pub fn data_folder_line(dir: &Path) -> String {
     format!("Data folder: {}", dir.display())
 }
 
+/// The "too new" page's description: the database is version `found`, and
+/// this build supports up to `supported`.
+pub fn too_new_text(found: i64, supported: u32) -> String {
+    format!(
+        "This database was made by a newer version of Rappel (database version {found}; \
+         this version supports up to {supported}). Update Rappel to open it. The database \
+         has not been changed."
+    )
+}
+
 /// The screen for a data directory that could not be resolved or created.
 pub fn data_dir_problem(err: &Error) -> Problem {
     let (message, data_dir) = match err {
@@ -229,6 +239,16 @@ mod tests {
                 supported: 5,
                 data_dir: dir(),
             }
+        );
+    }
+
+    #[test]
+    fn the_too_new_text_names_both_versions() {
+        assert_eq!(
+            too_new_text(7, 5),
+            "This database was made by a newer version of Rappel (database version 7; \
+             this version supports up to 5). Update Rappel to open it. The database has \
+             not been changed."
         );
     }
 

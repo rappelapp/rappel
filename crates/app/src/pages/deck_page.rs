@@ -17,20 +17,21 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gio, glib};
 use rappel_core::domain::{Card, Deck};
-use rappel_core::scheduling::session::StudyInput;
+use rappel_core::scheduling::StudyInput;
 
-use crate::clock::{local_day_start_ms, local_next_day_start_ms};
+use crate::clock::local_next_day_start_ms;
 use crate::dialogs::card_editor::{CardEditor, Saved};
 use crate::pages::ReviewPage;
 use crate::state::AppState;
 use crate::ui::focus::index_after_removal;
-use crate::ui::toast::{log_failure, persistent_toast, show_error, show_toast_from, undo_toast};
+use crate::ui::toast::{log_failure, show_error, show_toast_from, undo_toast};
 use crate::ui::{init_once, nav};
 use crate::widgets::{CardObject, CardRow};
 use crate::window::RappelWindow;
 
 mod imp {
     use std::cell::{Cell, OnceCell, RefCell};
+    use std::rc::Rc;
 
     use adw::prelude::*;
     use adw::subclass::prelude::*;
@@ -38,6 +39,7 @@ mod imp {
     use rappel_core::domain::Deck;
 
     use crate::state::AppState;
+    use crate::ui::debounce::Debounce;
     use crate::ui::rows;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
@@ -56,12 +58,11 @@ mod imp {
         /// The cards, oldest first.
         pub cards: OnceCell<gio::ListStore>,
         /// An editor is open; a second one (Ctrl+N, a click) is not opened.
-        pub editing: Cell<bool>,
+        pub editing: Rc<Cell<bool>>,
         /// The card to focus when the editor closes: the one last saved.
         pub focus_after_edit: RefCell<Option<String>>,
-        /// The pending re-check of what there is to study. Taken out by its
-        /// own callback, so a stored id always names a live source.
-        pub study_timer: RefCell<Option<glib::SourceId>>,
+        /// The pending re-check of what there is to study.
+        pub study_timer: Debounce,
     }
 
     #[glib::object_subclass]
@@ -158,7 +159,7 @@ impl DeckPage {
             return;
         };
         let now = rappel_core::time::now_ms();
-        match state.study_input(&deck.id, now, local_day_start_ms(now)) {
+        match state.study_input(&deck.id, now) {
             Ok(input) => {
                 imp.window_title.set_subtitle(&study_subtitle(&input));
                 self.action_set_enabled("deck.study", !input.is_empty());
@@ -184,19 +185,14 @@ impl DeckPage {
     /// Re-checks what there is to study after `delay_ms`, replacing any
     /// pending re-check. Holds the page weakly: a closed page ends it.
     fn arm_study_timer(&self, delay_ms: u64) {
-        let imp = self.imp();
-        if let Some(pending) = imp.study_timer.take() {
-            pending.remove();
-        }
         let page = self.downgrade();
-        let id = glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
-            if let Some(page) = page.upgrade() {
-                // This source is ending; forget it before re-arming.
-                page.imp().study_timer.take();
-                page.update_study();
-            }
-        });
-        imp.study_timer.replace(Some(id));
+        self.imp()
+            .study_timer
+            .restart(Duration::from_millis(delay_ms), move || {
+                if let Some(page) = page.upgrade() {
+                    page.update_study();
+                }
+            });
     }
 
     /// Pushes a review page for this deck.
@@ -245,10 +241,9 @@ impl DeckPage {
         let (Some(state), Some(deck)) = (imp.state.get(), imp.deck.get()) else {
             return;
         };
-        if imp.editing.replace(true) {
-            return;
-        }
-        let editor = CardEditor::new(
+        CardEditor::open(
+            self,
+            &imp.editing,
             state.clone(),
             &deck.id,
             card,
@@ -257,21 +252,18 @@ impl DeckPage {
                 self,
                 move |saved| page.saved(saved)
             ),
-        );
-        editor.connect_closed(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move |_| {
-                let imp = page.imp();
-                imp.editing.set(false);
-                if let Some(id) = imp.focus_after_edit.take()
-                    && let Some(position) = page.position(&id)
-                {
-                    page.focus(position);
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move || {
+                    if let Some(id) = page.imp().focus_after_edit.take()
+                        && let Some(position) = page.position(&id)
+                    {
+                        page.focus(position);
+                    }
                 }
-            }
-        ));
-        editor.show(self);
+            ),
+        );
     }
 
     /// Puts a card saved by this page's editor into the list and marks it
@@ -433,9 +425,10 @@ fn undo_card_delete(
         }
         Err(err) => {
             let message = format!("The card could not be restored: {err}");
-            log_failure("a card operation", &message);
             if let Some(window) = window {
-                window.add_toast(persistent_toast(&message));
+                show_error(&window, "a card operation", &message);
+            } else {
+                log_failure("a card operation", &message);
             }
         }
     }
@@ -520,7 +513,7 @@ fn row_factory() -> gtk::SignalListItemFactory {
 
 #[cfg(test)]
 mod tests {
-    use rappel_core::scheduling::session::Due;
+    use rappel_core::scheduling::Due;
 
     use super::*;
 

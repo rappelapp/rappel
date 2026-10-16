@@ -9,14 +9,14 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{gio, glib};
+use gtk::glib;
 use rappel_core::storage::{BackupInfo, Restored};
 
 use crate::startup::{RecoveryReason, data_folder_line};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
-use crate::ui::dialog;
 use crate::ui::toast::{persistent_toast, show_toast_from};
+use crate::ui::{dialog, worker};
 
 /// How the page got an open database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,17 +222,14 @@ impl RecoveryPage {
         };
         imp.backup_list.set_sensitive(false);
         button.set_child(Some(&adw::Spinner::new()));
-        // Keeps the app running if the window is closed mid-restore, so the
-        // restore finishes instead of being cut off.
-        let _hold = self
-            .root()
-            .and_downcast::<gtk::Window>()
-            .and_then(|window| window.application())
-            .map(|app| app.hold());
 
+        // The app is held while it runs, so closing the window mid-restore
+        // lets the restore finish instead of cutting it off.
         let worker_dir = dir.clone();
-        let result =
-            gio::spawn_blocking(move || AppState::restore_unopened(&worker_dir, &backup)).await;
+        let result = worker::run(self, move || {
+            AppState::restore_unopened(&worker_dir, &backup)
+        })
+        .await;
 
         let message = match result {
             Ok(Ok(restored)) => {
@@ -289,15 +286,10 @@ impl RecoveryPage {
             return;
         };
         imp.start_fresh_button.set_sensitive(false);
-        // Keeps the app running if the window is closed meanwhile.
-        let _hold = self
-            .root()
-            .and_downcast::<gtk::Window>()
-            .and_then(|window| window.application())
-            .map(|app| app.hold());
 
+        // The app is held while it runs, as for a restore.
         let worker_dir = dir.clone();
-        let result = gio::spawn_blocking(move || AppState::start_fresh_unopened(&worker_dir)).await;
+        let result = worker::run(self, move || AppState::start_fresh_unopened(&worker_dir)).await;
 
         let message = match result {
             Ok(Ok(fresh)) => {

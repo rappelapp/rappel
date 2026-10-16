@@ -17,6 +17,7 @@
 
 mod format;
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -31,7 +32,7 @@ use crate::render::{back_shown, clear, fill};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
 use crate::ui::text::group_digits;
-use crate::ui::toast::{log_failure, persistent_toast};
+use crate::ui::toast::{info_toast, show_error};
 use crate::ui::{dialog, init_once};
 
 /// How long typing must pause before the preview is rendered again. Short
@@ -176,7 +177,7 @@ glib::wrapper! {
 impl CardEditor {
     /// An editor for a new card in `deck_id` (`card` is `None`) or for
     /// `card`. `on_saved` is called after each successful save.
-    pub fn new(
+    fn new(
         state: AppState,
         deck_id: &str,
         card: Option<&Card>,
@@ -194,14 +195,46 @@ impl CardEditor {
         editor
     }
 
+    /// Opens an editor (see [`CardEditor::new`]) over `parent`, unless
+    /// `editing` says one is open already. `editing` is set while it is
+    /// open; once it closes, `editing` is cleared and `on_closed` is called,
+    /// for the caller to set the focus.
+    pub fn open(
+        parent: &impl IsA<gtk::Widget>,
+        editing: &Rc<Cell<bool>>,
+        state: AppState,
+        deck_id: &str,
+        card: Option<&Card>,
+        on_saved: impl Fn(Saved) + 'static,
+        on_closed: impl Fn() + 'static,
+    ) {
+        if editing.replace(true) {
+            return;
+        }
+        let editor = Self::new(state, deck_id, card, on_saved);
+        let open = Rc::clone(editing);
+        editor.connect_closed(move |_| {
+            open.set(false);
+            on_closed();
+        });
+        editor.show(parent);
+    }
+
     /// Shows the editor over `parent`.
-    pub fn show(&self, parent: &impl IsA<gtk::Widget>) {
+    fn show(&self, parent: &impl IsA<gtk::Widget>) {
         self.present(Some(parent));
         self.set_focus(Some(&*self.imp().front_view));
     }
 
     fn setup(&self) {
-        let imp = self.imp();
+        self.setup_shortcuts();
+        self.setup_views();
+        self.setup_preview();
+        self.connect_close_attempt(Self::ask_discard);
+    }
+
+    /// Ctrl+Enter, Ctrl+Shift+Enter, Ctrl+B and Ctrl+I.
+    fn setup_shortcuts(&self) {
         // Capture phase: the text views would otherwise take the Enter.
         let shortcuts = gtk::ShortcutController::new();
         shortcuts.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -242,7 +275,12 @@ impl CardEditor {
             ));
         }
         self.add_controller(shortcuts);
+    }
 
+    /// Highlighting and the colour scheme of both sides, and what a change
+    /// of their text updates.
+    fn setup_views(&self) {
+        let imp = self.imp();
         let language = sourceview5::LanguageManager::default().language("markdown");
         if language.is_none() {
             tracing::warn!("GtkSourceView has no markdown language; no highlighting");
@@ -269,13 +307,17 @@ impl CardEditor {
             move |style| editor.apply_scheme(style.is_dark())
         ));
         imp.dark_handler.replace(Some(handler));
+    }
 
-        imp.preview_button.connect_active_notify(glib::clone!(
-            #[weak(rename_to = editor)]
-            self,
-            move |_| editor.refresh_preview()
-        ));
-        self.connect_close_attempt(Self::ask_discard);
+    /// The Preview button shows or hides the preview.
+    fn setup_preview(&self) {
+        self.imp()
+            .preview_button
+            .connect_active_notify(glib::clone!(
+                #[weak(rename_to = editor)]
+                self,
+                move |_| editor.refresh_preview()
+            ));
     }
 
     /// The buffer of the side that has the keyboard focus, if any.
@@ -387,8 +429,8 @@ impl CardEditor {
         let check = check_card(&texts.0, &texts.1);
         self.action_set_enabled("editor.save", check.can_save);
         self.action_set_enabled("editor.save-and-new", check.can_save);
-        show_error(&*imp.front_view, &imp.front_error, check.front_error);
-        show_error(&*imp.back_view, &imp.back_error, check.back_error);
+        show_field_error(&*imp.front_view, &imp.front_error, check.front_error);
+        show_field_error(&*imp.back_view, &imp.back_error, check.back_error);
         // With unsaved changes, closing emits `close-attempt` instead.
         self.set_can_close(texts == *self.imp().saved_text.borrow());
     }
@@ -417,8 +459,7 @@ impl CardEditor {
             Err(err) => {
                 // The editor's own overlay: the dialog covers the page's.
                 let message = format!("The card could not be saved: {err}");
-                log_failure("a card save", &message);
-                imp.toast_overlay.add_toast(persistent_toast(&message));
+                show_error(&*imp.toast_overlay, "a card save", &message);
                 return;
             }
         };
@@ -431,12 +472,7 @@ impl CardEditor {
         }
         self.after_save(and_new);
         if and_new {
-            imp.toast_overlay.add_toast(
-                adw::Toast::builder()
-                    .title(toast_text)
-                    .use_markup(false)
-                    .build(),
-            );
+            imp.toast_overlay.add_toast(info_toast(toast_text));
         }
     }
 
@@ -524,7 +560,7 @@ fn too_long_text(side: CardSide) -> String {
 }
 
 /// Shows `error` under `view`, announcing it when it appears or changes.
-fn show_error(view: &impl IsA<gtk::Widget>, label: &gtk::Label, error: Option<String>) {
+fn show_field_error(view: &impl IsA<gtk::Widget>, label: &gtk::Label, error: Option<String>) {
     match error {
         Some(message) => {
             if !label.is_visible() || label.label() != message {

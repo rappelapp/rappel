@@ -18,6 +18,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - The quality gate needs a display, because a test starts GTK: CI runs it under Xvfb (`xvfb-run -a scripts/check.sh`, ADR 0024).
 - `rappel-core` makes public only what the app or `fill_scratch_db` uses. Items no front end used (e.g. `Scheduler`, `NEW_PER_DAY`, `interleave`, `has_nul`, `MAX_DEPTH`, `FORMAT_VERSION`, `DB_FILE_NAME`) are crate-private now, and the few only tests used (`is_valid_app_id`, `Scheduler::new`) are test-only. No behaviour change.
 - Core tests share their helpers (`test_support.rs`), and the export/import and store tests are split by topic into `tests/` directories. The import file checks are one function per table, in the same order. No test was changed or dropped.
+- App internals restructured, with no visible change: one helper runs the export, import, restore and start-fresh workers (`ui::worker`); every error toast goes through `ui::toast`; the card editor opens through `CardEditor::open` from the deck and review pages; the app's export/import code moved from `interchange.rs` to `transfer/`. The session types are re-exported from `rappel_core::scheduling`, and `scheduling::session` is crate-private.
 - **Review `RUSTSEC-2026-0192` in `deny.toml` by 2027-01-16**, earlier when RaTeX, `ab_glyph` or `fontdb` update, and remove it once RaTeX moves off `ttf-parser`. Every `ratex-*` bump: read `FONT_NOTICE.txt` of `ratex-katex-fonts` and recompute its hash in `deny.toml`, and check whether `third_party/ratex-cairo` can go.
 
 ### Documentation

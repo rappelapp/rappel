@@ -9,11 +9,10 @@ use rappel_core::domain::Card;
 use rappel_core::storage::Restored;
 
 use crate::dialogs::card_editor::CardEditor;
-use crate::interchange;
 use crate::pages::{DeckPage, DecksPage, Recovered};
-use crate::startup::Problem;
-use crate::startup::data_folder_line;
+use crate::startup::{Problem, data_folder_line, too_new_text};
 use crate::state::AppState;
+use crate::transfer;
 use crate::ui::toast::{persistent_toast, warning_message};
 
 /// The two jobs of the primary menu.
@@ -209,8 +208,8 @@ impl RappelWindow {
     }
 
     /// Runs an export or import unless one is already running. Its actions
-    /// are disabled meanwhile. `interchange` holds the application around
-    /// each worker, so closing the window lets the work finish.
+    /// are disabled meanwhile. `transfer` holds the application around
+    /// each worker (`ui::worker`), so closing the window lets the work finish.
     fn start_transfer(&self, transfer: Transfer) {
         let imp = self.imp();
         let Some(state) = imp.state.get().cloned() else {
@@ -227,8 +226,8 @@ impl RappelWindow {
             self,
             async move {
                 match transfer {
-                    Transfer::Export => interchange::export(&window, &state).await,
-                    Transfer::Import => interchange::import(&window, &state).await,
+                    Transfer::Export => transfer::export(&window, &state).await,
+                    Transfer::Import => transfer::import(&window, &state).await,
                 }
                 window.imp().transferring.set(false);
                 for action in TRANSFER_ACTIONS {
@@ -298,10 +297,8 @@ impl RappelWindow {
                 data_dir,
             } => {
                 imp.too_new_page
-                    .set_description(Some(&glib::markup_escape_text(&format!(
-                        "This database was made by a newer version of Rappel (database version \
-                         {found}; this version supports up to {supported}). Update Rappel to \
-                         open it. The database has not been changed."
+                    .set_description(Some(&glib::markup_escape_text(&too_new_text(
+                        found, supported,
                     ))));
                 imp.too_new_path.set_label(&data_folder_line(&data_dir));
                 imp.stack.set_visible_child_name("too-new");

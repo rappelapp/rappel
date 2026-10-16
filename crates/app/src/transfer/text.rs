@@ -1,310 +1,22 @@
-//! Export and import from the primary menu (SPEC §4.1, ADR 0018).
-//!
-//! The file choosers and dialogs run here on the main thread; the work runs
-//! on a worker thread with its own database connection
-//! ([`AppState::export_on_worker`] and the import functions), so the window
-//! never freezes. The texts are pure functions, unit-tested below.
+//! The texts of export and import: pure functions, unit-tested below.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use adw::prelude::*;
-use gtk::{gio, glib};
-use rappel_core::Error;
 use rappel_core::content;
-use rappel_core::interchange::{
-    Conflict, FILE_EXTENSION, IMPORT_EXTENSIONS, ImportPlan, ImportReport, ImportSummary,
-};
+use rappel_core::interchange::{Conflict, FILE_EXTENSION, ImportReport, ImportSummary};
 
-use crate::state::AppState;
-use crate::ui::dialog;
+use super::names::Lookup;
 use crate::ui::text::{count, decks_cards_reviews};
-use crate::ui::toast::{log_failure, persistent_toast};
-use crate::window::RappelWindow;
 
 /// How many conflicts the "Cannot Import" dialog lists by name.
-const SHOWN_CONFLICTS: usize = 5;
-
-/// Asks where to save, then exports there on a worker thread.
-pub async fn export(window: &RappelWindow, state: &AppState) {
-    let (year, month, day) = glib::DateTime::now_local().map_or((0, 0, 0), |now| now.ymd());
-    let dialog = file_dialog("Export Data", &[FILE_EXTENSION]);
-    dialog.set_initial_name(Some(&export_file_name(year, month, day)));
-    let Some(path) = chosen_path(window, dialog.save_future(Some(window)).await) else {
-        return;
-    };
-
-    let data_dir = state.data_dir().to_path_buf();
-    let worker_path = path.clone();
-    let result = {
-        let _hold = hold(window);
-        gio::spawn_blocking(move || AppState::export_on_worker(&data_dir, &worker_path)).await
-    };
-    match result {
-        Ok(Ok(_)) => window.add_toast(
-            adw::Toast::builder()
-                .title(exported_text(&path))
-                .use_markup(false)
-                .build(),
-        ),
-        Ok(Err(err)) => fail(window, "an export", &format!("The export failed: {err}")),
-        Err(_) => fail(window, "an export", "The export stopped unexpectedly"),
-    }
-}
-
-/// Asks for a file, checks it on a worker thread, shows what it would do,
-/// and imports it on a worker thread if the user confirms.
-pub async fn import(window: &RappelWindow, state: &AppState) {
-    let dialog = file_dialog("Import Data", &IMPORT_EXTENSIONS);
-    let Some(path) = chosen_path(window, dialog.open_future(Some(window)).await) else {
-        return;
-    };
-
-    let data_dir = state.data_dir().to_path_buf();
-    let worker_dir = data_dir.clone();
-    let result = {
-        let _hold = hold(window);
-        gio::spawn_blocking(move || AppState::plan_import_on_worker(&worker_dir, &path)).await
-    };
-    let plan = match result {
-        Ok(Ok(plan)) => plan,
-        Ok(Err(Error::ImportRefused(problem))) => {
-            fail(
-                window,
-                "an import check",
-                &format!("This file cannot be imported: {problem}"),
-            );
-            return;
-        }
-        Ok(Err(err)) => {
-            fail(
-                window,
-                "an import check",
-                &format!("The file could not be checked: {err}"),
-            );
-            return;
-        }
-        Err(_) => {
-            fail(
-                window,
-                "an import check",
-                "Checking the file stopped unexpectedly",
-            );
-            return;
-        }
-    };
-
-    if !confirm(window, state, plan.summary()).await {
-        return;
-    }
-    apply(window, data_dir, plan).await;
-}
-
-/// Shows the plan; whether the user chose Import.
-async fn confirm(window: &RappelWindow, state: &AppState, summary: &ImportSummary) -> bool {
-    const FILE: &str = "import_dialog.ui";
-    let builder = dialog::builder(FILE);
-    let (Some(dialog), Some(conflicts_label)) = (
-        dialog::object::<adw::AlertDialog>(&builder, FILE, "import_dialog"),
-        dialog::object::<gtk::Label>(&builder, FILE, "conflicts_label"),
-    ) else {
-        return false;
-    };
-    let view = plan_view(summary);
-    dialog.set_heading(Some(view.heading));
-    dialog.set_body(&view.body);
-    if !view.can_import {
-        dialog.remove_response("import");
-        dialog.set_response_label("cancel", "_Close");
-        dialog.set_default_response(Some("cancel"));
-    }
-    if !summary.conflicts.is_empty() {
-        let lookup = Names::read(state, &summary.conflicts);
-        conflicts_label.set_label(&conflicts_text(
-            &summary.conflicts,
-            |id| lookup.deck(id),
-            |id| lookup.card(id),
-        ));
-        conflicts_label.set_visible(true);
-    }
-    let response = dialog.choose_future(Some(window)).await;
-    view.can_import && response == "import"
-}
-
-/// Applies the plan on a worker thread, then says what was added and
-/// refreshes every page that shows decks or cards.
-async fn apply(window: &RappelWindow, data_dir: PathBuf, plan: ImportPlan) {
-    let result = {
-        let _hold = hold(window);
-        gio::spawn_blocking(move || AppState::apply_import_on_worker(&data_dir, &plan)).await
-    };
-    match result {
-        Ok(Ok(report)) => {
-            window.add_toast(
-                adw::Toast::builder()
-                    .title(imported_text(&report))
-                    .use_markup(false)
-                    .build(),
-            );
-            window.data_changed();
-        }
-        Ok(Err(Error::ImportPlanStale)) => fail(
-            window,
-            "an import",
-            "Your data changed while the file was being checked. Nothing was imported; import it again.",
-        ),
-        Ok(Err(err)) => fail(
-            window,
-            "an import",
-            &format!("The import failed, and nothing was imported: {err}"),
-        ),
-        Err(_) => fail(window, "an import", "The import stopped unexpectedly"),
-    }
-}
-
-/// Keeps the application running while a worker runs, so closing the
-/// window lets it finish instead of cutting it off, as a restore does. Only
-/// around the worker: a chooser or dialog left open must not keep a
-/// windowless process alive.
-fn hold(window: &RappelWindow) -> Option<gio::ApplicationHoldGuard> {
-    window.application().map(|app| app.hold())
-}
-
-/// A modal file chooser for `.rappel` files. It also shows `.cards` files,
-/// the name exports had before the rename (ADR 0020), so old exports import.
-/// Saving offers only `.rappel`, so an old export is not overwritten by accident.
-fn file_dialog(title: &str, extensions: &[&str]) -> gtk::FileDialog {
-    let filter = gtk::FileFilter::new();
-    filter.set_name(Some("Rappel Exports"));
-    for extension in extensions {
-        filter.add_suffix(extension);
-    }
-    let filters = gio::ListStore::new::<gtk::FileFilter>();
-    filters.append(&filter);
-    gtk::FileDialog::builder()
-        .title(title)
-        .modal(true)
-        .filters(&filters)
-        .default_filter(&filter)
-        .build()
-}
-
-/// The local path chosen, or `None` if the user cancelled or the chooser
-/// failed (then after a toast).
-fn chosen_path(window: &RappelWindow, chosen: Result<gio::File, glib::Error>) -> Option<PathBuf> {
-    match chosen {
-        Ok(file) => {
-            let path = file.path();
-            if path.is_none() {
-                fail(window, "a file choice", "Choose a file on this computer");
-            }
-            path
-        }
-        // Closing the chooser is not an error (GtkFileDialog docs: the
-        // callback gets GTK_DIALOG_ERROR_DISMISSED).
-        Err(err)
-            if err.matches(gtk::DialogError::Dismissed)
-                || err.matches(gtk::DialogError::Cancelled) =>
-        {
-            None
-        }
-        Err(err) => {
-            fail(
-                window,
-                "a file choice",
-                &format!("The file chooser failed: {err}"),
-            );
-            None
-        }
-    }
-}
-
-/// Logs and shows `message` in a toast that stays until dismissed.
-fn fail(window: &RappelWindow, what: &str, message: &str) {
-    log_failure(what, message);
-    window.add_toast(persistent_toast(message));
-}
-
-/// The name of the user's own deck or card that a conflict refers to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Lookup {
-    /// The deck's name, or the card's front on one line.
-    Found(String),
-    /// Not among the live rows: deleted.
-    Deleted,
-    /// The database could not be read; say nothing about it.
-    Unknown,
-}
-
-/// The names of the user's own decks and cards that conflicts refer to.
-/// Only the database is read, never the file, and only for the conflicts
-/// that are shown.
-struct Names {
-    /// `None` if the decks could not be read.
-    decks: Option<Vec<(String, String)>>,
-    cards: Vec<(String, Lookup)>,
-}
-
-impl Names {
-    fn read(state: &AppState, conflicts: &[Conflict]) -> Self {
-        let decks = match state.list_decks() {
-            Ok(decks) => Some(
-                decks
-                    .into_iter()
-                    .map(|s| (s.deck.id, s.deck.name))
-                    .collect(),
-            ),
-            Err(err) => {
-                log_failure("reading deck names for import conflicts", &err.to_string());
-                None
-            }
-        };
-        let cards = conflicts
-            .iter()
-            .take(SHOWN_CONFLICTS)
-            .filter_map(|c| match c {
-                Conflict::CardDiffers(id) => Some((id.clone(), card_lookup(state, id))),
-                _ => None,
-            })
-            .collect();
-        Self { decks, cards }
-    }
-
-    fn deck(&self, id: &str) -> Lookup {
-        let Some(decks) = &self.decks else {
-            return Lookup::Unknown;
-        };
-        decks
-            .iter()
-            .find(|(i, _)| i == id)
-            .map_or(Lookup::Deleted, |(_, name)| Lookup::Found(name.clone()))
-    }
-
-    fn card(&self, id: &str) -> Lookup {
-        self.cards
-            .iter()
-            .find(|(i, _)| i == id)
-            .map_or(Lookup::Unknown, |(_, lookup)| lookup.clone())
-    }
-}
-
-fn card_lookup(state: &AppState, id: &str) -> Lookup {
-    match state.card(id) {
-        Ok(card) => Lookup::Found(short_front(&card.front_md)),
-        // `card` returns only live cards.
-        Err(Error::CardNotFound(_)) => Lookup::Deleted,
-        Err(err) => {
-            log_failure("reading a card for import conflicts", &err.to_string());
-            Lookup::Unknown
-        }
-    }
-}
+pub(super) const SHOWN_CONFLICTS: usize = 5;
 
 /// How many characters of a card front a conflict line shows.
 const FRONT_CHARS: usize = 60;
 
 /// The front on one line, without Markdown syntax (as the card list shows
 /// it), cut to [`FRONT_CHARS`] with "…" when anything was left out.
-fn short_front(front: &str) -> String {
+pub(super) fn short_front(front: &str) -> String {
     let text = content::plain_text(&content::parse(front));
     let preview = content::one_line_summary(&text);
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -319,7 +31,7 @@ fn short_front(front: &str) -> String {
 }
 
 /// `rappel-YYYY-MM-DD.rappel`, the export's suggested name.
-fn export_file_name(year: i32, month: i32, day: i32) -> String {
+pub(super) fn export_file_name(year: i32, month: i32, day: i32) -> String {
     if year <= 0 {
         // No local date: GLib could not read the time zone.
         return format!("rappel.{FILE_EXTENSION}");
@@ -327,7 +39,7 @@ fn export_file_name(year: i32, month: i32, day: i32) -> String {
     format!("rappel-{year:04}-{month:02}-{day:02}.{FILE_EXTENSION}")
 }
 
-fn exported_text(path: &Path) -> String {
+pub(super) fn exported_text(path: &Path) -> String {
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -335,7 +47,7 @@ fn exported_text(path: &Path) -> String {
     format!("Exported to “{name}”")
 }
 
-fn imported_text(report: &ImportReport) -> String {
+pub(super) fn imported_text(report: &ImportReport) -> String {
     let added = decks_cards_reviews(report.decks, report.cards, report.review_events);
     let revived = decks_cards_reviews(report.revived_decks, report.revived_cards, 0);
     match (added, revived) {
@@ -348,14 +60,14 @@ fn imported_text(report: &ImportReport) -> String {
 
 /// What the import dialog says.
 #[derive(Debug, PartialEq, Eq)]
-struct PlanView {
-    heading: &'static str,
-    body: String,
+pub(super) struct PlanView {
+    pub(super) heading: &'static str,
+    pub(super) body: String,
     /// Whether Import is offered.
-    can_import: bool,
+    pub(super) can_import: bool,
 }
 
-fn plan_view(summary: &ImportSummary) -> PlanView {
+pub(super) fn plan_view(summary: &ImportSummary) -> PlanView {
     let conflicts = summary.conflicts.len();
     if conflicts > 0 {
         return PlanView {
@@ -415,7 +127,7 @@ fn plan_view(summary: &ImportSummary) -> PlanView {
 /// The first [`SHOWN_CONFLICTS`] conflicts, one per line, then how many
 /// more. `deck_name` and `card_front` look up the user's own deck names
 /// and card fronts.
-fn conflicts_text(
+pub(super) fn conflicts_text(
     conflicts: &[Conflict],
     deck_name: impl Fn(&str) -> Lookup,
     card_front: impl Fn(&str) -> Lookup,

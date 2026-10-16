@@ -1,6 +1,6 @@
 //! Small helpers shared by the pages, dialogs and rows: toasts, alert
-//! dialogs, navigation, row menus, focus, one-time cells, texts and
-//! debouncing. No layouts.
+//! dialogs, navigation, row menus, focus, one-time cells, texts,
+//! debouncing and worker threads. No layouts.
 //! Use these instead of writing a local copy.
 
 pub mod callback;
@@ -11,6 +11,7 @@ pub mod nav;
 pub mod rows;
 pub mod text;
 pub mod toast;
+pub mod worker;
 
 use std::cell::OnceCell;
 

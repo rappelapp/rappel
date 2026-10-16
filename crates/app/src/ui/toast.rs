@@ -1,7 +1,12 @@
-//! Toasts: persistent ones for errors and warnings, and Undo toasts.
+//! Toasts: persistent ones for errors and warnings, plain notices, and
+//! Undo toasts.
+
+use std::cell::RefCell;
 
 use adw::prelude::*;
 use rappel_core::storage::OpenWarning;
+
+use crate::window::RappelWindow;
 
 /// A toast with plain text (paths and errors may contain `<` or `&`) that
 /// stays until dismissed, so the user cannot miss it.
@@ -13,13 +18,24 @@ pub fn persistent_toast(text: &str) -> adw::Toast {
         .build()
 }
 
-/// Shows `toast` in the toast overlay that contains `widget`.
+/// A toast with plain text that goes away by itself, for a notice such as
+/// "Card added".
+pub fn info_toast(text: &str) -> adw::Toast {
+    adw::Toast::builder().title(text).use_markup(false).build()
+}
+
+/// Shows `toast` in the toast overlay that contains `widget` (`widget`
+/// itself if it is one: `gtk_widget_get_ancestor` counts the widget as its
+/// own ancestor, gtkwidget.c), else in the window's own overlay (the window
+/// is not inside its overlay).
 pub fn show_toast_from(widget: &impl IsA<gtk::Widget>, toast: adw::Toast) {
     if let Some(overlay) = widget
         .ancestor(adw::ToastOverlay::static_type())
         .and_downcast::<adw::ToastOverlay>()
     {
         overlay.add_toast(toast);
+    } else if let Some(window) = widget.root().and_downcast::<RappelWindow>() {
+        window.add_toast(toast);
     } else {
         tracing::error!("widget is not inside a toast overlay");
     }
@@ -38,6 +54,23 @@ pub fn log_failure(what: &str, message: &str) {
 pub fn show_error(widget: &impl IsA<gtk::Widget>, what: &str, message: &str) {
     log_failure(what, message);
     show_toast_from(widget, persistent_toast(message));
+}
+
+/// The error toast a page shows last. A new error dismisses it first, so a
+/// toast that stays until dismissed does not hold the new one back.
+#[derive(Debug, Default)]
+pub struct ErrorSlot(RefCell<Option<adw::Toast>>);
+
+impl ErrorSlot {
+    /// Like [`show_error`], replacing this slot's previous error toast.
+    pub fn show(&self, widget: &impl IsA<gtk::Widget>, what: &str, message: &str) {
+        log_failure(what, message);
+        let toast = persistent_toast(message);
+        if let Some(old) = self.0.replace(Some(toast.clone())) {
+            old.dismiss();
+        }
+        show_toast_from(widget, toast);
+    }
 }
 
 /// A toast offering Undo after something was deleted at once.
