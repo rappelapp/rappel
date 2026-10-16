@@ -238,6 +238,35 @@ pub enum Error {
     #[error("a deck named {0:?} already exists")]
     DuplicateDeckName(String),
 
+    /// [`Store::open_concurrent`](crate::storage::Store::open_concurrent)
+    /// found a database that [`Store::open`](crate::storage::Store::open)
+    /// has not migrated yet.
+    #[error("the database has schema version {found}, not {supported}; open it first")]
+    NotMigrated {
+        /// The version found.
+        found: u32,
+        /// The latest version this build knows.
+        supported: u32,
+    },
+
+    /// A deck name longer than
+    /// [`MAX_DECK_NAME_BYTES`](crate::domain::MAX_DECK_NAME_BYTES).
+    #[error("a deck name can be at most {limit} bytes long")]
+    DeckNameTooLong {
+        /// The limit, in bytes.
+        limit: usize,
+    },
+
+    /// A card side longer than
+    /// [`MAX_CARD_SIDE_BYTES`](crate::domain::MAX_CARD_SIDE_BYTES).
+    #[error("the {side} of a card can be at most {limit} bytes long")]
+    CardSideTooLong {
+        /// The side that is too long (the front if both are).
+        side: crate::domain::CardSide,
+        /// The limit, in bytes.
+        limit: usize,
+    },
+
     /// A card front that is empty or only whitespace.
     #[error("the front of a card cannot be empty")]
     EmptyCardFront,

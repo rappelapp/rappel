@@ -297,8 +297,12 @@ fn write_backup(conn: &Connection, partial: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Pages copied per backup step.
-const PAGES_PER_STEP: i32 = 256;
+/// Pages copied per backup step: all of them (`-1`). SQLite restarts an
+/// online backup whenever another connection writes to the source between
+/// two steps, so with a worker's connection backing up while the main one
+/// writes (ADR 0018), small steps could restart without end. One step reads
+/// one WAL snapshot, which never blocks the writers and cannot restart.
+const PAGES_PER_STEP: i32 = -1;
 /// Wait between retries when the source is locked.
 const RETRY_PAUSE: Duration = Duration::from_millis(50);
 /// Give up after this many locked steps in a row (about 5 s).

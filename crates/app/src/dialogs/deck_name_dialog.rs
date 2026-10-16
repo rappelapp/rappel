@@ -1,15 +1,17 @@
 //! The dialog that asks for a deck name, to create or rename a deck.
 //! Layout in `data/deck_name_dialog.blp`.
 //!
-//! The name is checked as it is typed, with the core's own name key, so an
-//! empty or duplicate name disables the confirm button and a duplicate is
-//! explained under the entry. The store still has the final say.
+//! The name is checked as it is typed, with the core's own name key and
+//! length limit, so an empty, duplicate or too long name disables the
+//! confirm button and the last two are explained under the entry. The
+//! store still has the final say.
 
 use adw::prelude::*;
-use cards_core::domain::{Deck, deck_name_key};
+use cards_core::domain::{Deck, MAX_DECK_NAME_BYTES, deck_name_fits, deck_name_key};
 use gtk::glib;
 
 use crate::ui::dialog;
+use crate::ui::text::group_digits;
 
 /// What the dialog is for.
 #[derive(Debug, Clone)]
@@ -26,6 +28,8 @@ pub enum NameCheck {
     /// Another live deck has this name, ignoring case and Unicode
     /// composition; holds that deck's name as shown.
     Duplicate(String),
+    /// Longer than the store accepts (and an import reads back).
+    TooLong,
     Valid,
 }
 
@@ -35,6 +39,9 @@ pub fn check_deck_name(input: &str, decks: &[Deck], exclude: Option<&str>) -> Na
     if input.trim().is_empty() {
         return NameCheck::Empty;
     }
+    if !deck_name_fits(input) {
+        return NameCheck::TooLong;
+    }
     let key = deck_name_key(input);
     decks
         .iter()
@@ -43,6 +50,18 @@ pub fn check_deck_name(input: &str, decks: &[Deck], exclude: Option<&str>) -> Na
         .map_or(NameCheck::Valid, |deck| {
             NameCheck::Duplicate(deck.name.clone())
         })
+}
+
+/// The error shown under the entry, if any.
+pub fn name_error(check: &NameCheck) -> Option<String> {
+    match check {
+        NameCheck::Duplicate(name) => Some(format!("A deck named “{name}” already exists")),
+        NameCheck::TooLong => Some(format!(
+            "The name is too long (the limit is {} bytes)",
+            group_digits(MAX_DECK_NAME_BYTES)
+        )),
+        NameCheck::Empty | NameCheck::Valid => None,
+    }
 }
 
 /// Shows the dialog over `parent` and returns the name typed, or `None`
@@ -90,7 +109,7 @@ pub async fn ask(
         error_label,
         move |entry: &adw::EntryRow| {
             let check = check_deck_name(&entry.text(), &decks, exclude.as_deref());
-            show_check(&dialog, entry, &error_label, check);
+            show_check(&dialog, entry, &error_label, &check);
         }
     );
     update(&entry);
@@ -102,31 +121,27 @@ pub async fn ask(
 }
 
 /// Shows `check` in the dialog: the confirm button only for a valid name,
-/// and the error under the entry for a duplicate.
+/// and the error under the entry for a duplicate or too long name.
 fn show_check(
     dialog: &adw::AlertDialog,
     entry: &adw::EntryRow,
     error_label: &gtk::Label,
-    check: NameCheck,
+    check: &NameCheck,
 ) {
-    dialog.set_response_enabled("confirm", check == NameCheck::Valid);
-    match check {
-        NameCheck::Duplicate(name) => {
-            let message = format!("A deck named “{name}” already exists");
-            if !error_label.is_visible() || error_label.label() != message {
-                // Screen readers hear the error when it appears.
-                entry
-                    .upcast_ref::<gtk::Widget>()
-                    .announce(&message, gtk::AccessibleAnnouncementPriority::Medium);
-            }
-            error_label.set_label(&message);
-            error_label.set_visible(true);
-            entry.add_css_class("error");
+    dialog.set_response_enabled("confirm", *check == NameCheck::Valid);
+    if let Some(message) = name_error(check) {
+        if !error_label.is_visible() || error_label.label() != message {
+            // Screen readers hear the error when it appears.
+            entry
+                .upcast_ref::<gtk::Widget>()
+                .announce(&message, gtk::AccessibleAnnouncementPriority::Medium);
         }
-        NameCheck::Empty | NameCheck::Valid => {
-            error_label.set_visible(false);
-            entry.remove_css_class("error");
-        }
+        error_label.set_label(&message);
+        error_label.set_visible(true);
+        entry.add_css_class("error");
+    } else {
+        error_label.set_visible(false);
+        entry.remove_css_class("error");
     }
 }
 
@@ -183,5 +198,34 @@ mod tests {
             check_deck_name("économie", &decks(), Some("1")),
             NameCheck::Duplicate("\u{C9}conomie".to_owned())
         );
+    }
+
+    #[test]
+    fn names_over_the_limit_are_too_long() {
+        let longest = "é".repeat(MAX_DECK_NAME_BYTES / 2);
+        assert_eq!(check_deck_name(&longest, &decks(), None), NameCheck::Valid);
+        // Bytes, not letters; the spaces around are not counted.
+        assert_eq!(
+            check_deck_name(&format!("  {longest}  "), &decks(), None),
+            NameCheck::Valid
+        );
+        assert_eq!(
+            check_deck_name(&format!("{longest}e"), &decks(), None),
+            NameCheck::TooLong
+        );
+    }
+
+    #[test]
+    fn errors_explain_duplicates_and_long_names_only() {
+        assert_eq!(
+            name_error(&NameCheck::Duplicate("Maths".to_owned())).as_deref(),
+            Some("A deck named “Maths” already exists")
+        );
+        assert_eq!(
+            name_error(&NameCheck::TooLong).as_deref(),
+            Some("The name is too long (the limit is 1,024 bytes)")
+        );
+        assert_eq!(name_error(&NameCheck::Empty), None);
+        assert_eq!(name_error(&NameCheck::Valid), None);
     }
 }

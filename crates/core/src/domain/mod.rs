@@ -173,6 +173,46 @@ pub fn deck_name_key(name: &str) -> String {
         .collect()
 }
 
+/// The longest deck name, in UTF-8 bytes once trimmed. Creating or
+/// renaming a deck refuses a longer name, and an import refuses a file
+/// with one, so every export can be imported again.
+pub const MAX_DECK_NAME_BYTES: usize = 1 << 10;
+
+/// The longest card front or back, in UTF-8 bytes (as stored, not
+/// trimmed). Adding or editing a card refuses a longer side, and an import
+/// refuses a file with one.
+pub const MAX_CARD_SIDE_BYTES: usize = 1 << 20;
+
+/// Whether `name`, trimmed, is within [`MAX_DECK_NAME_BYTES`].
+#[must_use]
+pub fn deck_name_fits(name: &str) -> bool {
+    name.trim().len() <= MAX_DECK_NAME_BYTES
+}
+
+/// Whether one card side is within [`MAX_CARD_SIDE_BYTES`].
+#[must_use]
+pub fn card_side_fits(text: &str) -> bool {
+    text.len() <= MAX_CARD_SIDE_BYTES
+}
+
+/// One side of a card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardSide {
+    /// The front (question).
+    Front,
+    /// The back (answer).
+    Back,
+}
+
+impl fmt::Display for CardSide {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Front => "front",
+            Self::Back => "back",
+        })
+    }
+}
+
 /// A deck with what it has to study, counted like the deck page's
 /// study session (`Store::study_input`).
 #[derive(Debug, Clone, PartialEq, Eq)]

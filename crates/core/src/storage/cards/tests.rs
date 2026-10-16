@@ -55,6 +55,31 @@ fn blank_fronts_are_refused() {
 }
 
 #[test]
+fn sides_longer_than_the_import_limit_are_refused() {
+    use crate::domain::{CardSide, MAX_CARD_SIDE_BYTES};
+    let (mut store, deck) = store_with_deck();
+    let longest = "x".repeat(MAX_CARD_SIDE_BYTES);
+    let over = "x".repeat(MAX_CARD_SIDE_BYTES + 1);
+    let card = store.add_card_at(&deck, &longest, &longest, T0).unwrap();
+    for (front, back, side) in [
+        (over.as_str(), "a", CardSide::Front),
+        ("q", over.as_str(), CardSide::Back),
+        // Both too long: the front is named.
+        (over.as_str(), over.as_str(), CardSide::Front),
+    ] {
+        assert!(matches!(
+            store.add_card_at(&deck, front, back, T0),
+            Err(Error::CardSideTooLong { side: s, limit }) if s == side && limit == MAX_CARD_SIDE_BYTES
+        ));
+        assert!(matches!(
+            store.edit_card_at(&card.id, front, back, T0 + 5),
+            Err(Error::CardSideTooLong { side: s, .. }) if s == side
+        ));
+    }
+    assert_eq!(store.list_cards(&deck).unwrap(), [card]);
+}
+
+#[test]
 fn add_needs_a_live_deck() {
     let (mut store, _) = store_with_deck();
     assert!(matches!(

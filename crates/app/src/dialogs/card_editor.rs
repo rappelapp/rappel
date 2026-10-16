@@ -4,7 +4,8 @@
 //! - Ctrl+Enter saves and closes; Ctrl+Shift+Enter saves and starts a new
 //!   card in the same deck, with the focus in the front field. Both are
 //!   caught in the capture phase, before the text views see the Enter.
-//! - A blank front disables saving (the store's own rule).
+//! - A blank front disables saving, and so does a side over the store's
+//!   length limit, explained under that side (the store's own rules).
 //! - Closing with unsaved changes asks first, whether by Escape, Cancel or
 //!   closing the window (`CardsWindow` calls [`CardEditor::confirm_discard`]).
 //! - A store error keeps the dialog open with the text as typed.
@@ -13,11 +14,12 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cards_core::domain::Card;
+use cards_core::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits};
 use gtk::glib;
 
 use crate::state::AppState;
 use crate::ui::callback::Callback;
+use crate::ui::text::group_digits;
 use crate::ui::toast::{log_failure, persistent_toast};
 use crate::ui::{dialog, init_once};
 
@@ -50,6 +52,10 @@ mod imp {
         pub front_view: TemplateChild<gtk::TextView>,
         #[template_child]
         pub back_view: TemplateChild<gtk::TextView>,
+        #[template_child]
+        pub front_error: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub back_error: TemplateChild<gtk::Label>,
         pub state: OnceCell<AppState>,
         pub deck_id: OnceCell<String>,
         /// The card being edited; `None` for a new card.
@@ -203,10 +209,13 @@ impl CardEditor {
     }
 
     fn update_actions(&self) {
+        let imp = self.imp();
         let texts = self.texts();
-        let can_save = can_save(&texts.0);
-        self.action_set_enabled("editor.save", can_save);
-        self.action_set_enabled("editor.save-and-new", can_save);
+        let check = check_card(&texts.0, &texts.1);
+        self.action_set_enabled("editor.save", check.can_save);
+        self.action_set_enabled("editor.save-and-new", check.can_save);
+        show_error(&imp.front_view, &imp.front_error, check.front_error);
+        show_error(&imp.back_view, &imp.back_error, check.back_error);
         // With unsaved changes, closing emits `close-attempt` instead.
         self.set_can_close(texts == *self.imp().saved_text.borrow());
     }
@@ -214,7 +223,7 @@ impl CardEditor {
     fn save(&self, and_new: bool) {
         let imp = self.imp();
         let (front, back) = self.texts();
-        if !can_save(&front) {
+        if !check_card(&front, &back).can_save {
             return;
         }
         let (Some(state), Some(deck_id)) = (imp.state.get(), imp.deck_id.get()) else {
@@ -309,10 +318,50 @@ impl CardEditor {
     }
 }
 
-/// Whether a card with this front can be saved: the same rule as the
-/// store, which refuses a blank front.
-fn can_save(front: &str) -> bool {
-    !front.trim().is_empty()
+/// What the editor shows for the texts typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CardCheck {
+    /// Whether Save is enabled.
+    can_save: bool,
+    /// The error under the front, if any.
+    front_error: Option<String>,
+    /// The error under the back, if any.
+    back_error: Option<String>,
+}
+
+/// The store's rules, checked as the user types: a blank front cannot be
+/// saved (no error is shown, the empty field says it), nor can a side over
+/// the length limit, which is explained under it.
+fn check_card(front: &str, back: &str) -> CardCheck {
+    let too_long = |text: &str, side| (!card_side_fits(text)).then(|| too_long_text(side));
+    let front_error = too_long(front, CardSide::Front);
+    let back_error = too_long(back, CardSide::Back);
+    CardCheck {
+        can_save: !front.trim().is_empty() && front_error.is_none() && back_error.is_none(),
+        front_error,
+        back_error,
+    }
+}
+
+fn too_long_text(side: CardSide) -> String {
+    format!(
+        "The {side} is too long (the limit is {} bytes)",
+        group_digits(MAX_CARD_SIDE_BYTES)
+    )
+}
+
+/// Shows `error` under `view`, announcing it when it appears or changes.
+fn show_error(view: &gtk::TextView, label: &gtk::Label, error: Option<String>) {
+    match error {
+        Some(message) => {
+            if !label.is_visible() || label.label() != message {
+                view.announce(&message, gtk::AccessibleAnnouncementPriority::Medium);
+            }
+            label.set_label(&message);
+            label.set_visible(true);
+        }
+        None => label.set_visible(false),
+    }
 }
 
 #[cfg(test)]
@@ -321,8 +370,45 @@ mod tests {
 
     #[test]
     fn a_blank_front_cannot_be_saved() {
-        assert!(!can_save(""));
-        assert!(!can_save(" \n\t "));
-        assert!(can_save(" x "));
+        for front in ["", " \n\t "] {
+            let check = check_card(front, "back");
+            assert!(!check.can_save);
+            assert_eq!((check.front_error, check.back_error), (None, None));
+        }
+        assert!(check_card(" x ", "").can_save);
+    }
+
+    #[test]
+    fn sides_at_the_limit_can_be_saved() {
+        let longest = "ü".repeat(MAX_CARD_SIDE_BYTES / 2);
+        let check = check_card(&longest, &longest);
+        assert!(check.can_save);
+        assert_eq!((check.front_error, check.back_error), (None, None));
+    }
+
+    #[test]
+    fn a_side_over_the_limit_is_explained_under_it() {
+        let over = "x".repeat(MAX_CARD_SIDE_BYTES + 1);
+        let message = |side| {
+            Some(format!(
+                "The {side} is too long (the limit is 1,048,576 bytes)"
+            ))
+        };
+
+        let check = check_card(&over, "back");
+        assert!(!check.can_save);
+        assert_eq!(check.front_error, message("front"));
+        assert_eq!(check.back_error, None);
+
+        let check = check_card("front", &over);
+        assert!(!check.can_save);
+        assert_eq!(check.front_error, None);
+        assert_eq!(check.back_error, message("back"));
+
+        let check = check_card(&over, &over);
+        assert_eq!(
+            (check.front_error, check.back_error),
+            (message("front"), message("back"))
+        );
     }
 }

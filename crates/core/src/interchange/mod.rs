@@ -282,8 +282,8 @@ impl Limits {
     pub(crate) const DEFAULT: Self = Self {
         archive: 256 << 20,
         json: 256 << 20,
-        card_text: 1 << 20,
-        deck_name: 1 << 10,
+        card_text: crate::domain::MAX_CARD_SIDE_BYTES,
+        deck_name: crate::domain::MAX_DECK_NAME_BYTES,
     };
 }
 

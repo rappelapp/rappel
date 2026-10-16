@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use super::decks::ensure_live_deck;
 use super::{Store, observe_max_id};
-use crate::domain::Card;
+use crate::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits};
 use crate::error::{Error, Result};
 use crate::time::now_ms;
 
@@ -29,6 +29,7 @@ impl Store {
     ///
     /// # Errors
     /// [`Error::EmptyCardFront`] if the front is blank,
+    /// [`Error::CardSideTooLong`],
     /// [`Error::DeckNotFound`], id and SQLite errors.
     pub fn add_card(&mut self, deck_id: &str, front_md: &str, back_md: &str) -> Result<Card> {
         self.add_card_at(deck_id, front_md, back_md, now_ms())
@@ -42,7 +43,7 @@ impl Store {
         back_md: &str,
         now: i64,
     ) -> Result<Card> {
-        check_front(front_md)?;
+        check_sides(front_md, back_md)?;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -76,7 +77,8 @@ impl Store {
     /// stored.
     ///
     /// # Errors
-    /// [`Error::EmptyCardFront`], [`Error::CardNotFound`], SQLite errors.
+    /// [`Error::EmptyCardFront`], [`Error::CardSideTooLong`],
+    /// [`Error::CardNotFound`], SQLite errors.
     pub fn edit_card(&mut self, id: &str, front_md: &str, back_md: &str) -> Result<Card> {
         self.edit_card_at(id, front_md, back_md, now_ms())
     }
@@ -89,7 +91,7 @@ impl Store {
         back_md: &str,
         now: i64,
     ) -> Result<Card> {
-        check_front(front_md)?;
+        check_sides(front_md, back_md)?;
         // One statement, so the returned card is exactly what was written.
         self.conn
             .query_row(
@@ -191,12 +193,20 @@ pub(super) fn live_card(conn: &Connection, id: &str) -> Result<Card> {
     .ok_or_else(|| Error::CardNotFound(id.to_owned()))
 }
 
-fn check_front(front_md: &str) -> Result<()> {
+/// A blank front, or a side too long to import again, is refused.
+fn check_sides(front_md: &str, back_md: &str) -> Result<()> {
     if front_md.trim().is_empty() {
-        Err(Error::EmptyCardFront)
-    } else {
-        Ok(())
+        return Err(Error::EmptyCardFront);
     }
+    for (side, text) in [(CardSide::Front, front_md), (CardSide::Back, back_md)] {
+        if !card_side_fits(text) {
+            return Err(Error::CardSideTooLong {
+                side,
+                limit: MAX_CARD_SIDE_BYTES,
+            });
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

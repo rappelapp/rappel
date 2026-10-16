@@ -343,6 +343,24 @@ impl DeckPage {
         self.focus(position);
     }
 
+    /// Reads the deck's cards again, e.g. after an import added some. The
+    /// subtitle and Study follow through `items-changed`.
+    pub fn reload(&self) {
+        let imp = self.imp();
+        let (Some(state), Some(deck), Some(store)) =
+            (imp.state.get(), imp.deck.get(), imp.cards.get())
+        else {
+            return;
+        };
+        match state.list_cards(&deck.id) {
+            Ok(cards) => {
+                let items: Vec<CardObject> = cards.into_iter().map(CardObject::new).collect();
+                store.splice(0, store.n_items(), &items);
+            }
+            Err(err) => self.error_toast(&format!("The cards could not be read: {err}")),
+        }
+    }
+
     /// Scrolls to the card at `position` and gives it the keyboard focus.
     fn focus(&self, position: u32) {
         self.imp()

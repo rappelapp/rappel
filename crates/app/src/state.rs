@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use cards_core::domain::{Card, CardState, Deck, DeckSummary, Grade, ReviewEvent};
+use cards_core::interchange::{ExportSummary, ImportPlan, ImportReport};
 use cards_core::scheduling::session::StudyInput;
 use cards_core::storage::{self, BackupInfo, OpenWarning, Restored, Store};
 
@@ -69,6 +70,32 @@ impl AppState {
     /// on a worker thread.
     pub fn start_fresh_unopened(data_dir: &Path) -> cards_core::Result<Restored> {
         storage::start_fresh(data_dir, None)
+    }
+
+    /// Exports the database in `data_dir` to `path` (see
+    /// [`Store::export_to`]). Blocking; runs on a worker thread, on its own
+    /// connection ([`Store::open_concurrent`], ADR 0018), so the window's
+    /// store stays on the main thread.
+    pub fn export_on_worker(data_dir: &Path, path: &Path) -> cards_core::Result<ExportSummary> {
+        Store::open_concurrent(data_dir)?.export_to(path)
+    }
+
+    /// Checks the `.cards` file `path` against the database in `data_dir`
+    /// (see [`Store::plan_import`]). Blocking; on its own connection like
+    /// [`Self::export_on_worker`].
+    pub fn plan_import_on_worker(data_dir: &Path, path: &Path) -> cards_core::Result<ImportPlan> {
+        Store::open_concurrent(data_dir)?.plan_import(path)
+    }
+
+    /// Applies `plan` to the database in `data_dir` (see
+    /// [`Store::apply_import`]). Blocking; on its own connection like
+    /// [`Self::export_on_worker`]. A change made meanwhile on the main
+    /// connection refuses it with `ImportPlanStale`.
+    pub fn apply_import_on_worker(
+        data_dir: &Path,
+        plan: &ImportPlan,
+    ) -> cards_core::Result<ImportReport> {
+        Store::open_concurrent(data_dir)?.apply_import(plan)
     }
 
     /// The data directory the database lives in.

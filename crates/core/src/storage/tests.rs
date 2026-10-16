@@ -187,6 +187,43 @@ fn backups_are_pruned_to_fourteen() {
     assert_eq!(backups.last().unwrap(), "cards-20261104-123456.sqlite3");
 }
 
+#[test]
+fn a_concurrent_store_needs_an_existing_migrated_database() {
+    let e = env();
+    // Missing: refused, and nothing is created.
+    assert!(matches!(
+        Store::open_concurrent_with(&e.db, &e.backups, MIGRATIONS),
+        Err(Error::Sqlite(_))
+    ));
+    assert!(!e.db.exists());
+
+    // Older schema: only `Store::open` may migrate it.
+    let older = e
+        .open_with(DAY0, &MIGRATIONS[..MIGRATIONS.len() - 1])
+        .unwrap();
+    let found = older.schema_version().unwrap();
+    assert!(matches!(
+        Store::open_concurrent_with(&e.db, &e.backups, MIGRATIONS),
+        Err(Error::NotMigrated { found: f, supported }) if f == found && supported == found + 1
+    ));
+    drop(older);
+
+    let main = e.open(DAY0).unwrap();
+    let backups = e.backups();
+    let second = Store::open_concurrent_with(&e.db, &e.backups, MIGRATIONS).unwrap();
+    assert_eq!(
+        second.schema_version().unwrap(),
+        main.schema_version().unwrap()
+    );
+    let fk: bool = second
+        .conn
+        .pragma_query_value(None, "foreign_keys", |r| r.get(0))
+        .unwrap();
+    assert!(fk);
+    // Opening it makes no backup.
+    assert_eq!(e.backups(), backups);
+}
+
 // --- Migrations -----------------------------------------------------------
 
 /// For every real migration N: a database at N-1 (built by the real code

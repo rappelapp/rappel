@@ -7,12 +7,16 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Export and import in the app (ADR 0018). The deck list has a main menu (☰, F10) with **Export…** and **Import…**. Export saves everything to `cards-YYYY-MM-DD.cards` and says where in a toast. Import checks the file first and shows what it would add and what is already there; with conflicts it lists them, using your own deck names and card fronts, and offers no import. After an import, the deck list and open deck pages update. The work runs in the background, so the window stays responsive, and closing the window lets it finish.
+- `cards-core`: `Store::open_concurrent`, a second connection for a worker thread (never creates the database, refuses an unmigrated one).
+- README: "Exporting and importing".
 - `cards-core`: export the whole database to a `.cards` file (a zip archive with `cards.json`, format version 1, and an empty `media/`) with `Store::export_to`. Deleted rows are included, and the same database gives the same bytes. Import is two steps: `Store::plan_import` checks the untrusted file and summarises what is new, already present or in conflict; `Store::apply_import` backs up, then adds the new rows in one transaction and rebuilds the affected schedules. Any conflict refuses the whole import; ids must be `UUIDv7` (ADR 0017, #12). No UI yet.
 - Recovery page with no backups: **Start Fresh**, after a confirmation, moves the database aside (never deleting it) and starts an empty one (ADR 0016, #16). Not offered, and refused by core, while backups exist (`Error::BackupsAvailable`) or an interrupted restore's copy waits.
 - `cards-core`: `storage::start_fresh` and `Store::next_study_change`.
 - Tests: the cache property test also adds, deletes and undeletes cards and decks; a file-backed store is reopened; a v2 backup is restored; migration 0005 moves the due date of a late Pass (#13).
 
 ### Changed
+- Deck names are limited to 1 KiB and card sides to 1 MiB (in bytes), the limits an import accepts, so every export can be imported again. The deck name dialog and the card editor explain a too long text under the field and disable saving; the store refuses it (`Error::DeckNameTooLong`, `Error::CardSideTooLong`).
 - The deck list's "N new · N due" counts like the deck page: new cards still allowed today (20 a day), and due reviews plus step cards due within 20 minutes. `Store::list_decks` takes the study day's start.
 - The deck page's subtitle and Study button update by themselves when a card becomes due or a new study day begins.
 - Docs: CLAUDE.md and README say v0 is released as 0.1.0.

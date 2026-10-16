@@ -71,6 +71,31 @@ fn empty_names_are_refused() {
 }
 
 #[test]
+fn names_longer_than_the_import_limit_are_refused() {
+    use crate::domain::MAX_DECK_NAME_BYTES;
+    let mut store = Store::in_memory();
+    let longest = "a".repeat(MAX_DECK_NAME_BYTES);
+    // Spaces around it are trimmed before measuring, as before storing.
+    let deck = store.create_deck_at(&format!(" {longest} "), T0).unwrap();
+    assert_eq!(deck.name, longest);
+
+    // Bytes, not characters: 512 two-byte letters fit, one more does not.
+    let accented = "é".repeat(MAX_DECK_NAME_BYTES / 2);
+    store.create_deck_at(&accented, T0).unwrap();
+    let too_long = format!("{accented}é");
+    assert!(matches!(
+        store.create_deck_at(&too_long, T0),
+        Err(Error::DeckNameTooLong { limit }) if limit == MAX_DECK_NAME_BYTES
+    ));
+    assert!(matches!(
+        store.rename_deck_at(&deck.id, &too_long, T0 + 5),
+        Err(Error::DeckNameTooLong { .. })
+    ));
+    assert_eq!(names(&store).len(), 2);
+    assert!(names(&store).contains(&longest));
+}
+
+#[test]
 fn rename_changes_name_and_updated_at() {
     let mut store = Store::in_memory();
     let deck = store.create_deck_at("Maths", T0).unwrap();

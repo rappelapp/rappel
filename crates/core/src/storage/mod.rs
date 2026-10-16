@@ -111,7 +111,7 @@ impl Store {
         }
         prepare_private_file(db_path)?;
 
-        let mut conn = connect(db_path)?;
+        let mut conn = connect(db_path, true)?;
         check_integrity(&conn)?;
 
         // Read-only checks, before anything that writes to the file (even
@@ -129,6 +129,53 @@ impl Store {
         migrate(&mut conn, migrations, current)?;
         let mut store = Self::from_connection(conn);
         store.open_warnings = warnings;
+        store.backup_dir = Some(backup_dir.to_path_buf());
+        Ok(store)
+    }
+
+    /// Opens another connection to the database in `data_dir`, which
+    /// [`Store::open`] already opened (and so checked, backed up and
+    /// migrated) in this process. For work on a worker thread while the
+    /// first store stays on its own: the new store is independent and may
+    /// be used on any one thread.
+    ///
+    /// It never creates the file and runs no integrity check, backup or
+    /// migration. Both connections may read and write: in WAL mode each
+    /// read transaction sees one fixed snapshot, and SQLite lets one writer
+    /// in at a time, the other waiting up to 5 seconds (ADR 0018). Ids
+    /// stay unique because each store raises its id generator above the
+    /// largest stored id before each write that issues one.
+    ///
+    /// # Errors
+    /// [`Error::NotMigrated`] if the schema is not this build's latest (or
+    /// [`Error::UnsupportedVersion`] if it is newer),
+    /// [`Error::NotACardsDatabase`], [`Error::PragmaRejected`], and SQLite
+    /// errors, including for a missing file.
+    pub fn open_concurrent(data_dir: &Path) -> Result<Self> {
+        Self::open_concurrent_with(
+            &data_dir.join(DB_FILE_NAME),
+            &data_dir.join(BACKUP_DIR_NAME),
+            MIGRATIONS,
+        )
+    }
+
+    /// [`Store::open_concurrent`] with every input explicit, for tests.
+    fn open_concurrent_with(
+        db_path: &Path,
+        backup_dir: &Path,
+        migrations: &[Migration],
+    ) -> Result<Self> {
+        let conn = connect(db_path, false)?;
+        let supported = latest(migrations);
+        let (current, _) = check_version(&conn, migrations)?;
+        if current != supported {
+            return Err(Error::NotMigrated {
+                found: current,
+                supported,
+            });
+        }
+        apply_write_settings(&conn)?;
+        let mut store = Self::from_connection(conn);
         store.backup_dir = Some(backup_dir.to_path_buf());
         Ok(store)
     }
@@ -173,13 +220,14 @@ impl Store {
 
 /// Opens the connection with its connection-only settings; none of them
 /// write to the file.
-fn connect(db_path: &Path) -> Result<Connection> {
-    let conn = Connection::open_with_flags(
-        db_path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_CREATE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
+/// With `create` false, a missing file is an error instead of a new,
+/// empty database.
+fn connect(db_path: &Path, create: bool) -> Result<Connection> {
+    let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    if create {
+        flags |= OpenFlags::SQLITE_OPEN_CREATE;
+    }
+    let conn = Connection::open_with_flags(db_path, flags)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "trusted_schema", false)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;

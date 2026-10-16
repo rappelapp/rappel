@@ -5,7 +5,7 @@ use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior, pa
 
 use super::review::study_input_in;
 use super::{Store, observe_max_id};
-use crate::domain::{Deck, DeckSummary, deck_name_key};
+use crate::domain::{Deck, DeckSummary, MAX_DECK_NAME_BYTES, deck_name_fits, deck_name_key};
 use crate::error::{Error, Result};
 use crate::time::now_ms;
 
@@ -13,7 +13,8 @@ impl Store {
     /// Creates a deck named `name` (trimmed).
     ///
     /// # Errors
-    /// [`Error::EmptyDeckName`], [`Error::DuplicateDeckName`] if a live deck
+    /// [`Error::EmptyDeckName`], [`Error::DeckNameTooLong`],
+    /// [`Error::DuplicateDeckName`] if a live deck
     /// has that name, id and SQLite errors.
     pub fn create_deck(&mut self, name: &str) -> Result<Deck> {
         self.create_deck_at(name, now_ms())
@@ -52,7 +53,8 @@ impl Store {
     /// it already has changes nothing.
     ///
     /// # Errors
-    /// [`Error::EmptyDeckName`], [`Error::DuplicateDeckName`] if another live
+    /// [`Error::EmptyDeckName`], [`Error::DeckNameTooLong`],
+    /// [`Error::DuplicateDeckName`] if another live
     /// deck has that name, [`Error::DeckNotFound`], SQLite errors.
     pub fn rename_deck(&mut self, id: &str, name: &str) -> Result<()> {
         self.rename_deck_at(id, name, now_ms())
@@ -197,11 +199,15 @@ impl Store {
     }
 }
 
-/// `name` trimmed, if it is not empty.
+/// `name` trimmed, if it is not empty and not too long to import again.
 fn deck_name(name: &str) -> Result<&str> {
     let name = name.trim();
     if name.is_empty() {
         Err(Error::EmptyDeckName)
+    } else if !deck_name_fits(name) {
+        Err(Error::DeckNameTooLong {
+            limit: MAX_DECK_NAME_BYTES,
+        })
     } else {
         Ok(name)
     }

@@ -9,14 +9,25 @@ use cards_core::storage::Restored;
 use gtk::{gio, glib};
 
 use crate::dialogs::card_editor::CardEditor;
-use crate::pages::{DeckPage, Recovered};
+use crate::interchange;
+use crate::pages::{DeckPage, DecksPage, Recovered};
 use crate::startup::Problem;
 use crate::startup::data_folder_line;
 use crate::state::AppState;
 use crate::ui::toast::{persistent_toast, warning_message};
 
+/// The two jobs of the primary menu.
+#[derive(Debug, Clone, Copy)]
+enum Transfer {
+    Export,
+    Import,
+}
+
+/// The window actions that start a [`Transfer`].
+const TRANSFER_ACTIONS: [&str; 2] = ["win.export", "win.import"];
+
 mod imp {
-    use std::cell::OnceCell;
+    use std::cell::{Cell, OnceCell};
 
     use adw::subclass::prelude::*;
     use gtk::glib;
@@ -49,6 +60,8 @@ mod imp {
         /// Set once, when the database is open (at startup or after a
         /// restore). Pages and dialogs get a clone from here.
         pub state: OnceCell<AppState>,
+        /// An export or import is running; another one cannot start.
+        pub transferring: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -79,6 +92,14 @@ mod imp {
                     imp.decks_page.new_deck();
                 }
             });
+            // The primary menu; enabled on the main page while no export
+            // or import runs.
+            klass.install_action("win.export", None, |window, _, _| {
+                window.start_transfer(super::Transfer::Export);
+            });
+            klass.install_action("win.import", None, |window, _, _| {
+                window.start_transfer(super::Transfer::Import);
+            });
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -89,8 +110,12 @@ mod imp {
     impl ObjectImpl for CardsWindow {
         fn constructed(&self) {
             self.parent_constructed();
-            self.obj().action_set_enabled("win.new-deck", false);
-            self.obj().action_set_enabled("win.new", false);
+            let window = self.obj();
+            window.action_set_enabled("win.new-deck", false);
+            window.action_set_enabled("win.new", false);
+            for action in super::TRANSFER_ACTIONS {
+                window.action_set_enabled(action, false);
+            }
         }
     }
     impl WidgetImpl for CardsWindow {}
@@ -178,6 +203,52 @@ impl CardsWindow {
         imp.stack.set_visible_child_name("main");
         self.action_set_enabled("win.new-deck", true);
         self.action_set_enabled("win.new", true);
+        for action in TRANSFER_ACTIONS {
+            self.action_set_enabled(action, true);
+        }
+    }
+
+    /// Runs an export or import unless one is already running. Its actions
+    /// are disabled meanwhile. `interchange` holds the application around
+    /// each worker, so closing the window lets the work finish.
+    fn start_transfer(&self, transfer: Transfer) {
+        let imp = self.imp();
+        let Some(state) = imp.state.get().cloned() else {
+            return;
+        };
+        if imp.transferring.replace(true) {
+            return;
+        }
+        for action in TRANSFER_ACTIONS {
+            self.action_set_enabled(action, false);
+        }
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            async move {
+                match transfer {
+                    Transfer::Export => interchange::export(&window, &state).await,
+                    Transfer::Import => interchange::import(&window, &state).await,
+                }
+                window.imp().transferring.set(false);
+                for action in TRANSFER_ACTIONS {
+                    window.action_set_enabled(action, true);
+                }
+            }
+        ));
+    }
+
+    /// After an import: reads the decks and every open deck page's cards
+    /// again. A study session keeps the cards it started with.
+    pub fn data_changed(&self) {
+        let stack = self.imp().navigation_view.navigation_stack();
+        for page in (0..stack.n_items()).filter_map(|i| stack.item(i)) {
+            if let Some(decks) = page.downcast_ref::<DecksPage>() {
+                decks.refresh();
+            } else if let Some(deck) = page.downcast_ref::<DeckPage>() {
+                deck.reload();
+            }
+        }
     }
 
     /// Shows the error page for decks that could not be read in `data_dir`.

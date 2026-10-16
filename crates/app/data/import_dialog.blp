@@ -1,0 +1,25 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The summary shown before an import. interchange.rs sets the heading and
+// body, and for "Cannot Import" and "Nothing to Import" removes Import and
+// relabels Cancel as Close.
+Adw.AlertDialog import_dialog {
+  close-response: "cancel";
+  default-response: "import";
+
+  responses [
+    cancel: _("_Cancel"),
+    import: _("_Import") suggested,
+  ]
+
+  // The conflicts, one per line. Plain text: the names are the user's own,
+  // never the file's, but they are still untrusted card content.
+  extra-child: Gtk.Label conflicts_label {
+    visible: false;
+    use-markup: false;
+    wrap: true;
+    wrap-mode: word_char;
+    xalign: 0;
+  };
+}

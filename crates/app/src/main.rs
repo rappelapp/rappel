@@ -2,6 +2,7 @@
 
 mod clock;
 mod dialogs;
+mod interchange;
 mod pages;
 mod startup;
 mod state;

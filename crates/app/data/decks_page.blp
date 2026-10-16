@@ -18,6 +18,18 @@ template $CardsDecksPage: Adw.NavigationPage {
           label: _("New Deck");
         }
       }
+
+      [end]
+      Gtk.MenuButton {
+        primary: true;
+        icon-name: "open-menu-symbolic";
+        menu-model: primary_menu;
+        tooltip-text: _("Main Menu");
+
+        accessibility {
+          label: _("Main Menu");
+        }
+      }
     }
 
     content: Gtk.Stack content_stack {
@@ -73,4 +85,20 @@ template $CardsDecksPage: Adw.NavigationPage {
       }
     };
   };
+}
+
+// The primary menu (F10). Preferences, Keyboard Shortcuts and About will
+// go in a last section of their own, as the GNOME HIG orders them.
+menu primary_menu {
+  section {
+    item {
+      label: _("_Export…");
+      action: "win.export";
+    }
+
+    item {
+      label: _("_Import…");
+      action: "win.import";
+    }
+  }
 }

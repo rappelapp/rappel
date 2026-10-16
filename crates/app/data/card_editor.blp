@@ -71,12 +71,24 @@ template $CardsCardEditor: Adw.Dialog {
 
             accessibility {
               labelled-by: front_label;
+              described-by: front_error;
             }
 
             styles [
               "inline",
             ]
           };
+        }
+
+        Gtk.Label front_error {
+          visible: false;
+          wrap: true;
+          xalign: 0;
+
+          styles [
+            "error",
+            "caption",
+          ]
         }
 
         Gtk.Label back_label {
@@ -108,12 +120,24 @@ template $CardsCardEditor: Adw.Dialog {
 
             accessibility {
               labelled-by: back_label;
+              described-by: back_error;
             }
 
             styles [
               "inline",
             ]
           };
+        }
+
+        Gtk.Label back_error {
+          visible: false;
+          wrap: true;
+          xalign: 0;
+
+          styles [
+            "error",
+            "caption",
+          ]
         }
       };
     };
