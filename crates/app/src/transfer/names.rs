@@ -30,13 +30,8 @@ pub(super) struct Names {
 
 impl Names {
     pub(super) fn read(state: &AppState, conflicts: &[Conflict]) -> Self {
-        let decks = match state.list_decks() {
-            Ok(decks) => Some(
-                decks
-                    .into_iter()
-                    .map(|s| (s.deck.id, s.deck.name))
-                    .collect(),
-            ),
+        let decks = match state.decks() {
+            Ok(decks) => Some(decks.into_iter().map(|d| (d.id, d.name)).collect()),
             Err(err) => {
                 log_failure("reading deck names for import conflicts", &err.to_string());
                 None

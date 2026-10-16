@@ -12,6 +12,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::OnceLock;
 use std::sync::mpsc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use gtk::glib;
 
@@ -78,4 +79,58 @@ pub fn with_gtk<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T 
         gtk::init().expect("GTK needs a display for this test; run it under `xvfb-run -a`");
         f()
     })
+}
+
+/// The stack hostile input is handled on in tests: a sixteenth of the main
+/// thread's usual 8 MiB, where the app draws cards, so a recursion that only
+/// just passes here has a wide margin in the app. A stack overflow aborts
+/// the process; it cannot be caught. The same as `rappel-core`'s
+/// `test_support::SMALL_STACK`, which is not exported.
+pub const SMALL_STACK: usize = 512 * 1024;
+
+/// Runs `f` on a new thread with a [`SMALL_STACK`] and returns its result,
+/// failing the test if it takes longer than `limit`. A hang fails the test
+/// instead of blocking the run (the thread is left behind; the test process
+/// ends anyway). `RAPPEL_TIMINGS=1` prints how long it took. The same as
+/// `rappel-core`'s `test_support::within`, which is not exported.
+pub fn within<T: Send + 'static>(
+    limit: Duration,
+    what: &str,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    within_stack(SMALL_STACK, limit, what, f)
+}
+
+/// Like [`within`], on a stack of `stack` bytes.
+pub fn within_stack<T: Send + 'static>(
+    stack: usize,
+    limit: Duration,
+    what: &str,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let (sender, answer) = mpsc::channel();
+    let start = Instant::now();
+    thread::Builder::new()
+        .stack_size(stack)
+        .spawn(move || {
+            // The receiver is gone only if the test already failed.
+            let _ = sender.send(f());
+        })
+        .expect("tests can start a thread");
+    match answer.recv_timeout(limit) {
+        Ok(value) => {
+            print_timing(what, start.elapsed());
+            value
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!("{what} took longer than {limit:?}"),
+        Err(mpsc::RecvTimeoutError::Disconnected) => panic!("{what} panicked"),
+    }
+}
+
+/// Prints `elapsed` for `what` when `RAPPEL_TIMINGS` is set, for tests that
+/// time work that must stay on the main-context thread.
+pub fn print_timing(what: &str, elapsed: Duration) {
+    if std::env::var_os("RAPPEL_TIMINGS").is_some() {
+        eprintln!("{what}: {elapsed:?}");
+    }
 }

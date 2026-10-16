@@ -113,6 +113,17 @@ impl AppState {
             .list_decks(now, local_day_start_ms(now))
     }
 
+    /// The live decks, without counting their cards (see [`Store::decks`]).
+    /// For names and ids; the deck list's rows use [`Self::list_decks`].
+    pub fn decks(&self) -> rappel_core::Result<Vec<Deck>> {
+        self.0.store.borrow().decks()
+    }
+
+    /// Live deck `id`, without its counts (see [`Store::deck`]).
+    pub fn deck(&self, id: &str) -> rappel_core::Result<Deck> {
+        self.0.store.borrow().deck(id)
+    }
+
     /// Creates a deck (see [`Store::create_deck`]).
     pub fn create_deck(&self, name: &str) -> rappel_core::Result<Deck> {
         self.0.store.borrow_mut().create_deck(name)

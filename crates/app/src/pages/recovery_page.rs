@@ -2,7 +2,8 @@
 //! the backups newest first, and a confirmed "Restore" for each. With no
 //! backup to restore, a confirmed "Start Fresh" moves the database aside
 //! and starts an empty one (ADR 0016). Layout in `data/recovery_page.blp`,
-//! `data/restore_dialog.blp` and `data/start_fresh_dialog.blp`.
+//! `data/restore_dialog.blp` and `data/start_fresh_dialog.blp`; each
+//! backup is a [`BackupRow`].
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -17,6 +18,7 @@ use crate::state::AppState;
 use crate::ui::callback::Callback;
 use crate::ui::toast::{persistent_toast, show_toast_from};
 use crate::ui::{dialog, worker};
+use crate::widgets::BackupRow;
 
 /// How the page got an open database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,28 +169,14 @@ impl RecoveryPage {
             .set_description(Some(&glib::markup_escape_text(&description)));
     }
 
-    fn backup_row(&self, backup: BackupInfo) -> adw::ActionRow {
+    fn backup_row(&self, backup: BackupInfo) -> BackupRow {
         let when = format_backup_time(backup.created_ms());
-        let row = adw::ActionRow::builder()
-            .title(when.as_str())
-            .subtitle(glib::format_size(backup.size_bytes()).as_str())
-            .use_markup(false)
-            .build();
-        let button = gtk::Button::builder()
-            .label("_Restore")
-            .use_underline(true)
-            .valign(gtk::Align::Center)
-            .build();
-        // Every row has a "Restore" button; say which backup it restores.
-        button.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Restore backup from {when}"
-        ))]);
-        button.connect_clicked(glib::clone!(
+        let row = BackupRow::new(&when, backup.size_bytes());
+        row.restore_button().connect_clicked(glib::clone!(
             #[weak(rename_to = page)]
             self,
             move |button| page.confirm_restore(button, backup.clone(), &when)
         ));
-        row.add_suffix(&button);
         row
     }
 
@@ -215,6 +203,13 @@ impl RecoveryPage {
     }
 
     /// Restores on a worker thread: it copies and checks a whole database.
+    ///
+    /// The page logs its errors itself, in full, at warning and error level
+    /// instead of through `ui::toast::show_error` (which keeps the details
+    /// at debug level): it runs before any database is open, and the paths
+    /// and SQLite messages are what make the data folder fixable. These
+    /// errors never hold card or deck text: a restore and Start Fresh only
+    /// copy, check and move files (ADR 0025, row 13).
     async fn restore(&self, button: &gtk::Button, backup: BackupInfo) {
         let imp = self.imp();
         let Some(dir) = imp.data_dir.borrow().clone() else {

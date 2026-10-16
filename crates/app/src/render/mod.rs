@@ -13,6 +13,7 @@
 //! blocks that scroll sideways when too wide ([`math_view`]). What is over
 //! a limit ([`math`]) stays source.
 
+mod breaks;
 mod markup;
 mod math;
 mod math_paragraph;
@@ -35,6 +36,16 @@ use style::{heading_class, list_marker, table_cell_classes, widget_cost};
 /// would otherwise build hundreds of thousands; what does not fit is shown
 /// as plain text in one label instead.
 const MAX_WIDGETS: usize = 2_000;
+
+/// At most this much of each side is rendered, on the review page and in
+/// the editor's preview. Pango lays a paragraph out as one label, and its
+/// first layout grows faster than its length: for one paragraph of words,
+/// about 40 ms at 8 KiB, 270 ms at 32 KiB, 800 ms at 64 KiB and seconds at
+/// 1 MiB (the same in debug and release builds: the time is in Pango). Each
+/// later relayout, e.g. a window resize, takes about 10 ms at 32 KiB. Long
+/// runs without spaces cost far more; [`breaks`] bounds them. Measured in
+/// `the_longest_shown_side_lays_out_in_time` and recorded in ADR 0025.
+pub const MAX_SHOWN_BYTES: usize = 32 * 1024;
 
 /// Space between blocks, in pixels.
 const BLOCK_SPACING: i32 = 12;
@@ -314,11 +325,12 @@ fn inline_math_scroller(view: &MathView) -> gtk::ScrolledWindow {
     scroller
 }
 
-/// A wrapping label of plain `text` (markup off: nothing to escape).
+/// A wrapping label of plain `text` (markup off: nothing to escape), with
+/// breaks in its long runs (`breaks`).
 fn plain_label(text: &str, centred: bool) -> gtk::Label {
     let label = wrapping_label(centred, Role::Label);
     label.set_use_markup(false);
-    label.set_label(text);
+    label.set_label(&breaks::breakable(text));
     label
 }
 
@@ -373,4 +385,129 @@ fn show_link_urls(label: &gtk::Label, links: Vec<(std::ops::Range<usize>, String
             None => false,
         }
     });
+}
+
+/// The part of a side that is rendered: all of it up to
+/// [`MAX_SHOWN_BYTES`]; past that, the start, cut after the last blank
+/// line that fits (so whole paragraphs are shown), or at the last character
+/// that fits if there is none in the second half of the limit. Only `\n`
+/// line ends count (CRLF text is cut at a character). The second value says
+/// whether it was cut.
+pub fn shown_part(md: &str) -> (&str, bool) {
+    if md.len() <= MAX_SHOWN_BYTES {
+        return (md, false);
+    }
+    let mut end = MAX_SHOWN_BYTES;
+    while !md.is_char_boundary(end) {
+        end -= 1;
+    }
+    let head = &md[..end];
+    // A blank line in the first half would show too little of the side.
+    let cut = head
+        .rfind("\n\n")
+        .map(|blank| blank + 1)
+        .filter(|&cut| cut >= MAX_SHOWN_BYTES / 2)
+        .unwrap_or(end);
+    (&md[..cut], true)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    #[test]
+    fn short_sides_are_shown_whole() {
+        let side = "x".repeat(MAX_SHOWN_BYTES);
+        assert_eq!(shown_part(&side), (side.as_str(), false));
+        assert_eq!(shown_part(""), ("", false));
+    }
+
+    #[test]
+    fn long_sides_are_cut_after_the_last_paragraph_that_fits() {
+        let paragraph = format!("{}\n\n", "word ".repeat(100));
+        let side = paragraph.repeat(MAX_SHOWN_BYTES / paragraph.len() + 2);
+        let (part, cut) = shown_part(&side);
+        assert!(cut);
+        assert!(part.len() <= MAX_SHOWN_BYTES);
+        assert!(part.ends_with("word \n"), "cut inside a paragraph");
+        assert!(side.starts_with(part));
+    }
+
+    #[test]
+    fn one_long_paragraph_is_cut_on_a_character_boundary() {
+        // 3-byte characters do not divide the limit: the cut must step back.
+        let side = "€".repeat(MAX_SHOWN_BYTES);
+        let (part, cut) = shown_part(&side);
+        assert!(cut);
+        assert_eq!(part.len(), MAX_SHOWN_BYTES / 3 * 3);
+        assert!(part.chars().all(|c| c == '€'));
+    }
+
+    #[test]
+    fn an_early_blank_line_does_not_empty_the_side() {
+        let side = format!("\n\n{}", "x".repeat(MAX_SHOWN_BYTES + 10));
+        let (part, cut) = shown_part(&side);
+        assert!(cut);
+        assert_eq!(part.len(), MAX_SHOWN_BYTES);
+    }
+
+    /// Times the first layout (the natural width, then the height at a
+    /// width) and a relayout at another width, for the longest side that is
+    /// shown: words in one paragraph and in many, a run with no spaces
+    /// (40 s without `breaks`), shaped scripts and emoji. At most about
+    /// 370 ms and 30 ms here; the bounds leave several times that for slow
+    /// machines.
+    #[test]
+    fn the_longest_shown_side_lays_out_in_time() {
+        let paragraph = format!("{}\n\n", "word ".repeat(200));
+        let sides = [
+            ("one paragraph", "word ".repeat(MAX_SHOWN_BYTES / 5)),
+            (
+                "paragraphs",
+                paragraph.repeat(MAX_SHOWN_BYTES / paragraph.len()),
+            ),
+            // No space: Pango breaks between characters (`WordChar`).
+            ("no spaces", "x".repeat(MAX_SHOWN_BYTES)),
+            // Shaped scripts and emoji sequences.
+            ("Arabic", "مرحبا بالعالم ".repeat(MAX_SHOWN_BYTES / 26)),
+            ("emoji", "👩‍👩‍👧‍👦 ".repeat(MAX_SHOWN_BYTES / 26)),
+            ("Devanagari", "नमस्ते दुनिया ".repeat(MAX_SHOWN_BYTES / 38)),
+            // Runs that look broken but are not, or that may only break
+            // between clusters (`breaks`).
+            ("no-break spaces", "x\u{A0}".repeat(MAX_SHOWN_BYTES / 3)),
+            ("Thai, no spaces", "สวัสดีชาวโลก".repeat(MAX_SHOWN_BYTES / 36)),
+            ("Khmer, no spaces", "ក្កសួស្តី".repeat(MAX_SHOWN_BYTES / 30)),
+            ("emoji, no spaces", "👩‍👩‍👧‍👦".repeat(MAX_SHOWN_BYTES / 25)),
+            (
+                "combining marks",
+                "e\u{301}\u{302}\u{303}".repeat(MAX_SHOWN_BYTES / 7),
+            ),
+        ];
+        let times = crate::testing::with_gtk(move || {
+            sides.map(|(what, side)| {
+                assert!(side.len() <= MAX_SHOWN_BYTES);
+                let shown = render(&rappel_core::content::parse(&side));
+                let start = Instant::now();
+                // GTK asks for the natural width (no width limit) and then
+                // the height at the width it gives.
+                let _ = shown.measure(gtk::Orientation::Horizontal, -1);
+                let _ = shown.measure(gtk::Orientation::Vertical, 600);
+                let first = start.elapsed();
+                let start = Instant::now();
+                let _ = shown.measure(gtk::Orientation::Vertical, 300);
+                (what, first, start.elapsed())
+            })
+        });
+        for (what, first, relayout) in times {
+            crate::testing::print_timing(&format!("first layout, 32 KiB, {what}"), first);
+            crate::testing::print_timing(&format!("relayout, 32 KiB, {what}"), relayout);
+            assert!(first < Duration::from_secs(3), "{what}: {first:?}");
+            assert!(
+                relayout < Duration::from_millis(200),
+                "{what}: {relayout:?}"
+            );
+        }
+    }
 }

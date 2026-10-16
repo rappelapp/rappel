@@ -132,11 +132,15 @@ impl DecksPage {
         let Some(state) = self.imp().state() else {
             return;
         };
-        let Some(deck) = self
-            .decks(state)
-            .and_then(|d| d.into_iter().find(|d| d.id == id))
-        else {
-            return;
+        let deck = match state.deck(id) {
+            Ok(deck) => deck,
+            // Deleted meanwhile, e.g. from another window's toast: the
+            // list is rebuilt by that change.
+            Err(rappel_core::Error::DeckNotFound(_)) => return,
+            Err(err) => {
+                self.error_toast(&format!("The deck could not be read: {err}"));
+                return;
+            }
         };
         let Some(view) = nav::navigation_view(self) else {
             return;
@@ -257,10 +261,12 @@ impl DecksPage {
         name
     }
 
-    /// The live decks, or `None` after showing a toast.
+    /// The live decks, in the list's order, or `None` after showing a
+    /// toast. Without their counts: those grow with the number of cards,
+    /// and only the rows show them (issue #42).
     fn decks(&self, state: &AppState) -> Option<Vec<Deck>> {
-        match state.list_decks() {
-            Ok(decks) => Some(decks.into_iter().map(|s| s.deck).collect()),
+        match state.decks() {
+            Ok(decks) => Some(decks),
             Err(err) => {
                 self.error_toast(&format!("The decks could not be read: {err}"));
                 None

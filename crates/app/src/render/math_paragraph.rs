@@ -39,7 +39,9 @@ impl MathParagraph {
 
 /// The text a screen reader gets: the label's text with each placeholder
 /// replaced by its formula's LaTeX source (the formulas are also exposed one
-/// by one, as Math objects).
+/// by one, as Math objects), without the breaks added for layout
+/// (`breaks`), which braille displays could show. A zero-width space the
+/// card had itself goes too; it is not read anyway.
 pub fn accessible_text(text: &str, formulas: &[Formula]) -> String {
     let mut out = String::with_capacity(text.len());
     let mut from = 0;
@@ -51,11 +53,17 @@ pub fn accessible_text(text: &str, formulas: &[Formula]) -> String {
         }
     }
     out.push_str(text.get(from..).unwrap_or_default());
+    out.retain(|c| c != super::breaks::BREAK);
     out
 }
 
 /// The placeholder's length in UTF-8 (3), for Pango's `u32` byte indices.
 const PLACEHOLDER_BYTES: u32 = 3;
+
+/// How many layouts a paragraph keeps: GTK alternates between the unlimited
+/// width (the horizontal measure) and the real one. The oldest goes first,
+/// with `Vec::remove(0)`: at this size that moves one element (issue #42).
+const LAYOUT_CACHE_ENTRIES: usize = 2;
 
 /// What a Pango layout depends on besides the text. If it is the same, the
 /// layout from the last call is reused: GTK measures and allocates a widget
@@ -94,8 +102,7 @@ mod imp {
         links: RefCell<Vec<(Range<usize>, String)>>,
         pub(super) views: RefCell<Vec<(MathView, gtk::ScrolledWindow)>>,
         wrap: Cell<bool>,
-        /// The last two layouts: GTK alternates between the unlimited width
-        /// (the horizontal measure) and the real one.
+        /// The last [`super::LAYOUT_CACHE_ENTRIES`] layouts.
         cache: RefCell<Vec<(Fingerprint, pango::Layout)>>,
     }
 
@@ -276,7 +283,7 @@ mod imp {
                 layout.set_width(width.saturating_mul(pango::SCALE));
             }
             let mut cache = self.cache.borrow_mut();
-            if cache.len() >= 2 {
+            if cache.len() >= super::LAYOUT_CACHE_ENTRIES {
                 cache.remove(0);
             }
             cache.push((fingerprint, layout.clone()));

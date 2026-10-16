@@ -62,6 +62,21 @@ template $RappelReviewPage: Adw.NavigationPage {
                 orientation: vertical;
                 visible: false;
               }
+
+              // Shown when a side is longer than the review page lays out
+              // (`render::MAX_SHOWN_BYTES`). Screen readers get the same
+              // text with the side (`CUT_NOTE` in the page).
+              Gtk.Label cut_note {
+                label: _("This card is long: only its start is shown. Edit it to see all of it.");
+                visible: false;
+                wrap: true;
+                xalign: 0;
+
+                styles [
+                  "dim-label",
+                  "caption",
+                ]
+              }
             };
           };
         };

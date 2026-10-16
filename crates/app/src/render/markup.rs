@@ -12,6 +12,7 @@ use std::ops::Range;
 use gtk::glib;
 use rappel_core::content::{ImageTarget, Inline};
 
+use super::breaks::Runs;
 use super::math::{Budget, Placement};
 
 /// Stands for a drawn formula in the label's text: Pango's object
@@ -46,11 +47,22 @@ pub struct Formula {
     pub display: bool,
 }
 
+/// Where the markup being built is in the label's text.
+#[derive(Debug, Default)]
+struct Cursor {
+    /// The length of the label's text so far, in bytes.
+    len: usize,
+    /// Its runs without a break opportunity (`breaks`).
+    runs: Runs,
+}
+
 impl Markup {
-    /// Appends `text`, escaped.
-    fn text(&mut self, text: &str, plain_len: &mut usize) {
-        self.markup.push_str(&glib::markup_escape_text(text));
-        *plain_len += text.len();
+    /// Appends `text`, with breaks in its long runs (`breaks`), escaped.
+    fn text(&mut self, text: &str, at: &mut Cursor) {
+        let mut broken = String::with_capacity(text.len());
+        at.runs.push(&mut broken, text);
+        self.markup.push_str(&glib::markup_escape_text(&broken));
+        at.len += broken.len();
     }
 }
 
@@ -59,12 +71,11 @@ impl Markup {
 /// if the LaTeX is invalid.
 pub fn inline_markup(inlines: &[Inline], math: &mut Budget) -> Markup {
     let mut out = Markup::default();
-    let mut plain_len = 0;
-    push(&mut out, inlines, &mut plain_len, math);
+    push(&mut out, inlines, &mut Cursor::default(), math);
     out
 }
 
-fn push(out: &mut Markup, inlines: &[Inline], len: &mut usize, math: &mut Budget) {
+fn push(out: &mut Markup, inlines: &[Inline], len: &mut Cursor, math: &mut Budget) {
     for inline in inlines {
         match inline {
             Inline::Text(text) => out.text(text, len),
@@ -75,12 +86,12 @@ fn push(out: &mut Markup, inlines: &[Inline], len: &mut usize, math: &mut Budget
             Inline::Math { source, display } => match math.place(source, *display) {
                 Placement::Formula => {
                     out.formulas.push(Formula {
-                        index: *len,
+                        index: len.len,
                         source: source.clone(),
                         display: *display,
                     });
                     out.markup.push(PLACEHOLDER);
-                    *len += PLACEHOLDER.len_utf8();
+                    len.len += PLACEHOLDER.len_utf8();
                 }
                 // Pango's own "error" underline (a wavy line, drawn in a
                 // colour Pango picks): markup cannot use a CSS class.
@@ -92,9 +103,9 @@ fn push(out: &mut Markup, inlines: &[Inline], len: &mut usize, math: &mut Budget
                 Placement::Source => tagged_text(out, "tt", source, len),
             },
             Inline::Link { content, url } => {
-                let start = *len;
+                let start = len.len;
                 tagged(out, "u", content, len, math);
-                out.links.push((start..*len, url.clone()));
+                out.links.push((start..len.len, url.clone()));
             }
             Inline::Image { alt, target } => match target {
                 ImageTarget::Media(_) => {
@@ -113,13 +124,13 @@ fn push(out: &mut Markup, inlines: &[Inline], len: &mut usize, math: &mut Budget
     }
 }
 
-fn tagged(out: &mut Markup, tag: &str, inner: &[Inline], len: &mut usize, math: &mut Budget) {
+fn tagged(out: &mut Markup, tag: &str, inner: &[Inline], len: &mut Cursor, math: &mut Budget) {
     let _ = write!(out.markup, "<{tag}>");
     push(out, inner, len, math);
     let _ = write!(out.markup, "</{tag}>");
 }
 
-fn tagged_text(out: &mut Markup, tag: &str, text: &str, len: &mut usize) {
+fn tagged_text(out: &mut Markup, tag: &str, text: &str, len: &mut Cursor) {
     let _ = write!(out.markup, "<{tag}>");
     out.text(text, len);
     let _ = write!(out.markup, "</{tag}>");
@@ -152,6 +163,31 @@ mod tests {
     fn shown(markup: &str) -> String {
         let (_, text, _) = pango::parse_markup(markup, '\0').expect("valid markup");
         text.to_string()
+    }
+
+    #[test]
+    fn indices_stay_right_when_long_runs_get_breaks() {
+        use crate::render::breaks::BREAK;
+        use crate::render::math_paragraph::accessible_text;
+
+        let long = "x".repeat(100);
+        let link = "z".repeat(100);
+        let out = markup(&format!("{long} $y$ [{link}](https://example.org)"));
+        let text = shown(&out.markup);
+        assert_eq!(text.matches(BREAK).count(), 2, "one per long run");
+        let [formula] = out.formulas.as_slice() else {
+            panic!("one formula: {:?}", out.formulas);
+        };
+        assert!(text[formula.index..].starts_with(PLACEHOLDER));
+        let [(range, url)] = out.links.as_slice() else {
+            panic!("one link: {:?}", out.links);
+        };
+        assert_eq!(url, "https://example.org");
+        assert_eq!(text[range.clone()].replace(BREAK, ""), link);
+        assert_eq!(
+            accessible_text(&text, &out.formulas),
+            format!("{long} y {link}")
+        );
     }
 
     #[test]

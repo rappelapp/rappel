@@ -19,6 +19,15 @@ use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::window::RappelWindow;
 
+// The `catch_unwind` guards around RaTeX (`render::math`, `render::math_view`;
+// ADR 0023) only work if a panic unwinds. With `panic = "abort"` a bug in
+// RaTeX on one hostile formula would close the window instead of showing its
+// source, so such a build is refused.
+#[cfg(panic = "abort")]
+compile_error!(
+    "Rappel needs panic = \"unwind\": the RaTeX catch_unwind guards (ADR 0023) rely on it"
+);
+
 fn main() -> glib::ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(

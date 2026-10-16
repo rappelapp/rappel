@@ -64,12 +64,19 @@ pub fn lay_out(source: &str, display: bool, color: Color) -> Result<DisplayList,
     }
     #[cfg(test)]
     LAYOUTS.with(|n| n.set(n.get() + 1));
-    // RaTeX returns errors for everything we know of; a panic inside it
-    // would be a bug of its, and must not take the window down.
-    catch_unwind(AssertUnwindSafe(|| {
-        lay_out_unguarded(source, display, color)
-    }))
-    .unwrap_or_else(|_| Err(Failure::Parse("internal error in the layout".to_owned())))
+    guarded(|| lay_out_unguarded(source, display, color))
+}
+
+/// What a panic inside `RaTeX` becomes.
+const INTERNAL_ERROR: &str = "internal error in the layout";
+
+/// Runs `f`, turning a panic into a [`Failure::Parse`]. `RaTeX` returns
+/// errors for everything we know of; a panic inside it would be a bug of
+/// its, and must not take the window down. This needs `panic = "unwind"`,
+/// which `main.rs` enforces with a `compile_error!`.
+fn guarded(f: impl FnOnce() -> Result<DisplayList, Failure>) -> Result<DisplayList, Failure> {
+    catch_unwind(AssertUnwindSafe(f))
+        .unwrap_or_else(|_| Err(Failure::Parse(INTERNAL_ERROR.to_owned())))
 }
 
 fn lay_out_unguarded(source: &str, display: bool, color: Color) -> Result<DisplayList, Failure> {
@@ -266,7 +273,12 @@ pub fn f32_px(value: f64) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use proptest::prelude::*;
+
     use super::*;
+    use crate::testing::{SMALL_STACK, within_stack};
 
     /// The 4 inline sentences' formulas and the 11 display formulas of the
     /// spike (ADR 0021): real course material.
@@ -409,6 +421,214 @@ mod tests {
             r"\sqrt{".repeat(500),
         ] {
             assert!(black(&source, true).is_err());
+        }
+    }
+
+    #[test]
+    fn a_panic_in_the_layout_is_a_parse_failure() {
+        let failed = guarded(|| panic!("a bug in RaTeX"));
+        assert_eq!(
+            failed.err(),
+            Some(Failure::Parse(INTERNAL_ERROR.to_owned()))
+        );
+    }
+
+    /// The stack the attack tests lay out on. `RaTeX` stops nesting at
+    /// depth 32 (`MAX_INPUT_DEPTH` in `ratex-parser`'s `stack_safety.rs`),
+    /// so its stack use stops growing there, however long the source. The
+    /// deepest case found, nested `\begin{matrix}`, needs 1.5 MiB in a debug
+    /// build and 256 KiB in a release build, where frames are much smaller.
+    /// The app lays out on the main thread, usually 8 MiB: 32 times what a
+    /// release build needs. So debug tests get 2 MiB, release tests the
+    /// small stack of the other attack tests (ADR 0025).
+    const RATEX_STACK: usize = if cfg!(debug_assertions) {
+        2 * 1024 * 1024
+    } else {
+        SMALL_STACK
+    };
+
+    /// Lays `source` out on [`RATEX_STACK`] within `limit`, and checks
+    /// that `RaTeX` neither panicked nor drew something over the limits.
+    fn lays_out_safely(source: String, limit: Duration, what: &str) {
+        let result = within_stack(RATEX_STACK, limit, what, move || {
+            (black(&source, true), black(&source, false), source)
+        });
+        let (display, text, source) = result;
+        for laid_out in [display, text] {
+            match laid_out {
+                Ok(list) => assert!(fits(list.width, list.height + list.depth), "{source}"),
+                Err(Failure::Parse(message)) => {
+                    assert_ne!(message, INTERNAL_ERROR, "RaTeX panicked on {source}");
+                }
+                Err(Failure::TooLarge | Failure::TooLong) => {}
+            }
+        }
+    }
+
+    /// The longest source that is parsed, as `piece` repeated, then `end`.
+    fn at_the_limit(piece: &str, end: &str) -> String {
+        let room = MAX_SOURCE_BYTES - end.len();
+        let mut source = piece.repeat(room / piece.len());
+        source.push_str(end);
+        source
+    }
+
+    /// Hand-made worst cases at the source limit, each in its display and
+    /// text style. All parse and lay out in under 65 ms in a debug build
+    /// (`\kern` runs are the slowest); the bound leaves 10 times that.
+    #[test]
+    fn hostile_sources_at_the_limit_are_safe_and_fast() {
+        let sources = [
+            at_the_limit("{", ""),
+            at_the_limit("{x}", ""),
+            at_the_limit(r"\frac{1}{", ""),
+            at_the_limit(r"\frac{x}{y}", ""),
+            at_the_limit(r"\sqrt{", ""),
+            at_the_limit(r"\sqrt[3]{x}", ""),
+            at_the_limit("x^{", ""),
+            at_the_limit("x^", "x"),
+            at_the_limit("x_", "x"),
+            at_the_limit(r"\left(", r"\right)"),
+            at_the_limit(r"\left( x \right)", ""),
+            at_the_limit(r"\overbrace{", ""),
+            at_the_limit(r"\begin{matrix}", ""),
+            at_the_limit(r"x & y \\ ", ""),
+            format!(
+                r"\begin{{aligned}}{}\end{{aligned}}",
+                r"x &= y \\ ".repeat(330)
+            ),
+            format!(r"\begin{{array}}{{{}}}x\end{{array}}", "c".repeat(4_000)),
+            at_the_limit(r"\def\a{\a\a}", r"\a"),
+            format!(
+                r"\def\a{{xxxxxxxxxx}}{}",
+                r"\def\a{\a\a\a\a\a\a\a\a\a\a}".repeat(100)
+            ) + r"\a",
+            at_the_limit(r"\newcommand{\b}[1]{#1#1}\b{", ""),
+            at_the_limit(r"\color{red}{", ""),
+            at_the_limit(r"\text{", ""),
+            at_the_limit(r"\mathbb{", ""),
+            at_the_limit(r"\rule{100em}{100em}", ""),
+            at_the_limit(r"\hspace{100em}", ""),
+            at_the_limit(r"\kern-100em", "x"),
+            at_the_limit("\u{202e}\u{fffd}\u{1f600}", ""),
+            at_the_limit(r"\\", ""),
+        ];
+        for source in sources {
+            assert!(source.len() <= MAX_SOURCE_BYTES, "{source}");
+            let start: String = source.chars().take(24).collect();
+            let what = format!("{start}… ({} bytes)", source.len());
+            lays_out_safely(source, Duration::from_millis(650), &what);
+        }
+    }
+
+    /// Pieces of LaTeX syntax that random sources are made of: what nests,
+    /// what expands, what takes arguments, and what ends things early.
+    const PIECES: &[&str] = &[
+        "{",
+        "}",
+        "x",
+        "1",
+        " ",
+        "^",
+        "_",
+        "'",
+        "&",
+        r"\\",
+        r"\frac",
+        r"\sqrt",
+        r"\sqrt[",
+        "]",
+        r"\left(",
+        r"\right)",
+        r"\left.",
+        r"\right|",
+        r"\middle|",
+        r"\begin{aligned}",
+        r"\end{aligned}",
+        r"\begin{matrix}",
+        r"\end{matrix}",
+        r"\begin{cases}",
+        r"\end{cases}",
+        r"\over",
+        r"\choose",
+        r"\def\a{\a\a}",
+        r"\a",
+        r"\def\b#1{#1#1}",
+        r"\b",
+        "#1",
+        r"\color{red}",
+        r"\textcolor{blue}",
+        r"\rule{50em}{1em}",
+        r"\hspace{-10em}",
+        r"\kern",
+        r"\text{",
+        r"\mathrm",
+        r"\overbrace",
+        r"\underbrace",
+        r"\hat",
+        r"\vec",
+        r"\sum",
+        r"\int",
+        r"\limits",
+        r"\displaystyle",
+        r"\scriptscriptstyle",
+        r"\big(",
+        r"\Bigg]",
+        r"\stackrel",
+        r"\overset",
+        r"\xrightarrow",
+        r"\operatorname",
+        r"\href{x}",
+        r"\url{",
+        r"\phantom",
+        r"\boxed",
+        r"\cancel",
+        r"\not",
+        "%",
+        "$",
+        "~",
+        r"\",
+        "\u{0}",
+        "\u{202e}",
+        "é",
+        "∑",
+        "\u{1f600}",
+        "\u{fffd}",
+    ];
+
+    proptest! {
+        // A hang times out after 2 s per case; without a shrink limit,
+        // proptest would then shrink it for a long time, 2 s per step.
+        #![proptest_config(ProptestConfig {
+            cases: 128,
+            max_shrink_time: 30_000,
+            ..ProptestConfig::default()
+        })]
+
+        /// Random sources up to the limit, from syntax pieces. Each lays out
+        /// in a few ms; the bound is for a hang.
+        #[test]
+        fn random_sources_are_safe(
+            pieces in prop::collection::vec(prop::sample::select(PIECES), 0..1_200),
+        ) {
+            let mut source = String::new();
+            for piece in pieces {
+                if source.len() + piece.len() > MAX_SOURCE_BYTES {
+                    break;
+                }
+                source.push_str(piece);
+            }
+            lays_out_safely(source, Duration::from_secs(2), "a random source");
+        }
+
+        /// One random piece of syntax repeated to the limit: the deepest
+        /// nesting and the longest runs a source can have.
+        #[test]
+        fn repeated_random_syntax_is_safe(
+            pieces in prop::collection::vec(prop::sample::select(PIECES), 1..4),
+        ) {
+            let source = at_the_limit(&pieces.concat(), "");
+            lays_out_safely(source, Duration::from_secs(2), "repeated syntax");
         }
     }
 

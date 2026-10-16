@@ -1,0 +1,16 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One backup on the recovery page: when it was made, its size and a Restore
+// button. Title, subtitle and the button's accessible label are set in
+// widgets/backup_row.rs; markup is off.
+template $RappelBackupRow: Adw.ActionRow {
+  use-markup: false;
+
+  [suffix]
+  Gtk.Button restore_button {
+    label: _("_Restore");
+    use-underline: true;
+    valign: center;
+  }
+}

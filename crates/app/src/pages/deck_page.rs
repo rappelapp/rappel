@@ -386,21 +386,26 @@ impl DeckPage {
         self.imp().cards.get()?.item(position).and_downcast()
     }
 
-    /// Where card `id` is in the list. A linear scan: a few microseconds
-    /// for thousands of cards, and only on a user action.
+    /// Where card `id` is in the list (see [`position_in`]).
     fn position(&self, id: &str) -> Option<u32> {
-        let store = self.imp().cards.get()?;
-        (0..store.n_items()).find(|&position| {
-            store
-                .item(position)
-                .and_downcast::<CardObject>()
-                .is_some_and(|c| c.card().id == id)
-        })
+        position_in(self.imp().cards.get()?, id)
     }
 
     fn error_toast(&self, message: &str) {
         show_error(self, "a card operation", message);
     }
+}
+
+/// Where card `id` is in `store`. A linear scan, only on a user action:
+/// about a millisecond for 5,000 cards in a debug build (issue #42; see
+/// `finding_the_last_of_5000_cards_is_fast`).
+fn position_in(store: &gio::ListStore, id: &str) -> Option<u32> {
+    (0..store.n_items()).find(|&position| {
+        store
+            .item(position)
+            .and_downcast::<CardObject>()
+            .is_some_and(|c| c.card().id == id)
+    })
 }
 
 /// The Undo of a card delete: brings card `id` back, on `page` if it is
@@ -545,6 +550,40 @@ mod tests {
         );
         // A time already past fires at once.
         assert_eq!(timer_delay_ms(now, Some(now - 5), now + 300_000), 0);
+    }
+
+    #[test]
+    fn finding_the_last_of_5000_cards_is_fast() {
+        let (found, scans) = crate::testing::within(
+            Duration::from_secs(5),
+            "5,000 cards made and scanned",
+            || {
+                let store = gio::ListStore::new::<CardObject>();
+                let items: Vec<CardObject> = (0..5_000)
+                    .map(|i| {
+                        CardObject::new(Card {
+                            id: format!("card-{i:05}"),
+                            deck_id: "deck".to_owned(),
+                            front_md: "Front".to_owned(),
+                            back_md: "Back".to_owned(),
+                            created_at: i,
+                            updated_at: i,
+                        })
+                    })
+                    .collect();
+                store.extend_from_slice(&items);
+                let start = std::time::Instant::now();
+                let found = (
+                    position_in(&store, "card-04999"),
+                    position_in(&store, "missing"),
+                );
+                (found, start.elapsed())
+            },
+        );
+        crate::testing::print_timing("position_in, two scans of 5,000 cards", scans);
+        assert_eq!(found, (Some(4_999), None));
+        // About 2 ms in a debug build; the bound leaves 10 times that.
+        assert!(scans < Duration::from_millis(20), "{scans:?}");
     }
 
     #[test]

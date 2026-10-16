@@ -23,6 +23,9 @@ glib-build-tools = "0.22"
 # The card editor (SPEC §4.4, ADR 0022): GtkSourceView 5 bindings, same
 # gtk-rs release as gtk4 0.11. v5_10 for the built-in Adwaita style schemes.
 sourceview5 = { version = "0.11", features = ["v5_10"] }
+# Card text rendering (app): grapheme cluster boundaries, so the breaks that
+# keep long runs fast to lay out never split a character (ADR 0025).
+unicode-segmentation = "1.13"
 
 # Errors (rappel-core).
 thiserror = "2"
@@ -99,3 +102,6 @@ allow_attributes_without_reason = "warn"
 
 [profile.release]
 lto = "thin"
+# Never set `panic = "abort"` (here or in any profile): the app catches
+# panics inside RaTeX so that one hostile formula cannot close the window
+# (ADR 0023). `crates/app/src/main.rs` refuses to build with it.

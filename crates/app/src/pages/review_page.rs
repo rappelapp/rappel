@@ -26,7 +26,7 @@ use rappel_core::domain::{CardState, Deck, Grade};
 use rappel_core::scheduling::{Session, Summary, capped};
 
 use crate::dialogs::card_editor::{CardEditor, Saved};
-use crate::render::{back_shown, clear, fill};
+use crate::render::{back_shown, clear, fill, shown_part};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
 use crate::ui::{init_once, nav};
@@ -68,6 +68,8 @@ mod imp {
         #[template_child]
         pub back_box: TemplateChild<gtk::Box>,
         #[template_child]
+        pub cut_note: TemplateChild<gtk::Label>,
+        #[template_child]
         pub buttons: TemplateChild<gtk::Stack>,
         #[template_child]
         pub summary_page: TemplateChild<adw::StatusPage>,
@@ -80,6 +82,10 @@ mod imp {
         pub current: RefCell<Option<String>>,
         /// Its back, parsed, until it is shown.
         pub back: RefCell<Document>,
+        /// Whether only the start of the front, or of the back, is shown
+        /// (`render::shown_part`).
+        pub front_cut: Cell<bool>,
+        pub back_cut: Cell<bool>,
         /// When the current card's front was shown.
         pub shown_at: Cell<Option<Instant>>,
         pub revealed: Cell<bool>,
@@ -301,14 +307,14 @@ impl ReviewPage {
                 return;
             }
         };
-        self.show_front(&content::parse(&card.front_md));
+        imp.revealed.set(false);
+        self.show_front(&card.front_md);
         clear(&imp.back_box);
         imp.back_box.set_visible(false);
         imp.back_separator.set_visible(false);
         imp.card_area
             .reset_property(gtk::AccessibleProperty::Description);
-        imp.back.replace(content::parse(&card.back_md));
-        imp.revealed.set(false);
+        self.keep_back(&card.back_md);
         imp.revealed_at.set(None);
         imp.current.replace(Some(id));
         imp.shown_at.set(Some(Instant::now()));
@@ -331,15 +337,40 @@ impl ReviewPage {
         imp.card_area.grab_focus();
     }
 
-    /// Shows `front`. Screen readers read it when the card area has the
-    /// focus.
-    fn show_front(&self, front: &Document) {
+    /// Shows the front `front_md`, or its start if it is too long to lay
+    /// out (`render::shown_part`). Screen readers read it when the card
+    /// area has the focus.
+    fn show_front(&self, front_md: &str) {
         let imp = self.imp();
-        fill(&imp.front_box, front);
+        let (part, cut) = shown_part(front_md);
+        let front = content::parse(part);
+        fill(&imp.front_box, &front);
         imp.card_area
-            .update_property(&[gtk::accessible::Property::Label(&content::plain_text(
-                front,
+            .update_property(&[gtk::accessible::Property::Label(&with_cut_note(
+                content::plain_text(&front),
+                cut,
             ))]);
+        imp.front_cut.set(cut);
+        self.update_cut_note();
+    }
+
+    /// Parses the back `back_md` (or its start, as for the front) for
+    /// [`Self::reveal`].
+    fn keep_back(&self, back_md: &str) {
+        let imp = self.imp();
+        let (part, cut) = shown_part(back_md);
+        imp.back.replace(content::parse(part));
+        imp.back_cut.set(cut);
+    }
+
+    /// Shows the note under the card while a side on screen is cut.
+    fn update_cut_note(&self) {
+        let imp = self.imp();
+        imp.cut_note.set_visible(cut_note_shown(
+            imp.front_cut.get(),
+            imp.back_cut.get(),
+            imp.revealed.get(),
+        ));
     }
 
     /// Shows `back` under the front, or nothing when it is empty: then
@@ -350,16 +381,21 @@ impl ReviewPage {
         if shown {
             fill(&imp.back_box, back);
             imp.card_area
-                .update_property(&[gtk::accessible::Property::Description(
-                    &content::plain_text(back),
-                )]);
+                .update_property(&[gtk::accessible::Property::Description(&with_cut_note(
+                    content::plain_text(back),
+                    imp.back_cut.get(),
+                ))]);
         } else {
             clear(&imp.back_box);
             imp.card_area
                 .reset_property(gtk::AccessibleProperty::Description);
+            // A cut back whose start has nothing to show (only blank
+            // lines) is not on screen, so the note is not about it.
+            imp.back_cut.set(false);
         }
         imp.back_separator.set_visible(shown);
         imp.back_box.set_visible(shown);
+        self.update_cut_note();
     }
 
     /// Opens the card editor on the card on screen.
@@ -422,12 +458,11 @@ impl ReviewPage {
     /// changes: the reveal, the timers and the session stay as they are.
     fn redraw(&self, front_md: &str, back_md: &str) {
         let imp = self.imp();
-        self.show_front(&content::parse(front_md));
-        let back = content::parse(back_md);
+        self.show_front(front_md);
+        self.keep_back(back_md);
         if imp.revealed.get() {
+            let back = imp.back.take();
             self.show_back(&back);
-        } else {
-            imp.back.replace(back);
         }
     }
 
@@ -511,6 +546,26 @@ impl ReviewPage {
     }
 }
 
+/// Whether the note "only its start is shown" is under the card: the front
+/// is cut, or the back is cut and shown.
+fn cut_note_shown(front_cut: bool, back_cut: bool, revealed: bool) -> bool {
+    front_cut || (back_cut && revealed)
+}
+
+/// What screen readers read for a side: its text, and the note when only
+/// its start is shown, since the note itself is not in the focus chain.
+fn with_cut_note(text: String, cut: bool) -> String {
+    if cut {
+        format!("{text}\n\n{CUT_NOTE}")
+    } else {
+        text
+    }
+}
+
+/// The note's text for screen readers. Keep it equal to `cut_note` in
+/// `review_page.blp`.
+const CUT_NOTE: &str = "This card is long: only its start is shown. Edit it to see all of it.";
+
 /// The subtitle while studying: "12 left". It counts the card on screen
 /// and step cards that will come back, so it can go up after a Fail.
 fn left_text(left: usize) -> String {
@@ -545,6 +600,31 @@ fn duration_text(time: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cut_note_follows_the_sides_on_screen() {
+        assert!(!cut_note_shown(false, false, false));
+        assert!(!cut_note_shown(false, false, true));
+        assert!(cut_note_shown(true, false, false));
+        // A cut back is only noted once it is shown.
+        assert!(!cut_note_shown(false, true, false));
+        assert!(cut_note_shown(false, true, true));
+    }
+
+    #[test]
+    fn screen_readers_hear_the_cut_note() {
+        assert_eq!(with_cut_note("Front".to_owned(), false), "Front");
+        assert_eq!(
+            with_cut_note("Front".to_owned(), true),
+            format!("Front\n\n{CUT_NOTE}")
+        );
+    }
+
+    #[test]
+    fn the_cut_note_matches_the_blueprint() {
+        let blueprint = include_str!("../../data/review_page.blp");
+        assert!(blueprint.contains(&format!("_(\"{CUT_NOTE}\")")));
+    }
 
     #[test]
     fn keys_reveal_grade_and_edit() {

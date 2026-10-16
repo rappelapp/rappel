@@ -28,7 +28,7 @@ use rappel_core::content;
 use rappel_core::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits};
 use sourceview5::prelude::*;
 
-use crate::render::{back_shown, clear, fill};
+use crate::render::{back_shown, clear, fill, shown_part};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
 use crate::ui::text::group_digits;
@@ -39,12 +39,6 @@ use crate::ui::{dialog, init_once};
 /// enough to feel live, long enough that a 1 MiB card is not parsed and
 /// rendered on every key.
 const PREVIEW_DELAY: Duration = Duration::from_millis(250);
-
-/// The preview renders at most this much of each side. Pango lays a long
-/// paragraph out as one label, and GTK measures it again at each relayout
-/// (every keystroke that changes the editor's height): a 1 MiB paragraph
-/// took about 400 ms per layout in a release build, freezing the editor.
-const PREVIEW_MAX_BYTES: usize = 32 * 1024;
 
 /// What a save did, for the deck page to update its list.
 #[derive(Debug, Clone)]
@@ -373,8 +367,8 @@ impl CardEditor {
         }
         let started = Instant::now();
         let (front_md, back_md) = self.texts();
-        let (front_part, front_cut) = preview_part(&front_md);
-        let (back_part, back_cut) = preview_part(&back_md);
+        let (front_part, front_cut) = shown_part(&front_md);
+        let (back_part, back_cut) = shown_part(&back_md);
         fill(&imp.preview_front, &content::parse(front_part));
         let back = content::parse(back_part);
         let shown = back_shown(&back);
@@ -574,30 +568,6 @@ fn show_field_error(view: &impl IsA<gtk::Widget>, label: &gtk::Label, error: Opt
     }
 }
 
-/// The part of a side the preview renders: all of it up to
-/// [`PREVIEW_MAX_BYTES`]; past that, the start, cut after the last blank
-/// line that fits (so whole paragraphs are shown), or at the last character
-/// that fits if there is none in the second half of the limit. Only `\n`
-/// line ends count (CRLF text is cut at a character). The second value says
-/// whether it was cut.
-fn preview_part(md: &str) -> (&str, bool) {
-    if md.len() <= PREVIEW_MAX_BYTES {
-        return (md, false);
-    }
-    let mut end = PREVIEW_MAX_BYTES;
-    while !md.is_char_boundary(end) {
-        end -= 1;
-    }
-    let head = &md[..end];
-    // A blank line in the first half would show too little of the side.
-    let cut = head
-        .rfind("\n\n")
-        .map(|blank| blank + 1)
-        .filter(|&cut| cut >= PREVIEW_MAX_BYTES / 2)
-        .unwrap_or(end);
-    (&md[..cut], true)
-}
-
 /// The `GtkSourceView` style scheme for the light or dark style. Both come
 /// with `GtkSourceView` itself, built in as resources.
 fn scheme_id(dark: bool) -> &'static str {
@@ -630,42 +600,6 @@ fn wrap_selection(buffer: &sourceview5::Buffer, marker: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn short_sides_are_previewed_whole() {
-        let side = "x".repeat(PREVIEW_MAX_BYTES);
-        assert_eq!(preview_part(&side), (side.as_str(), false));
-        assert_eq!(preview_part(""), ("", false));
-    }
-
-    #[test]
-    fn long_sides_are_cut_after_the_last_paragraph_that_fits() {
-        let paragraph = format!("{}\n\n", "word ".repeat(100));
-        let side = paragraph.repeat(PREVIEW_MAX_BYTES / paragraph.len() + 2);
-        let (part, cut) = preview_part(&side);
-        assert!(cut);
-        assert!(part.len() <= PREVIEW_MAX_BYTES);
-        assert!(part.ends_with("word \n"), "cut inside a paragraph");
-        assert!(side.starts_with(part));
-    }
-
-    #[test]
-    fn one_long_paragraph_is_cut_on_a_character_boundary() {
-        // 3-byte characters do not divide the limit: the cut must step back.
-        let side = "€".repeat(PREVIEW_MAX_BYTES);
-        let (part, cut) = preview_part(&side);
-        assert!(cut);
-        assert_eq!(part.len(), PREVIEW_MAX_BYTES / 3 * 3);
-        assert!(part.chars().all(|c| c == '€'));
-    }
-
-    #[test]
-    fn an_early_blank_line_does_not_empty_the_preview() {
-        let side = format!("\n\n{}", "x".repeat(PREVIEW_MAX_BYTES + 10));
-        let (part, cut) = preview_part(&side);
-        assert!(cut);
-        assert_eq!(part.len(), PREVIEW_MAX_BYTES);
-    }
 
     #[test]
     fn the_scheme_follows_the_style() {
