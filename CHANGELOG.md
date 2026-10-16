@@ -7,6 +7,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `cards-core`: export the whole database to a `.cards` file (a zip archive with `cards.json`, format version 1, and an empty `media/`) with `Store::export_to`. Deleted rows are included, and the same database gives the same bytes. Import is two steps: `Store::plan_import` checks the untrusted file and summarises what is new, already present or in conflict; `Store::apply_import` backs up, then adds the new rows in one transaction and rebuilds the affected schedules. Any conflict refuses the whole import; ids must be `UUIDv7` (ADR 0017, #12). No UI yet.
 - Recovery page with no backups: **Start Fresh**, after a confirmation, moves the database aside (never deleting it) and starts an empty one (ADR 0016, #16). Not offered, and refused by core, while backups exist (`Error::BackupsAvailable`) or an interrupted restore's copy waits.
 - `cards-core`: `storage::start_fresh` and `Store::next_study_change`.
 - Tests: the cache property test also adds, deletes and undeletes cards and decks; a file-backed store is reopened; a v2 backup is restored; migration 0005 moves the due date of a late Pass (#13).

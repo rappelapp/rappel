@@ -22,9 +22,11 @@ use crate::id::IdGen;
 use crate::scheduling::Scheduler;
 use crate::time::now_ms;
 pub use backup::{BackupInfo, list_backups};
-use backup::{KEEP_BACKUPS, check_rows, create_backup, has_backup_for_day, prune_backups};
+pub(crate) use backup::{KEEP_BACKUPS, create_backup, prune_backups};
+use backup::{check_rows, has_backup_for_day};
 use migrations::{MIGRATIONS, Migration, latest, migrate};
 pub use restore::{Restored, restore_backup, start_fresh};
+pub(crate) use schedule::rebuild_cards;
 
 /// File name of the database inside the data directory.
 pub const DB_FILE_NAME: &str = "cards.sqlite3";
@@ -37,12 +39,15 @@ const FILE_MODE: u32 = 0o600;
 /// An open Cards database.
 #[derive(Debug)]
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
     /// Issues the ids of new decks, cards and review events.
     ids: IdGen,
     /// Schedules recorded reviews. Default retention until settings exist;
     /// then the stored desired retention must be used here (ADR 0006).
-    scheduler: Scheduler,
+    pub(crate) scheduler: Scheduler,
+    /// Where backups go; `None` only for in-memory test stores, which
+    /// cannot be backed up (an import then refuses to run).
+    pub(crate) backup_dir: Option<PathBuf>,
     /// Problems [`Store::open`] met that did not stop it, for the UI.
     open_warnings: Vec<OpenWarning>,
 }
@@ -124,6 +129,7 @@ impl Store {
         migrate(&mut conn, migrations, current)?;
         let mut store = Self::from_connection(conn);
         store.open_warnings = warnings;
+        store.backup_dir = Some(backup_dir.to_path_buf());
         Ok(store)
     }
 
@@ -133,6 +139,7 @@ impl Store {
             conn,
             ids: IdGen::new(),
             scheduler: Scheduler::default(),
+            backup_dir: None,
             open_warnings: Vec::new(),
         }
     }

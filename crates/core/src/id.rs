@@ -95,6 +95,24 @@ fn format_id(value: u128) -> String {
     )
 }
 
+/// Whether `id` is a lowercase hyphenated `UUIDv7` with the RFC 9562
+/// variant (`10`): the only ids whose string order equals the order
+/// [`IdGen`] compares them in (ADR 0008, #12). Ids from outside the app
+/// (an import) must pass this before they are stored.
+pub(crate) fn is_uuid_v7(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    parse_id(id).is_some() && bytes[14] == b'7' && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
+}
+
+/// The Unix millisecond timestamp in a `UUIDv7` id (its first 48 bits);
+/// `None` unless [`is_uuid_v7`] holds.
+pub(crate) fn uuid_v7_ms(id: &str) -> Option<i64> {
+    if !is_uuid_v7(id) {
+        return None;
+    }
+    i64::from_str_radix(&format!("{}{}", &id[..8], &id[9..13]), 16).ok()
+}
+
 /// The 122-bit value of a lowercase hyphenated UUID string (the version
 /// and variant bits are dropped); `None` if `id` is not one.
 fn parse_id(id: &str) -> Option<u128> {
@@ -164,6 +182,39 @@ mod tests {
             ok.replacen('0', "g", 1),
         ] {
             assert_eq!(parse_id(&bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn only_lowercase_v7_ids_with_the_rfc_variant_pass() {
+        let v7 = "01920000-0000-7000-8000-000000000001";
+        assert!(is_uuid_v7(v7));
+        assert!(is_uuid_v7("ffffffff-ffff-7fff-bfff-ffffffffffff"));
+        let id = IdGen::new().next(T0).unwrap();
+        assert!(is_uuid_v7(&id));
+        assert_eq!(uuid_v7_ms(&id), Some(T0));
+        assert_eq!(
+            uuid_v7_ms("ffffffff-ffff-7fff-bfff-ffffffffffff"),
+            Some((1 << 48) - 1)
+        );
+        assert_eq!(uuid_v7_ms("01920000-0000-4000-8000-000000000001"), None);
+        for bad in [
+            // v4 and v8
+            "01920000-0000-4000-8000-000000000001",
+            "01920000-0000-8000-8000-000000000001",
+            // Variants 0, 110 and 111
+            "01920000-0000-7000-7000-000000000001",
+            "01920000-0000-7000-c000-000000000001",
+            "01920000-0000-7000-f000-000000000001",
+            // Uppercase, braces, no hyphens, too short, not hex
+            "01920000-0000-7000-8000-00000000000A",
+            "{01920000-0000-7000-8000-000000000001}",
+            "0192000000007000800000000000000001",
+            "01920000-0000-7000-8000-00000000001",
+            "01920000-0000-7000-8000-00000000000g",
+            "",
+        ] {
+            assert!(!is_uuid_v7(bad), "{bad}");
         }
     }
 

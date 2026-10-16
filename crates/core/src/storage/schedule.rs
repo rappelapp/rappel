@@ -85,6 +85,28 @@ pub(super) fn write_schedule_cache(tx: &Transaction<'_>, scheduler: &Scheduler) 
     Ok(cards)
 }
 
+/// Rebuilds the `card_schedule` row of each card in `card_ids` from its
+/// review log, inside the caller's transaction (an import's).
+pub(crate) fn rebuild_cards<'a>(
+    conn: &Connection,
+    scheduler: &Scheduler,
+    card_ids: impl IntoIterator<Item = &'a str>,
+) -> Result<()> {
+    let mut select = conn.prepare(
+        "SELECT id, card_id, reviewed_at, grade, duration_ms FROM review_events
+         WHERE card_id = ?1 ORDER BY reviewed_at, id",
+    )?;
+    for card_id in card_ids {
+        let events = select
+            .query_map([card_id], raw_event)?
+            .map(|row| row?.into_event())
+            .collect::<Result<Vec<_>>>()?;
+        let state = scheduler.rebuild_state(card_id, &events)?;
+        write_card_state(conn, card_id, &state)?;
+    }
+    Ok(())
+}
+
 /// The cached state of `card_id` (see [`Store::card_state`]).
 pub(super) fn read_card_state(conn: &Connection, card_id: &str) -> Result<CardState> {
     let row = conn

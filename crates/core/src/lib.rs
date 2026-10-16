@@ -6,6 +6,7 @@ pub mod data_dir;
 pub mod domain;
 mod error;
 mod id;
+pub mod interchange;
 pub mod scheduling;
 pub mod storage;
 pub mod time;

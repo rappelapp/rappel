@@ -249,6 +249,31 @@ pub enum Error {
     /// No card with this id, or it was deleted.
     #[error("card {0} does not exist")]
     CardNotFound(String),
+
+    /// Encoding an export failed. The cause is boxed so the JSON and zip
+    /// crates stay out of this API (ADR 0015).
+    #[error("cannot write the export: {0}")]
+    ExportFailed(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    /// The file is not a valid `.cards` export (ADR 0017). Nothing was
+    /// written.
+    #[error("cannot import this file: {0}")]
+    ImportRefused(#[source] crate::interchange::ImportProblem),
+
+    /// The import plan has conflicts with the database, so the whole
+    /// import is refused. Nothing was written.
+    #[error("cannot import: {0} conflicts with the existing data")]
+    ImportConflicts(usize),
+
+    /// The database changed between planning and applying the import.
+    /// Nothing was written; plan again.
+    #[error("the data changed since the import was checked; check the file again")]
+    ImportPlanStale,
+
+    /// This store has no backup directory (an in-memory store), so an
+    /// import, which needs a backup first, cannot run.
+    #[error("this database cannot be backed up, so nothing can be imported into it")]
+    NoBackupDir,
 }
 
 /// `Result` with [`Error`] as the error type.

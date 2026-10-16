@@ -102,8 +102,11 @@ Storage rules:
 ## 4. Features for v0.2 (in priority order)
 
 ### 4.1 Export / import
-- Export everything to one JSON file (format has a `"format_version": 1` field): decks, cards, tags, settings, the full review log, and media as base64.
-- Import that format into an empty or existing DB, with a summary before committing ("12 decks, 840 cards, 5,210 reviews"). Import runs in one transaction.
+- Export everything to one `.cards` file: a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 1`, `exported_at`, and all decks, cards and the full review log, deleted rows included with their `deleted_at`. It also has `settings` (empty until settings exist) and `media` (empty until images exist; image files will go into `media/`). Tags join the format, as version 2, with the tags slice. A reader accepts every version up to its own.
+- Deterministic: the same database exported at the same time gives the same bytes (lists sorted by id, fixed zip metadata). Only `exported_at` differs between exports.
+- Import into an empty or existing DB in two steps: `plan_import` checks the file and returns a summary without writing anything (new / already present / conflicts, e.g. "12 decks, 840 cards, 5,210 reviews"); `apply_import` backs up the database, then writes in one transaction and rebuilds the schedule of the affected cards from the log.
+- Merge rules: an id not in the DB is added; the same id with the same content is skipped; the same id with different content, or a live deck name already used by another live deck, is a conflict, and any conflict refuses the whole import. Importing the same file twice changes nothing.
+- The file is untrusted. A file is refused if any of these fail: size limits; the exact entry names (nothing is extracted, so no zip-slip); a supported format version; every id a lowercase `UUIDv7`; references that resolve; valid grades and timestamps.
 - Round-trip test: export → import into empty DB → export again produces an identical file.
 
 ### 4.2 Math
