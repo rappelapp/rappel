@@ -1,12 +1,27 @@
 using Gtk 4.0;
 using Adw 1;
+using GtkSource 5;
 
 // The card editor. The title ("New Card" / "Edit Card") and the texts are
-// set in dialogs/card_editor.rs. Front and back are plain text for now;
-// Markdown highlighting and preview come with the editor slice (SPEC §4.4).
+// set in dialogs/card_editor/mod.rs, and so are the buffers' Markdown
+// language and style scheme. The preview sits beside the sources when the
+// dialog is wide, below them when it is narrow (the breakpoint).
 template $RappelCardEditor: Adw.Dialog {
-  content-width: 560;
-  content-height: 520;
+  content-width: 960;
+  content-height: 640;
+  // libadwaita asks for a minimum size on a dialog with breakpoints; this
+  // is the main window's own (window.blp).
+  width-request: 360;
+  height-request: 294;
+
+  Adw.Breakpoint {
+    condition ("max-width: 720sp")
+
+    setters {
+      main_box.orientation: vertical;
+      preview_separator.orientation: horizontal;
+    }
+  }
 
   child: Adw.ToolbarView {
     [top]
@@ -32,112 +47,202 @@ template $RappelCardEditor: Adw.Dialog {
           "suggested-action",
         ]
       }
+
+      [end]
+      Gtk.ToggleButton preview_button {
+        icon-name: "view-dual-symbolic";
+        tooltip-text: _("Preview");
+        active: true;
+
+        accessibility {
+          label: _("Preview");
+        }
+      }
     }
 
     content: Adw.ToastOverlay toast_overlay {
-      child: Gtk.Box {
-        orientation: vertical;
-        spacing: 6;
-        margin-top: 6;
-        margin-bottom: 18;
-        margin-start: 18;
-        margin-end: 18;
+      child: Gtk.Box main_box {
+        orientation: horizontal;
 
-        Gtk.Label front_label {
-          label: _("Front");
-          xalign: 0;
-
-          styles [
-            "heading",
-          ]
-        }
-
-        Gtk.ScrolledWindow {
-          hscrollbar-policy: never;
-          min-content-height: 96;
+        Gtk.Box {
+          orientation: vertical;
+          spacing: 6;
+          hexpand: true;
           vexpand: true;
+          margin-top: 6;
+          margin-bottom: 18;
+          margin-start: 18;
+          margin-end: 18;
 
-          styles [
-            "card",
-          ]
-
-          child: Gtk.TextView front_view {
-            wrap-mode: word_char;
-            accepts-tab: false;
-            top-margin: 12;
-            bottom-margin: 12;
-            left-margin: 12;
-            right-margin: 12;
-
-            accessibility {
-              labelled-by: front_label;
-              described-by: front_error;
-            }
+          Gtk.Label front_label {
+            label: _("Front");
+            xalign: 0;
 
             styles [
-              "inline",
+              "heading",
             ]
-          };
-        }
+          }
 
-        Gtk.Label front_error {
-          visible: false;
-          wrap: true;
-          xalign: 0;
-
-          styles [
-            "error",
-            "caption",
-          ]
-        }
-
-        Gtk.Label back_label {
-          label: _("Back");
-          xalign: 0;
-          margin-top: 12;
-
-          styles [
-            "heading",
-          ]
-        }
-
-        Gtk.ScrolledWindow {
-          hscrollbar-policy: never;
-          min-content-height: 96;
-          vexpand: true;
-
-          styles [
-            "card",
-          ]
-
-          child: Gtk.TextView back_view {
-            wrap-mode: word_char;
-            accepts-tab: false;
-            top-margin: 12;
-            bottom-margin: 12;
-            left-margin: 12;
-            right-margin: 12;
-
-            accessibility {
-              labelled-by: back_label;
-              described-by: back_error;
-            }
+          Gtk.ScrolledWindow {
+            hscrollbar-policy: never;
+            min-content-height: 96;
+            vexpand: true;
 
             styles [
-              "inline",
+              "card",
             ]
-          };
+
+            child: GtkSource.View front_view {
+              buffer: GtkSource.Buffer front_buffer {};
+              monospace: true;
+              wrap-mode: word_char;
+              accepts-tab: false;
+              top-margin: 12;
+              bottom-margin: 12;
+              left-margin: 12;
+              right-margin: 12;
+
+              accessibility {
+                labelled-by: front_label;
+                described-by: front_error;
+              }
+
+              styles [
+                "inline",
+              ]
+            };
+          }
+
+          Gtk.Label front_error {
+            visible: false;
+            wrap: true;
+            xalign: 0;
+
+            styles [
+              "error",
+              "caption",
+            ]
+          }
+
+          Gtk.Label back_label {
+            label: _("Back");
+            xalign: 0;
+            margin-top: 12;
+
+            styles [
+              "heading",
+            ]
+          }
+
+          Gtk.ScrolledWindow {
+            hscrollbar-policy: never;
+            min-content-height: 96;
+            vexpand: true;
+
+            styles [
+              "card",
+            ]
+
+            child: GtkSource.View back_view {
+              buffer: GtkSource.Buffer back_buffer {};
+              monospace: true;
+              wrap-mode: word_char;
+              accepts-tab: false;
+              top-margin: 12;
+              bottom-margin: 12;
+              left-margin: 12;
+              right-margin: 12;
+
+              accessibility {
+                labelled-by: back_label;
+                described-by: back_error;
+              }
+
+              styles [
+                "inline",
+              ]
+            };
+          }
+
+          Gtk.Label back_error {
+            visible: false;
+            wrap: true;
+            xalign: 0;
+
+            styles [
+              "error",
+              "caption",
+            ]
+          }
         }
 
-        Gtk.Label back_error {
-          visible: false;
-          wrap: true;
-          xalign: 0;
+        Gtk.Separator preview_separator {
+          orientation: vertical;
+          visible: bind preview_button.active;
+        }
 
-          styles [
-            "error",
-            "caption",
-          ]
+        // Not focusable: the rendered labels are not (see render/mod.rs),
+        // so Tab goes from the back straight to the header buttons.
+        Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+          hexpand: true;
+          vexpand: true;
+          visible: bind preview_button.active;
+
+          child: Gtk.Box {
+            orientation: vertical;
+            spacing: 12;
+            margin-top: 6;
+            margin-bottom: 18;
+            margin-start: 18;
+            margin-end: 18;
+
+            Gtk.Label preview_label {
+              label: _("Preview");
+              xalign: 0;
+
+              styles [
+                "heading",
+              ]
+            }
+
+            Gtk.Label preview_note {
+              label: _("This card is long: only its start is previewed.");
+              visible: false;
+              wrap: true;
+              xalign: 0;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            // Laid out like the review page's card: the front, then the
+            // back under a separator when it has something to show.
+            Gtk.Box {
+              orientation: vertical;
+              spacing: 24;
+              accessible-role: group;
+
+              accessibility {
+                labelled-by: preview_label;
+              }
+
+              Gtk.Box preview_front {
+                orientation: vertical;
+              }
+
+              Gtk.Separator preview_back_separator {
+                visible: false;
+              }
+
+              Gtk.Box preview_back {
+                orientation: vertical;
+                visible: false;
+              }
+            }
+          };
         }
       };
     };

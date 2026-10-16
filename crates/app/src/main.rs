@@ -37,6 +37,10 @@ fn main() -> glib::ExitCode {
     let app = adw::Application::builder()
         .application_id(rappel_core::APP_ID)
         .build();
+    // GtkSourceView (the card editor) needs GTK initialised first. `startup`
+    // is a GApplication RUN_FIRST signal, so GtkApplication's own handler,
+    // which initialises GTK, runs before this one (gio's GApplication docs).
+    app.connect_startup(|_| sourceview5::init());
     app.set_accels_for_action("win.new", &["<Control>n"]);
     app.connect_activate(|app| {
         if let Some(window) = app.active_window() {

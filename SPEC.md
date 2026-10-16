@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page with math shown as source (§4.2 rendering is still to do), and editing the card on screen during review (part of §4.5).
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page with math shown as source (§4.2 rendering is still to do), editing the card on screen during review (part of §4.5), and the Markdown editor with live preview (§4.4; tags still to come).
 
 ---
 

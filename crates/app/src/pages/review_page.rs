@@ -27,7 +27,7 @@ use rappel_core::scheduling::session::{Session, Summary, capped};
 
 use crate::clock::local_day_start_ms;
 use crate::dialogs::card_editor::{CardEditor, Saved};
-use crate::render::{self, back_shown};
+use crate::render::{back_shown, clear, fill};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
 use crate::ui::toast::{log_failure, persistent_toast, show_toast_from};
@@ -516,18 +516,6 @@ impl ReviewPage {
             old.dismiss();
         }
         show_toast_from(self, toast);
-    }
-}
-
-/// Replaces what `container` shows with `doc`.
-fn fill(container: &gtk::Box, doc: &Document) {
-    clear(container);
-    container.append(&render::render(doc));
-}
-
-fn clear(container: &gtk::Box) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
     }
 }
 

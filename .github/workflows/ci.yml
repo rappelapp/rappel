@@ -37,7 +37,8 @@ jobs:
           # Second line: what the bare container lacks for checkout, rustup,
           # install-action (jq) and linking.
           apt-get install -y --no-install-recommends \
-            libgtk-4-dev libadwaita-1-dev blueprint-compiler libglib2.0-dev-bin \
+            libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev gir1.2-gtksource-5 \
+            blueprint-compiler libglib2.0-dev-bin \
             git ca-certificates curl jq build-essential pkg-config
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

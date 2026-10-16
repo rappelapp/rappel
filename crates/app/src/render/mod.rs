@@ -50,6 +50,19 @@ pub fn render(doc: &Document) -> gtk::Box {
     container
 }
 
+/// Replaces what `container` shows with `doc`.
+pub fn fill(container: &gtk::Box, doc: &Document) {
+    clear(container);
+    container.append(&render(doc));
+}
+
+/// Removes everything `container` shows.
+pub fn clear(container: &gtk::Box) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+}
+
 /// `blocks` in a vertical box. `lists` is how many lists deep they are.
 fn blocks_widget(blocks: &[Block], lists: usize) -> gtk::Box {
     let container = blocks_box();

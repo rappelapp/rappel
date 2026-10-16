@@ -1,27 +1,49 @@
-//! The card editor: front and back as plain text. Layout in
-//! `data/card_editor.blp` (ADR 0013).
+//! The card editor: front and back as Markdown in `GtkSourceView`, with a
+//! live preview. Layout in `data/card_editor.blp` (ADR 0013, ADR 0022).
 //!
 //! - Ctrl+Enter saves and closes; Ctrl+Shift+Enter saves and starts a new
 //!   card in the same deck, with the focus in the front field. Both are
 //!   caught in the capture phase, before the text views see the Enter.
+//! - Ctrl+B / Ctrl+I wrap the selection of the focused side in bold /
+//!   italic markers ([`format::wrap`]), as one undoable step.
+//! - The preview renders both sides as the review page does, once typing
+//!   pauses ([`PREVIEW_DELAY`]), and only while it is shown.
+//! - The highlighting follows the light or dark style.
 //! - A blank front disables saving, and so does a side over the store's
 //!   length limit, explained under that side (the store's own rules).
 //! - Closing with unsaved changes asks first, whether by Escape, Cancel or
 //!   closing the window (`RappelWindow` calls [`CardEditor::confirm_discard`]).
 //! - A store error keeps the dialog open with the text as typed.
 
+mod format;
+
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
+use rappel_core::content;
 use rappel_core::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits};
+use sourceview5::prelude::*;
 
+use crate::render::{back_shown, clear, fill};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
 use crate::ui::text::group_digits;
 use crate::ui::toast::{log_failure, persistent_toast};
 use crate::ui::{dialog, init_once};
+
+/// How long typing must pause before the preview is rendered again. Short
+/// enough to feel live, long enough that a 1 MiB card is not parsed and
+/// rendered on every key.
+const PREVIEW_DELAY: Duration = Duration::from_millis(250);
+
+/// The preview renders at most this much of each side. Pango lays a long
+/// paragraph out as one label, and GTK measures it again at each relayout
+/// (every keystroke that changes the editor's height): a 1 MiB paragraph
+/// took about 400 ms per layout in a release build, freezing the editor.
+const PREVIEW_MAX_BYTES: usize = 32 * 1024;
 
 /// What a save did, for the deck page to update its list.
 #[derive(Debug, Clone)]
@@ -42,6 +64,7 @@ mod imp {
     use super::OnSaved;
     use crate::state::AppState;
     use crate::ui::callback::Callback;
+    use crate::ui::debounce::Debounce;
 
     #[derive(Default, gtk::CompositeTemplate)]
     #[template(resource = "/io/github/rsmirke/Rappel/card_editor.ui")]
@@ -49,13 +72,32 @@ mod imp {
         #[template_child]
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,
         #[template_child]
-        pub front_view: TemplateChild<gtk::TextView>,
+        pub front_view: TemplateChild<sourceview5::View>,
         #[template_child]
-        pub back_view: TemplateChild<gtk::TextView>,
+        pub back_view: TemplateChild<sourceview5::View>,
+        #[template_child]
+        pub front_buffer: TemplateChild<sourceview5::Buffer>,
+        #[template_child]
+        pub back_buffer: TemplateChild<sourceview5::Buffer>,
         #[template_child]
         pub front_error: TemplateChild<gtk::Label>,
         #[template_child]
         pub back_error: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub preview_button: TemplateChild<gtk::ToggleButton>,
+        #[template_child]
+        pub preview_front: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub preview_back_separator: TemplateChild<gtk::Separator>,
+        #[template_child]
+        pub preview_back: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub preview_note: TemplateChild<gtk::Label>,
+        /// The preview refresh waiting for typing to pause.
+        pub preview: Debounce,
+        /// Our `notify::dark` handler on the style manager, a singleton
+        /// that outlives the editor: disconnected on dispose.
+        pub dark_handler: RefCell<Option<glib::SignalHandlerId>>,
         pub state: OnceCell<AppState>,
         pub deck_id: OnceCell<String>,
         /// The card being edited; `None` for a new card.
@@ -87,6 +129,10 @@ mod imp {
         type ParentType = adw::Dialog;
 
         fn class_init(klass: &mut Self::Class) {
+            // The template names GtkSource types: they must be registered
+            // before it is parsed.
+            sourceview5::View::ensure_type();
+            sourceview5::Buffer::ensure_type();
             klass.bind_template();
             klass.install_action("editor.save", None, |editor, _, _| {
                 editor.save(false);
@@ -108,6 +154,13 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
             self.obj().setup();
+        }
+
+        fn dispose(&self) {
+            self.preview.cancel();
+            if let Some(handler) = self.dark_handler.take() {
+                adw::StyleManager::default().disconnect(handler);
+            }
         }
     }
     impl WidgetImpl for CardEditor {}
@@ -171,16 +224,131 @@ impl CardEditor {
                 Some(action),
             ));
         }
-        self.add_controller(shortcuts);
-
-        for view in [&*imp.front_view, &*imp.back_view] {
-            view.buffer().connect_changed(glib::clone!(
-                #[weak(rename_to = editor)]
-                self,
-                move |_| editor.update_actions()
+        for (trigger, marker) in [("<Control>b", format::BOLD), ("<Control>i", format::ITALIC)] {
+            let action = gtk::CallbackAction::new(move |widget, _| {
+                let editor = widget.downcast_ref::<Self>();
+                match editor.and_then(Self::focused_buffer) {
+                    Some(buffer) => {
+                        wrap_selection(&buffer, marker);
+                        glib::Propagation::Stop
+                    }
+                    // Not in a text field: the key is not ours.
+                    None => glib::Propagation::Proceed,
+                }
+            });
+            shortcuts.add_shortcut(gtk::Shortcut::new(
+                gtk::ShortcutTrigger::parse_string(trigger),
+                Some(action),
             ));
         }
+        self.add_controller(shortcuts);
+
+        let language = sourceview5::LanguageManager::default().language("markdown");
+        if language.is_none() {
+            tracing::warn!("GtkSourceView has no markdown language; no highlighting");
+        }
+        for buffer in [&*imp.front_buffer, &*imp.back_buffer] {
+            buffer.set_language(language.as_ref());
+            buffer.set_highlight_syntax(true);
+            buffer.set_highlight_matching_brackets(false);
+            buffer.connect_changed(glib::clone!(
+                #[weak(rename_to = editor)]
+                self,
+                move |_| {
+                    editor.update_actions();
+                    editor.schedule_preview();
+                }
+            ));
+        }
+
+        let style = adw::StyleManager::default();
+        self.apply_scheme(style.is_dark());
+        let handler = style.connect_dark_notify(glib::clone!(
+            #[weak(rename_to = editor)]
+            self,
+            move |style| editor.apply_scheme(style.is_dark())
+        ));
+        imp.dark_handler.replace(Some(handler));
+
+        imp.preview_button.connect_active_notify(glib::clone!(
+            #[weak(rename_to = editor)]
+            self,
+            move |_| editor.refresh_preview()
+        ));
         self.connect_close_attempt(Self::ask_discard);
+    }
+
+    /// The buffer of the side that has the keyboard focus, if any.
+    fn focused_buffer(&self) -> Option<sourceview5::Buffer> {
+        let imp = self.imp();
+        let focus = self.focus()?;
+        [
+            (&*imp.front_view, &*imp.front_buffer),
+            (&*imp.back_view, &*imp.back_buffer),
+        ]
+        .into_iter()
+        .find(|(view, _)| focus == *view.upcast_ref::<gtk::Widget>())
+        .map(|(_, buffer)| buffer.clone())
+    }
+
+    /// Highlights with the Adwaita scheme matching the style.
+    fn apply_scheme(&self, dark: bool) {
+        let id = scheme_id(dark);
+        let scheme = sourceview5::StyleSchemeManager::default().scheme(id);
+        if scheme.is_none() {
+            tracing::warn!("GtkSourceView has no style scheme {id}");
+        }
+        let imp = self.imp();
+        for buffer in [&*imp.front_buffer, &*imp.back_buffer] {
+            buffer.set_style_scheme(scheme.as_ref());
+        }
+    }
+
+    /// Renders the preview again once typing pauses.
+    fn schedule_preview(&self) {
+        if !self.imp().preview_button.is_active() {
+            return;
+        }
+        self.imp().preview.restart(
+            PREVIEW_DELAY,
+            glib::clone!(
+                #[weak(rename_to = editor)]
+                self,
+                move || editor.refresh_preview()
+            ),
+        );
+    }
+
+    /// Renders the preview now, or empties it while it is hidden (so a
+    /// long card's widgets are not kept for nothing).
+    fn refresh_preview(&self) {
+        let imp = self.imp();
+        imp.preview.cancel();
+        if !imp.preview_button.is_active() {
+            clear(&imp.preview_front);
+            clear(&imp.preview_back);
+            return;
+        }
+        let started = Instant::now();
+        let (front_md, back_md) = self.texts();
+        let (front_part, front_cut) = preview_part(&front_md);
+        let (back_part, back_cut) = preview_part(&back_md);
+        fill(&imp.preview_front, &content::parse(front_part));
+        let back = content::parse(back_part);
+        let shown = back_shown(&back);
+        if shown {
+            fill(&imp.preview_back, &back);
+        } else {
+            clear(&imp.preview_back);
+        }
+        imp.preview_back_separator.set_visible(shown);
+        imp.preview_back.set_visible(shown);
+        imp.preview_note.set_visible(front_cut || back_cut);
+        tracing::debug!(
+            bytes = front_md.len() + back_md.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "card editor preview rendered"
+        );
     }
 
     /// Shows `front` and `back` as the saved state of card `card_id`.
@@ -193,19 +361,24 @@ impl CardEditor {
         });
         imp.card_id.replace(card_id.map(str::to_owned));
         imp.saved_text.replace((front.to_owned(), back.to_owned()));
-        imp.front_view.buffer().set_text(front);
-        imp.back_view.buffer().set_text(back);
+        // Irreversible: Ctrl+Z must not take a loaded card's text away, or
+        // bring the previous card back after Ctrl+Shift+Enter.
+        for (buffer, text) in [(&*imp.front_buffer, front), (&*imp.back_buffer, back)] {
+            buffer.begin_irreversible_action();
+            buffer.set_text(text);
+            buffer.end_irreversible_action();
+        }
         self.update_actions();
+        self.refresh_preview();
     }
 
     fn texts(&self) -> (String, String) {
-        let text = |view: &gtk::TextView| {
-            let buffer = view.buffer();
+        let text = |buffer: &sourceview5::Buffer| {
             let (start, end) = buffer.bounds();
             buffer.text(&start, &end, false).to_string()
         };
         let imp = self.imp();
-        (text(&imp.front_view), text(&imp.back_view))
+        (text(&imp.front_buffer), text(&imp.back_buffer))
     }
 
     fn update_actions(&self) {
@@ -214,8 +387,8 @@ impl CardEditor {
         let check = check_card(&texts.0, &texts.1);
         self.action_set_enabled("editor.save", check.can_save);
         self.action_set_enabled("editor.save-and-new", check.can_save);
-        show_error(&imp.front_view, &imp.front_error, check.front_error);
-        show_error(&imp.back_view, &imp.back_error, check.back_error);
+        show_error(&*imp.front_view, &imp.front_error, check.front_error);
+        show_error(&*imp.back_view, &imp.back_error, check.back_error);
         // With unsaved changes, closing emits `close-attempt` instead.
         self.set_can_close(texts == *self.imp().saved_text.borrow());
     }
@@ -351,11 +524,12 @@ fn too_long_text(side: CardSide) -> String {
 }
 
 /// Shows `error` under `view`, announcing it when it appears or changes.
-fn show_error(view: &gtk::TextView, label: &gtk::Label, error: Option<String>) {
+fn show_error(view: &impl IsA<gtk::Widget>, label: &gtk::Label, error: Option<String>) {
     match error {
         Some(message) => {
             if !label.is_visible() || label.label() != message {
-                view.announce(&message, gtk::AccessibleAnnouncementPriority::Medium);
+                view.upcast_ref::<gtk::Widget>()
+                    .announce(&message, gtk::AccessibleAnnouncementPriority::Medium);
             }
             label.set_label(&message);
             label.set_visible(true);
@@ -364,9 +538,104 @@ fn show_error(view: &gtk::TextView, label: &gtk::Label, error: Option<String>) {
     }
 }
 
+/// The part of a side the preview renders: all of it up to
+/// [`PREVIEW_MAX_BYTES`]; past that, the start, cut after the last blank
+/// line that fits (so whole paragraphs are shown), or at the last character
+/// that fits if there is none in the second half of the limit. Only `\n`
+/// line ends count (CRLF text is cut at a character). The second value says
+/// whether it was cut.
+fn preview_part(md: &str) -> (&str, bool) {
+    if md.len() <= PREVIEW_MAX_BYTES {
+        return (md, false);
+    }
+    let mut end = PREVIEW_MAX_BYTES;
+    while !md.is_char_boundary(end) {
+        end -= 1;
+    }
+    let head = &md[..end];
+    // A blank line in the first half would show too little of the side.
+    let cut = head
+        .rfind("\n\n")
+        .map(|blank| blank + 1)
+        .filter(|&cut| cut >= PREVIEW_MAX_BYTES / 2)
+        .unwrap_or(end);
+    (&md[..cut], true)
+}
+
+/// The `GtkSourceView` style scheme for the light or dark style. Both come
+/// with `GtkSourceView` itself, built in as resources.
+fn scheme_id(dark: bool) -> &'static str {
+    if dark { "Adwaita-dark" } else { "Adwaita" }
+}
+
+/// Wraps the selection in `buffer` (or the cursor's empty spot) in
+/// `marker`, as one user action so one Ctrl+Z takes it back.
+fn wrap_selection(buffer: &sourceview5::Buffer, marker: &str) {
+    let (mut start, mut end) = buffer.selection_bounds().unwrap_or_else(|| {
+        let cursor = buffer.iter_at_mark(&buffer.get_insert());
+        (cursor, cursor)
+    });
+    // `slice` with hidden chars, not `text`: it keeps the U+FFFC of any
+    // embedded object, so its characters match the iterators' offsets.
+    let selected = buffer.slice(&start, &end, true);
+    let wrapped = format::wrap(&selected, marker);
+    let offset = start.offset();
+    let at = |chars: usize| {
+        buffer.iter_at_offset(offset.saturating_add(i32::try_from(chars).unwrap_or(i32::MAX)))
+    };
+    buffer.begin_user_action();
+    buffer.delete(&mut start, &mut end);
+    buffer.insert(&mut start, &wrapped.text);
+    // The cursor (insert mark) at the end, so Shift+Arrow extends from there.
+    buffer.select_range(&at(wrapped.select.end), &at(wrapped.select.start));
+    buffer.end_user_action();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_sides_are_previewed_whole() {
+        let side = "x".repeat(PREVIEW_MAX_BYTES);
+        assert_eq!(preview_part(&side), (side.as_str(), false));
+        assert_eq!(preview_part(""), ("", false));
+    }
+
+    #[test]
+    fn long_sides_are_cut_after_the_last_paragraph_that_fits() {
+        let paragraph = format!("{}\n\n", "word ".repeat(100));
+        let side = paragraph.repeat(PREVIEW_MAX_BYTES / paragraph.len() + 2);
+        let (part, cut) = preview_part(&side);
+        assert!(cut);
+        assert!(part.len() <= PREVIEW_MAX_BYTES);
+        assert!(part.ends_with("word \n"), "cut inside a paragraph");
+        assert!(side.starts_with(part));
+    }
+
+    #[test]
+    fn one_long_paragraph_is_cut_on_a_character_boundary() {
+        // 3-byte characters do not divide the limit: the cut must step back.
+        let side = "€".repeat(PREVIEW_MAX_BYTES);
+        let (part, cut) = preview_part(&side);
+        assert!(cut);
+        assert_eq!(part.len(), PREVIEW_MAX_BYTES / 3 * 3);
+        assert!(part.chars().all(|c| c == '€'));
+    }
+
+    #[test]
+    fn an_early_blank_line_does_not_empty_the_preview() {
+        let side = format!("\n\n{}", "x".repeat(PREVIEW_MAX_BYTES + 10));
+        let (part, cut) = preview_part(&side);
+        assert!(cut);
+        assert_eq!(part.len(), PREVIEW_MAX_BYTES);
+    }
+
+    #[test]
+    fn the_scheme_follows_the_style() {
+        assert_eq!(scheme_id(false), "Adwaita");
+        assert_eq!(scheme_id(true), "Adwaita-dark");
+    }
 
     #[test]
     fn a_blank_front_cannot_be_saved() {

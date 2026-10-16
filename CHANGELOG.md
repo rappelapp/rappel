@@ -6,6 +6,10 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- The card editor is a Markdown editor (SPEC §4.4, ADR 0022): front and back use GtkSourceView with Markdown highlighting, a monospace font and line wrapping, in colours that follow the light or dark style. A live preview, rendered as on the review page, sits beside the text when the dialog is wide and below it when narrow; the Preview button in the header bar shows or hides it. The preview updates a quarter of a second after typing pauses, and shows only the first 32 KiB of each side (with a note), because laying out a very long paragraph froze the editor. **Ctrl+B** / **Ctrl+I** wrap the selection in `**bold**` / `*italic*` markers, or insert empty ones at the cursor; Ctrl+Z undoes them in one step. The dialog opens larger (960 × 640) and is still a bottom sheet on a narrow window.
+- New dependency: `sourceview5` (Rust bindings for GtkSourceView 5). Building now needs the GtkSourceView 5 development files and introspection data (see README).
+
 ### Documentation
 - ADR 0021 (accepted): math rendering with RaTeX, from the `spike/math` experiment. SPEC §1 principle 5 and §4.2 amended. `\oiint` is a known limitation. Nothing changes in the app yet.
 
