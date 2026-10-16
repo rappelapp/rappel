@@ -1,0 +1,24 @@
+[package]
+name = "math-spike-gtk011"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Path 2: Cards' own gtk-rs versions (gtk4 0.11, cairo 0.22) with ratex-cairo
+# bumped from cairo 0.20 to 0.22 (one line, see ../math/vendor/ratex-cairo).
+[dependencies]
+ratex-cairo = "=0.1.15"
+ratex-parser = "=0.1.15"
+ratex-layout = "=0.1.15"
+ratex-types = "=0.1.15"
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
+
+[patch.crates-io]
+ratex-cairo = { path = "../math/vendor/ratex-cairo" }
+
+[workspace]
+
+[profile.release]
+lto = "thin"
+strip = true

@@ -1,0 +1,18 @@
+[package]
+name = "math-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ratex-gtk4 = "=0.1.15"
+ratex-cairo = "=0.1.15"
+ratex-parser = "=0.1.15"
+ratex-layout = "=0.1.15"
+ratex-types = "=0.1.15"
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
+
+cairo = { package = "cairo-rs", version = "0.20" }
+
+[workspace]
