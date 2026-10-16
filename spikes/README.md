@@ -1,9 +1,9 @@
 # Math rendering spike (branch `spike/math`, never merged)
 
-Question: can RaTeX render Cards' formulas well enough, inline and display, in GTK4?
-Decision record: `docs/adr/0020-math-rendering.md` (separate `docs/adr-math` PR).
+Question: can RaTeX render Rappel's formulas well enough, inline and display, in GTK4?
+Decision record: `docs/adr/0021-math-rendering.md` (separate `docs/adr-math` PR).
 
-Both crates have their own `[workspace]`, so they are outside the Cards workspace,
+Both crates have their own `[workspace]`, so they are outside the Rappel workspace,
 its `Cargo.lock` and `scripts/check.sh`.
 
 - `math/`: path 1, RaTeX as published (`ratex-gtk4` needs gtk4 0.9, cairo 0.20).
@@ -24,6 +24,8 @@ its `Cargo.lock` and `scripts/check.sh`.
     cargo run --release -- --count 50    # a card with 50 display formulas (timing on stderr)
     cargo run --release -- --bench       # headless parse/layout/render timings
     cargo run --release -- --errors      # invalid and hostile LaTeX, each in a child process
+    cargo run --release -- --side        # worst cases for one 1 MiB card side
+    cargo run --release -- --fallback    # first use of a character outside the KaTeX fonts
     cd ../math-gtk011 && cargo run --release [-- --dark]
 
     # Screenshots without a window on your desktop:

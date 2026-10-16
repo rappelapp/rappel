@@ -35,6 +35,14 @@ fn main() -> glib::ExitCode {
         bench();
         return glib::ExitCode::SUCCESS;
     }
+    if raw.iter().any(|a| a == "--side") {
+        side();
+        return glib::ExitCode::SUCCESS;
+    }
+    if raw.iter().any(|a| a == "--fallback") {
+        fallback();
+        return glib::ExitCode::SUCCESS;
+    }
     if raw.iter().any(|a| a == "--errors") {
         errors();
         return glib::ExitCode::SUCCESS;
@@ -460,5 +468,63 @@ fn error_one(i: usize) {
             );
         }
         Err(e) => println!("Err: {}", e.chars().take(90).collect::<String>()),
+    }
+}
+
+/// Layout + render one formula to a small surface; returns the elapsed time.
+fn layout_and_render(src: &str) -> (Duration, bool) {
+    let t = Instant::now();
+    let ok = match math::display_list(src, false, Color::BLACK) {
+        Ok(dl) => {
+            let surf = cairo::ImageSurface::create(cairo::Format::ARgb32, 64, 64).unwrap();
+            let cr = cairo::Context::new(&surf).unwrap();
+            ratex_cairo::render_to_cairo(&cr, &dl, &math::options(19.36, 0.0)).is_ok()
+        }
+        Err(_) => false,
+    };
+    (t.elapsed(), ok)
+}
+
+/// Worst cases for one 1 MiB card side, everything on this (main) thread.
+fn side() {
+    const MIB: usize = 1 << 20;
+    let cases: Vec<(&str, String)> = vec![
+        (
+            "2000-brace formulas",
+            "{".repeat(2000) + "x" + &"}".repeat(2000),
+        ),
+        (
+            "200-sqrt formulas",
+            r"\sqrt{".repeat(200) + "x" + &"}".repeat(200),
+        ),
+        ("100k-char formula", "x".repeat(100_000)),
+        ("$x$ (tiny valid)", "x".into()),
+        ("#15 (largest valid)", formulas::DISPLAY[10].into()),
+        (
+            "x^{x^{x^{...}}} 20 deep",
+            "x^{".repeat(20) + "x" + &"}".repeat(20),
+        ),
+    ];
+    for (label, f) in cases {
+        let n = MIB / (f.len() + 3);
+        let one = layout_and_render(&f);
+        let t = Instant::now();
+        let mut ok = 0;
+        for _ in 0..n {
+            ok += usize::from(layout_and_render(&f).1);
+        }
+        println!(
+            "{label:<26} one {:>9.2?}  ×{n:>6} in 1 MiB: {:>9.2?}  ({ok} rendered)",
+            one.0,
+            t.elapsed()
+        );
+    }
+}
+
+/// First use of a character outside the KaTeX fonts loads system fonts.
+fn fallback() {
+    for src in [r"\text{你好}", r"\text{😀}", r"\text{日本}", "x"] {
+        let (t, ok) = layout_and_render(src);
+        println!("{src:<16} {t:>10.2?} ok={ok}");
     }
 }
