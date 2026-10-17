@@ -245,6 +245,88 @@ fn a_skipped_card_is_dropped_and_not_counted() {
     assert_eq!(session.summary(), Summary::default());
 }
 
+#[test]
+fn a_card_put_back_is_the_next_one_and_only_once() {
+    let mut session = Session::new(StudyInput {
+        reviews: vec![due("a", T0), due("b", T0)],
+        steps: vec![due("s", T0 + 5 * MIN)],
+        ..StudyInput::default()
+    });
+    session.skip("a");
+    session.skip("s");
+    assert_eq!(session.remaining(), 1);
+
+    session.put_back("a");
+    assert_eq!((session.next(T0), session.remaining()), (Some("a"), 2));
+    // Already queued: nothing changes.
+    session.put_back("a");
+    session.put_back("b");
+    assert_eq!((session.next(T0), session.remaining()), (Some("a"), 2));
+    // A step card comes back too, as the next one.
+    session.put_back("s");
+    assert_eq!((session.next(T0), session.remaining()), (Some("s"), 3));
+    // The summary is untouched.
+    assert_eq!(session.summary(), Summary::default());
+}
+
+#[test]
+fn a_card_an_undo_brought_back_is_not_put_back_twice() {
+    let mut session = session_of(&["a", "b"], &[]);
+    session.graded(
+        "a",
+        "e1",
+        Grade::Pass,
+        Duration::ZERO,
+        &state(Phase::Review, T0 + DAY_MS),
+    );
+    assert_eq!(session.undo_last().as_deref(), Some("a"));
+    let before = session.remaining();
+    session.put_back("a");
+    assert_eq!(session.remaining(), before);
+    assert_eq!(session.next(T0), Some("a"));
+}
+
+#[test]
+fn undoing_an_answer_does_not_queue_a_card_put_back_twice() {
+    let mut session = session_of(&["a"], &[]);
+    session.graded(
+        "a",
+        "e1",
+        Grade::Fail,
+        Duration::ZERO,
+        &state(Phase::Relearning, T0),
+    );
+    // Failed: out of the queue, waiting in a step. Dropped, then put back.
+    session.skip("a");
+    session.put_back("a");
+    assert_eq!(session.remaining(), 1);
+    // Undoing the answer puts the card where it was, but it is queued once.
+    assert_eq!(session.undo_last().as_deref(), Some("a"));
+    assert_eq!(session.remaining(), 1);
+    assert_eq!(session.next(T0), Some("a"));
+}
+
+#[test]
+fn a_due_step_card_still_comes_before_a_card_put_back() {
+    let mut session = Session::new(StudyInput {
+        reviews: vec![due("a", T0)],
+        steps: vec![due("s", T0 - MIN)],
+        ..StudyInput::default()
+    });
+    session.skip("a");
+    session.put_back("a");
+    // "s" is due and comes first; "a" is next after it.
+    assert_eq!(session.next(T0), Some("s"));
+    session.graded(
+        "s",
+        "e1",
+        Grade::Pass,
+        Duration::ZERO,
+        &state(Phase::Review, T0 + DAY_MS),
+    );
+    assert_eq!(session.next(T0), Some("a"));
+}
+
 /// A session of reviews `a..` and new cards, with every card still to come.
 fn session_of(reviews: &[&str], new: &[&str]) -> Session {
     Session::new(StudyInput {

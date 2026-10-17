@@ -6,7 +6,9 @@
 //!
 //! Keys, in the bubble phase so a focused button keeps its own Space and
 //! Enter: Space or Enter shows the answer; then 1 is Fail, 2 or Space is
-//! Pass; E edits the card at any time; Ctrl+Z (and the header's Undo button)
+//! Pass; E edits the card at any time; S suspends it and Delete deletes it
+//! (after a question), both at once out of the session with an Undo toast
+//! (ADR 0037); Ctrl+Z (and the header's Undo button)
 //! takes back the last answer, repeatedly down to the session's first, also
 //! from the summary (ADR 0030). The focus rests on the card between answers.
 //!
@@ -31,10 +33,12 @@ use crate::dialogs::card_info;
 use crate::render::{back_shown, clear, fill, shown_part};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
+use crate::ui::dialog;
 use crate::ui::text::duration_text;
-use crate::ui::toast::{info_toast, show_toast_from};
+use crate::ui::toast::{info_toast, log_failure, show_error, show_toast_from, undo_toast};
 use crate::ui::undo::{self, UndoFailure};
 use crate::ui::{init_once, nav};
+use crate::window::RappelWindow;
 
 type OnSaved = dyn Fn(Saved);
 
@@ -103,6 +107,8 @@ mod imp {
         pub errors: ErrorSlot,
         /// Whether the card editor is open.
         pub editing: Rc<Cell<bool>>,
+        /// Whether the question before a delete is open.
+        pub asking: Cell<bool>,
         /// Told about every save made from this page's editor.
         pub on_saved: OnceCell<Callback<OnSaved>>,
     }
@@ -125,6 +131,10 @@ mod imp {
             klass.install_action("review.done", None, |page, _, _| page.done());
             klass.install_action("review.edit", None, |page, _, _| page.edit());
             klass.install_action("review.card-info", None, |page, _, _| page.card_info());
+            klass.install_action("review.suspend", None, |page, _, _| {
+                page.remove_current(super::Removal::Suspend);
+            });
+            klass.install_action("review.delete", None, |page, _, _| page.confirm_delete());
             klass.install_action("review.undo", None, |page, _, _| page.undo());
         }
 
@@ -158,6 +168,60 @@ glib::wrapper! {
 /// auto-repeat. Clicks are not delayed.
 const KEY_SETTLE: Duration = Duration::from_millis(300);
 
+/// How a card leaves the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Removal {
+    Suspend,
+    Delete,
+}
+
+impl Removal {
+    /// The toast that offers Undo.
+    fn text(self) -> &'static str {
+        match self {
+            Self::Suspend => "Card suspended",
+            Self::Delete => "Card deleted",
+        }
+    }
+}
+
+/// The Undo of a suspend or a delete: the card is studied again. On `page`
+/// if it is still shown (the card becomes the next one), and through
+/// `window` the other pages read it (the deck may have been left).
+fn undo_removal(
+    state: &AppState,
+    id: &str,
+    removal: Removal,
+    page: &glib::WeakRef<ReviewPage>,
+    window: Option<&glib::WeakRef<RappelWindow>>,
+) {
+    let window = window.and_then(glib::WeakRef::upgrade);
+    let result = match removal {
+        Removal::Suspend => state.restore_suspended(&[id.to_owned()], false).map(|_| ()),
+        Removal::Delete => state.undelete_card(id).map(|_| ()),
+    };
+    match result {
+        Ok(()) => {
+            // Only a card that is live and not suspended is studied again
+            // (it may have been changed again since).
+            let studyable = state.card(id).is_ok_and(|card| !card.suspended);
+            if studyable && let Some(page) = page.upgrade().filter(|p| p.root().is_some()) {
+                page.put_back(id);
+            }
+            if let Some(window) = window {
+                window.data_changed();
+            }
+        }
+        Err(err) => {
+            let message = format!("The card could not be restored: {err}");
+            match window {
+                Some(window) => show_error(&window, "a review operation", &message),
+                None => log_failure("a review operation", &message),
+            }
+        }
+    }
+}
+
 /// Which buttons and actions the bottom bar offers.
 #[derive(Debug, Clone, Copy)]
 enum Controls {
@@ -182,6 +246,10 @@ enum Key {
     Edit,
     /// I: show the card's information.
     Info,
+    /// S: suspend the card.
+    Suspend,
+    /// Delete: delete the card, after a question.
+    Delete,
     /// Ctrl+Z: take back the last answer.
     Undo,
 }
@@ -193,6 +261,8 @@ enum Act {
     Grade(Grade),
     Edit,
     Info,
+    Suspend,
+    Delete,
     Undo,
 }
 
@@ -200,11 +270,17 @@ enum Act {
 /// whether [`KEY_SETTLE`] has passed since the reveal. Holding Space a
 /// moment too long repeats it: a reveal must not become a Pass by itself,
 /// even though a grade can be undone. E and Ctrl+Z are never delayed: they
-/// grade nothing; neither does I.
+/// grade nothing; neither does I. S and Delete take the card out of the
+/// session, so they are not delayed by `key_action` but guarded elsewhere:
+/// Delete asks first (the question stops the repeat), and S needs the card to
+/// have been on screen a moment ([`suspend_allowed`]), or holding it would
+/// suspend one card after another.
 fn key_action(key: Key, revealed: bool, settled: bool) -> Option<Act> {
     match (key, revealed) {
         (Key::Edit, _) => Some(Act::Edit),
         (Key::Info, _) => Some(Act::Info),
+        (Key::Suspend, _) => Some(Act::Suspend),
+        (Key::Delete, _) => Some(Act::Delete),
         (Key::Undo, _) => Some(Act::Undo),
         (Key::Space | Key::Enter, false) => Some(Act::Reveal),
         (Key::Space | Key::Pass | Key::Fail, true) if !settled => None,
@@ -213,6 +289,14 @@ fn key_action(key: Key, revealed: bool, settled: bool) -> Option<Act> {
         // 1 and 2 before the answer, Enter after it: nothing.
         (Key::Fail | Key::Pass, false) | (Key::Enter, true) => None,
     }
+}
+
+/// Whether S may suspend a card that has been on screen for `shown_for`.
+/// After the first S the next card is on screen, and key repeat would
+/// suspend it too: a card must be shown for [`KEY_SETTLE`] first. Clicking
+/// the menu item is not delayed.
+fn suspend_allowed(shown_for: Option<Duration>) -> bool {
+    shown_for.is_some_and(|t| t >= KEY_SETTLE)
 }
 
 impl ReviewPage {
@@ -256,6 +340,10 @@ impl ReviewPage {
             ("<Shift>e", Key::Edit),
             ("i", Key::Info),
             ("<Shift>i", Key::Info),
+            ("s", Key::Suspend),
+            ("<Shift>s", Key::Suspend),
+            ("Delete", Key::Delete),
+            ("KP_Delete", Key::Delete),
             ("<Control>z", Key::Undo),
         ] {
             let action = gtk::CallbackAction::new(move |widget, _| {
@@ -283,7 +371,7 @@ impl ReviewPage {
 
     fn key(&self, key: Key) -> glib::Propagation {
         let imp = self.imp();
-        if imp.editing.get() {
+        if imp.editing.get() || imp.asking.get() {
             return glib::Propagation::Proceed;
         }
         // Also on the summary, where no card is on screen.
@@ -303,6 +391,12 @@ impl ReviewPage {
             Some(Act::Grade(grade)) => self.grade(grade),
             Some(Act::Edit) => self.edit(),
             Some(Act::Info) => self.card_info(),
+            Some(Act::Suspend) => {
+                if suspend_allowed(imp.shown_at.get().map(|t| t.elapsed())) {
+                    self.remove_current(Removal::Suspend);
+                }
+            }
+            Some(Act::Delete) => self.confirm_delete(),
             Some(Act::Undo) => self.undo(),
             None => {}
         }
@@ -315,27 +409,35 @@ impl ReviewPage {
         let Some(state) = imp.state.get() else {
             return;
         };
-        let now = rappel_core::time::now_ms();
-        let next = imp
-            .session
-            .borrow()
-            .as_ref()
-            .and_then(|s| s.next(now).map(str::to_owned));
-        let Some(id) = next else {
-            self.show_summary();
-            return;
-        };
-        let card = match state.card(&id) {
-            Ok(card) => card,
-            Err(err) => {
-                // Skip it and go on; it is not counted as answered.
-                self.error_toast(&format!("A card could not be read and was skipped: {err}"));
-                if let Some(session) = imp.session.borrow_mut().as_mut() {
-                    session.skip(&id);
-                }
-                self.show_next();
+        // A loop and not a recursion: a database that stays unreadable skips
+        // every card of the queue, which may be thousands.
+        let (id, card) = loop {
+            let now = rappel_core::time::now_ms();
+            let next = imp
+                .session
+                .borrow()
+                .as_ref()
+                .and_then(|s| s.next(now).map(str::to_owned));
+            let Some(id) = next else {
+                self.show_summary();
                 return;
+            };
+            let card = match state.card(&id) {
+                Ok(card) => card,
+                Err(err) => {
+                    // Skip it and go on; it is not counted as answered.
+                    self.error_toast(&format!("A card could not be read and was skipped: {err}"));
+                    self.skip_in_session(&id);
+                    continue;
+                }
+            };
+            // Suspended since the session began (another window, or an Undo
+            // of an answer that brought it back): not studied, not counted.
+            if card.suspended {
+                self.skip_in_session(&id);
+                continue;
             }
+            break (id, card);
         };
         imp.revealed.set(false);
         self.show_front(&card.front_md);
@@ -353,6 +455,12 @@ impl ReviewPage {
         self.set_controls(Controls::Reveal);
         imp.stack.set_visible_child_name("card");
         imp.card_area.grab_focus();
+    }
+
+    fn skip_in_session(&self, id: &str) {
+        if let Some(session) = self.imp().session.borrow_mut().as_mut() {
+            session.skip(id);
+        }
     }
 
     fn reveal(&self) {
@@ -494,6 +602,132 @@ impl ReviewPage {
         );
     }
 
+    /// Takes the card on screen out of the session by suspending or deleting
+    /// it, shows the next card, and offers Undo in a toast (ADR 0037). The
+    /// card is not counted as answered.
+    fn remove_current(&self, removal: Removal) {
+        let imp = self.imp();
+        if imp.editing.get() || imp.asking.get() {
+            return;
+        }
+        let Some(id) = imp.current.borrow().clone() else {
+            return;
+        };
+        self.remove(&id, removal);
+    }
+
+    fn remove(&self, id: &str, removal: Removal) {
+        let imp = self.imp();
+        let Some(state) = imp.state.get() else {
+            return;
+        };
+        let written = match removal {
+            Removal::Suspend => state
+                .set_suspended(&[id.to_owned()], true)
+                .map(|changed| !changed.is_empty()),
+            Removal::Delete => state.delete_card(id).map(|()| true),
+        };
+        match written {
+            Ok(true) => {}
+            Ok(false) => {
+                // Suspended elsewhere already: there is nothing to undo here.
+                self.leave_session(id);
+                show_toast_from(self, info_toast("The card was already suspended"));
+                return;
+            }
+            Err(rappel_core::Error::CardNotFound(_)) => {
+                // Deleted elsewhere meanwhile: it is gone from the session too.
+                self.leave_session(id);
+                show_toast_from(self, info_toast("The card was already gone"));
+                return;
+            }
+            Err(err) => {
+                self.error_toast(&format!("The card could not be changed: {err}"));
+                return;
+            }
+        }
+        self.leave_session(id);
+
+        // Undo must work after leaving the page, so the closure keeps the
+        // state and weak references, not the page.
+        let window = self.root().and_downcast::<RappelWindow>();
+        if let Some(window) = &window {
+            window.data_changed();
+        }
+        let (id, state) = (id.to_owned(), state.clone());
+        let page = self.downgrade();
+        let window = window.map(|w| w.downgrade());
+        let toast = undo_toast(removal.text(), move || {
+            undo_removal(&state, &id, removal, &page, window.as_ref());
+        });
+        show_toast_from(self, toast);
+    }
+
+    /// Drops card `id` from the session and, if it is on screen, shows the
+    /// next one.
+    fn leave_session(&self, id: &str) {
+        let imp = self.imp();
+        if let Some(session) = imp.session.borrow_mut().as_mut() {
+            session.skip(id);
+        }
+        if imp.current.borrow().as_deref() == Some(id) {
+            imp.current.replace(None);
+            self.show_next();
+        }
+    }
+
+    /// Asks before deleting the card on screen. Cancel is the default.
+    fn confirm_delete(&self) {
+        let imp = self.imp();
+        if imp.editing.get() || imp.asking.get() {
+            return;
+        }
+        let Some(id) = imp.current.borrow().clone() else {
+            return;
+        };
+        let Some(question) = dialog::alert("delete_card_dialog.ui", "delete_card_dialog") else {
+            return;
+        };
+        imp.asking.set(true);
+        // AdwDialog gives the focus back to the widget that had it when it
+        // has closed, which would undo a grab made on the response (the
+        // editor and Card Information set theirs on `closed` for the same
+        // reason): the card area needs the focus for the keys to work.
+        question.connect_closed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| page.park_focus()
+        ));
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            async move {
+                let answer = question.choose_future(Some(&page)).await;
+                page.imp().asking.set(false);
+                // Only the card the question was about.
+                if answer == "delete" && page.imp().current.borrow().as_deref() == Some(&id) {
+                    page.remove(&id, Removal::Delete);
+                }
+            }
+        ));
+    }
+
+    /// Brings card `id` back into the session after the Undo of a suspend or
+    /// a delete: it comes next (a card an undo brought back, or a step card
+    /// that is due, still goes first), and the summary gives way to it.
+    fn put_back(&self, id: &str) {
+        let imp = self.imp();
+        if let Some(session) = imp.session.borrow_mut().as_mut() {
+            session.put_back(id);
+        }
+        if imp.current.borrow().is_none() {
+            self.show_next();
+        } else {
+            let left = imp.session.borrow().as_ref().map_or(0, Session::remaining);
+            imp.window_title.set_subtitle(&left_text(left));
+        }
+    }
+
     /// A save made from the editor: shows the card on screen again if it
     /// is the one saved, then tells the owner of this page.
     fn saved(&self, saved: Saved) {
@@ -531,6 +765,8 @@ impl ReviewPage {
         let editable = !matches!(controls, Controls::Hidden);
         self.action_set_enabled("review.edit", editable);
         self.action_set_enabled("review.card-info", editable);
+        self.action_set_enabled("review.suspend", editable);
+        self.action_set_enabled("review.delete", editable);
         self.imp().edit_button.set_visible(editable);
         self.imp().card_menu_button.set_visible(editable);
         self.imp().buttons.set_visible_child_name(name);
@@ -755,6 +991,17 @@ mod tests {
             assert_eq!(key_action(Edit, revealed, settled), Some(Act::Edit));
             assert_eq!(key_action(Key::Info, revealed, settled), Some(Act::Info));
         }
+        // S and Delete too: they grade nothing.
+        for (revealed, settled) in [(false, false), (true, false), (true, true)] {
+            assert_eq!(
+                key_action(Key::Suspend, revealed, settled),
+                Some(Act::Suspend)
+            );
+            assert_eq!(
+                key_action(Key::Delete, revealed, settled),
+                Some(Act::Delete)
+            );
+        }
         // Ctrl+Z too, and it grades nothing, so key repeat does no harm.
         for (revealed, settled) in [(false, false), (true, false), (true, true)] {
             assert_eq!(key_action(Key::Undo, revealed, settled), Some(Act::Undo));
@@ -788,6 +1035,218 @@ mod tests {
             .collect();
         let page = ReviewPage::new(state.clone(), deck, |_| {}).unwrap();
         (tmp, state, page, ids)
+    }
+
+    /// Puts `page` in a window, so it has a root as a pushed page does.
+    fn in_window(page: &ReviewPage) -> gtk::Window {
+        gtk::Window::builder().child(page).build()
+    }
+
+    #[test]
+    fn the_delete_question_loads_and_defaults_to_cancel() {
+        crate::testing::with_gtk(|| {
+            adw::init().unwrap();
+            gtk::gio::resources_register_include!("rappel.gresource").unwrap();
+            let question = dialog::alert("delete_card_dialog.ui", "delete_card_dialog").unwrap();
+            assert_eq!(question.default_response().as_deref(), Some("cancel"));
+            assert_eq!(question.close_response(), "cancel");
+            assert_eq!(
+                question.response_appearance("delete"),
+                adw::ResponseAppearance::Destructive
+            );
+        });
+    }
+
+    #[test]
+    fn s_waits_for_the_card_to_have_been_on_screen() {
+        assert!(!suspend_allowed(None));
+        assert!(!suspend_allowed(Some(Duration::ZERO)));
+        assert!(!suspend_allowed(Some(
+            KEY_SETTLE.saturating_sub(Duration::from_millis(1))
+        )));
+        assert!(suspend_allowed(Some(KEY_SETTLE)));
+    }
+
+    #[test]
+    fn holding_s_suspends_one_card_not_a_run() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(3);
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            // Just shown: the key does nothing.
+            page.key(Key::Suspend);
+            assert_eq!(current(&page).as_deref(), Some(first.as_str()));
+            assert!(!state.card(&first).unwrap().suspended);
+            // Shown a moment: the first S suspends, the repeat finds a new card.
+            page.imp()
+                .shown_at
+                .set(Instant::now().checked_sub(Duration::from_secs(1)));
+            page.key(Key::Suspend);
+            page.key(Key::Suspend);
+            page.key(Key::Suspend);
+            let suspended = ids
+                .iter()
+                .filter(|id| state.card(id).unwrap().suspended)
+                .count();
+            assert_eq!(suspended, 1);
+        });
+    }
+
+    #[test]
+    fn the_keys_do_nothing_while_the_editor_or_the_question_is_open() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, _) = page_of(2);
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            page.imp()
+                .shown_at
+                .set(Instant::now().checked_sub(Duration::from_secs(1)));
+            page.imp().asking.set(true);
+            assert_eq!(page.key(Key::Suspend), glib::Propagation::Proceed);
+            assert_eq!(page.key(Key::Delete), glib::Propagation::Proceed);
+            page.imp().asking.set(false);
+            page.imp().editing.set(true);
+            assert_eq!(page.key(Key::Suspend), glib::Propagation::Proceed);
+            page.imp().editing.set(false);
+            assert!(!state.card(&first).unwrap().suspended);
+            assert_eq!(current(&page).as_deref(), Some(first.as_str()));
+        });
+    }
+
+    #[test]
+    fn a_card_already_suspended_elsewhere_leaves_the_session_without_an_undo() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, _) = page_of(2);
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            state
+                .set_suspended(std::slice::from_ref(&first), true)
+                .unwrap();
+            page.remove_current(Removal::Suspend);
+            assert_ne!(current(&page).as_deref(), Some(first.as_str()));
+        });
+    }
+
+    #[test]
+    fn an_undo_after_the_page_is_gone_restores_the_card_only_in_the_database() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(1);
+            let weak = page.downgrade();
+            page.remove(&ids[0], Removal::Delete);
+            drop(page);
+            assert!(weak.upgrade().is_none());
+            undo_removal(&state, &ids[0], Removal::Delete, &weak, None);
+            assert!(state.card(&ids[0]).is_ok());
+        });
+    }
+
+    #[test]
+    fn an_undo_that_cannot_restore_the_card_leaves_it_deleted_and_the_session_alone() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(1);
+            let _window = in_window(&page);
+            let deck = state.card(&ids[0]).unwrap().deck_id;
+            page.remove(&ids[0], Removal::Delete);
+            state.delete_deck(&deck).unwrap();
+            // The deck is deleted: the card cannot come back into it.
+            undo_removal(&state, &ids[0], Removal::Delete, &page.downgrade(), None);
+            assert!(state.card(&ids[0]).is_err());
+            assert_eq!(current(&page), None);
+        });
+    }
+
+    #[test]
+    fn a_removal_is_named_in_its_toast() {
+        assert_eq!(Removal::Suspend.text(), "Card suspended");
+        assert_eq!(Removal::Delete.text(), "Card deleted");
+    }
+
+    #[test]
+    fn a_suspended_card_leaves_the_session_and_its_undo_brings_it_back() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, _) = page_of(3);
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            let summary_before = page.imp().session.borrow().as_ref().unwrap().summary();
+
+            page.remove_current(Removal::Suspend);
+            assert_ne!(current(&page).as_deref(), Some(first.as_str()));
+            assert!(state.card(&first).unwrap().suspended);
+            // Not counted as answered, and nothing was written to the log.
+            let session = page.imp().session.borrow();
+            assert_eq!(session.as_ref().unwrap().summary(), summary_before);
+            // The card on screen stays queued until it is answered.
+            assert_eq!(session.as_ref().unwrap().remaining(), 2);
+            drop(session);
+            assert_eq!(state.review_events(&first).unwrap().len(), 2);
+
+            undo_removal(&state, &first, Removal::Suspend, &page.downgrade(), None);
+            assert!(!state.card(&first).unwrap().suspended);
+            // It is the card after the one on screen.
+            let second = current(&page).unwrap();
+            pass(&page);
+            assert_eq!(current(&page).as_deref(), Some(first.as_str()));
+            assert_ne!(second, first);
+        });
+    }
+
+    #[test]
+    fn deleting_the_last_card_shows_the_summary_and_undo_shows_the_card_again() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(1);
+            let _window = in_window(&page);
+            page.remove(&ids[0], Removal::Delete);
+            assert_eq!(current(&page), None);
+            assert!(state.card(&ids[0]).is_err(), "the card is deleted");
+
+            undo_removal(&state, &ids[0], Removal::Delete, &page.downgrade(), None);
+            assert_eq!(current(&page).as_deref(), Some(ids[0].as_str()));
+            assert!(state.card(&ids[0]).is_ok());
+        });
+    }
+
+    #[test]
+    fn a_removal_of_a_card_gone_elsewhere_just_moves_on() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(2);
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            state.delete_card(&first).unwrap();
+            page.remove_current(Removal::Suspend);
+            assert_ne!(current(&page).as_deref(), Some(first.as_str()));
+            assert!(ids.contains(&current(&page).unwrap()));
+        });
+    }
+
+    #[test]
+    fn a_card_suspended_elsewhere_is_skipped_when_its_turn_comes() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(2);
+            let first = current(&page).unwrap();
+            let other = ids.iter().find(|id| **id != first).unwrap().clone();
+            state.set_suspended(&[other], true).unwrap();
+            pass(&page);
+            assert_eq!(current(&page), None, "the session is over");
+        });
+    }
+
+    #[test]
+    fn ctrl_z_takes_back_an_answer_without_showing_a_card_suspended_since() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, _) = page_of(2);
+            let first = current(&page).unwrap();
+            pass(&page);
+            let second = current(&page).unwrap();
+            state
+                .set_suspended(std::slice::from_ref(&first), true)
+                .unwrap();
+
+            page.undo();
+            // The answer is taken back in the log, and the card the undo
+            // would show is not studied.
+            assert_eq!(undo_entries(&state, &first), 1);
+            assert_eq!(current(&page).as_deref(), Some(second.as_str()));
+        });
     }
 
     /// Reveals and passes the card on screen.

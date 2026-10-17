@@ -267,7 +267,10 @@ impl Session {
         let id = answer.card_id;
         // The step an answer into the learning steps added.
         self.steps.retain(|d| d.card_id != id);
-        if let Some(pos) = answer.queue_pos {
+        // Not twice: `put_back` may have queued the card again since.
+        if let Some(pos) = answer.queue_pos
+            && !self.queue.contains(&id)
+        {
             self.queue.insert(pos.min(self.queue.len()), id.clone());
         }
         if let Some(step) = answer.removed_step {
@@ -301,6 +304,23 @@ impl Session {
         }
         self.queue.retain(|id| id != card_id);
         self.steps.retain(|d| d.card_id != card_id);
+    }
+
+    /// Brings back a card that [`Self::skip`] dropped, e.g. after the Undo
+    /// of a suspend or a delete: it goes to the front of the queue, so it
+    /// comes next, except for a card an undo brought back and a step card
+    /// that is already due, which still come first. A card that was waiting
+    /// in a step comes back through the queue, so it may be shown before its
+    /// step is due. A card the
+    /// session already has (queued, waiting in a step, or the one an undo
+    /// brought back) stays where it is, so calling this twice is harmless.
+    pub fn put_back(&mut self, card_id: &str) {
+        let held = self.pinned.as_deref() == Some(card_id)
+            || self.queue.iter().any(|id| id == card_id)
+            || self.steps.iter().any(|d| d.card_id == card_id);
+        if !held {
+            self.queue.push_front(card_id.to_owned());
+        }
     }
 
     /// What was answered so far.

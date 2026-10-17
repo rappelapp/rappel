@@ -19,6 +19,7 @@
     <file preprocess="xml-stripblanks">tag_suggestions.ui</file>
     <file preprocess="xml-stripblanks">discard_dialog.ui</file>
     <file preprocess="xml-stripblanks">review_page.ui</file>
+    <file preprocess="xml-stripblanks">delete_card_dialog.ui</file>
     <file preprocess="xml-stripblanks">import_dialog.ui</file>
     <file preprocess="xml-stripblanks">preferences_dialog.ui</file>
     <file preprocess="xml-stripblanks">retention_dialog.ui</file>

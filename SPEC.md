@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header), the search index, suspension and bulk writes in core (ADR 0035), and the All Cards page (ADR 0036; suspend and delete during review are next). The product vision below and the order in §4 and §5 are set by ADR 0034.
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header), the search index, suspension and bulk writes in core (ADR 0035), the All Cards page (ADR 0036), and suspend and delete during review (ADR 0037). The product vision below and the order in §4 and §5 are set by ADR 0034.
 
 ---
 
@@ -120,7 +120,7 @@ Storage rules:
 
 ## 4. Features
 
-The order, set by ADR 0034: browser and search (§4.6), streaming import (§4.1), images (§4.3), audio (§4.9), clean-up (§4.10), polish for phone and touch (§4.8), Anki import (§5), translation (§5), release (§5). Sections keep their numbers; the order above is the priority, not the numbering. Statistics (§4.7) and the editor (§4.4) are done. The rest of §4.5 comes with the browser: suspend (the `suspended` migration of §3, the action in the review and card menus, and the browser's filter and bulk action) and delete during review.
+The order, set by ADR 0034: browser and search (§4.6), streaming import (§4.1), images (§4.3), audio (§4.9), clean-up (§4.10), polish for phone and touch (§4.8), Anki import (§5), translation (§5), release (§5). Sections keep their numbers; the order above is the priority, not the numbering. Statistics (§4.7) and the editor (§4.4) are done. Suspend and delete during review (§4.5) came with the browser.
 
 ### 4.1 Export / import
 - Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 2`, `exported_at`, and all decks, cards, tags, card tags and the full review log with its resets and undos, deleted rows included with their `deleted_at`. Each card record has `suspended` (always written; a file without it reads as `false`, ADR 0035). It also has `settings` (the keys the user changed, ADR 0027) and `media` (empty until images or audio exist; their files go into `media/`).
@@ -154,7 +154,7 @@ The order, set by ADR 0034: browser and search (§4.6), streaming import (§4.1)
 - Undo last grade (Ctrl+Z, and an Undo button in the header) via an `undoes` event, repeatable back to the session's first grade, also from the summary; not available after leaving the page. *Done (ADR 0028, 0030).*
 - Reset Progress in each card's menu on the deck page, with an Undo toast. *Done (ADR 0030, #38).*
 - Daily limits from settings. New cards interleaved with reviews.
-- Card actions during review: Edit (E), Suspend, Delete (with confirmation).
+- Card actions during review: Edit (E), Suspend (S) and Delete (Delete key, with confirmation), the last two in the Card Menu too; each leaves the session at once and offers Undo in a toast. *Done (ADR 0037).*
 - Session summary at the end: cards reviewed, pass rate, time spent.
 
 ### 4.6 Browser and search

@@ -1,0 +1,16 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Asked before the card on screen is deleted during a session. Cancel is
+// the default: Enter or Space never deletes.
+Adw.AlertDialog delete_card_dialog {
+  heading: _("Delete Card?");
+  body: _("The card is removed from its deck. Its review history is kept, and Undo in the notice brings it back.");
+  close-response: "cancel";
+  default-response: "cancel";
+
+  responses [
+    cancel: _("_Cancel"),
+    delete: _("_Delete") destructive,
+  ]
+}

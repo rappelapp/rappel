@@ -304,7 +304,8 @@ impl RappelWindow {
         imp.decks_page.refresh();
     }
 
-    /// After an import: reads the decks and every open deck page's cards
+    /// After an import, or a change made on All Cards or the review page
+    /// (suspend, delete and their Undo): reads the decks and every open deck page's cards
     /// again. A study session keeps the cards it started with.
     pub fn data_changed(&self) {
         let stack = self.imp().navigation_view.navigation_stack();
