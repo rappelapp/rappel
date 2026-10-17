@@ -22,6 +22,28 @@ pub fn count(n: usize, singular: &str, plural: &str) -> String {
     format!("{} {noun}", group_digits(n))
 }
 
+/// "12 due", "1,234 due": cards to review now, steps included. The deck
+/// list's rows and the deck page's subtitle both say it this way.
+pub fn due_count(n: usize) -> String {
+    format!("{} due", group_digits(n))
+}
+
+/// "5 new", "1,234 new": new cards still allowed today.
+pub fn new_count(n: usize) -> String {
+    format!("{} new", group_digits(n))
+}
+
+/// What there is to study, shown on one line: "12 due · 5 new", "12 due",
+/// "5 new", or `None` when both are zero (zero counts are left out).
+pub fn due_new_line(due: usize, new: usize) -> Option<String> {
+    match (due, new) {
+        (0, 0) => None,
+        (due, 0) => Some(due_count(due)),
+        (0, new) => Some(new_count(new)),
+        (due, new) => Some(format!("{} · {}", due_count(due), new_count(new))),
+    }
+}
+
 /// The non-zero counts of decks, cards and reviews as one phrase:
 /// "12 decks, 840 cards and 5,210 reviews", "1 card", or `None` if all
 /// are zero.
@@ -124,6 +146,19 @@ mod tests {
         assert_eq!(count(1, "deck", "decks"), "1 deck");
         assert_eq!(count(0, "deck", "decks"), "0 decks");
         assert_eq!(count(1_200, "card", "cards"), "1,200 cards");
+    }
+
+    #[test]
+    fn what_to_study_is_grouped_and_leaves_out_zeros() {
+        assert_eq!(due_count(1_234), "1,234 due");
+        assert_eq!(new_count(5), "5 new");
+        assert_eq!(
+            due_new_line(1_234, 20).as_deref(),
+            Some("1,234 due · 20 new")
+        );
+        assert_eq!(due_new_line(3, 0).as_deref(), Some("3 due"));
+        assert_eq!(due_new_line(0, 5_000).as_deref(), Some("5,000 new"));
+        assert_eq!(due_new_line(0, 0), None);
     }
 
     #[test]

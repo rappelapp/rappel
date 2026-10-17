@@ -81,6 +81,37 @@ pub fn with_gtk<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T 
     })
 }
 
+/// Like [`with_gtk`], with libadwaita started and the app's resources (the
+/// templates of its widgets) registered, once per test run, for tests that
+/// build its widgets.
+pub fn with_widgets<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    static RESOURCES: std::sync::Once = std::sync::Once::new();
+    with_gtk(|| {
+        adw::init().expect("libadwaita starts once GTK has");
+        RESOURCES.call_once(|| {
+            gtk::gio::resources_register_include!("rappel.gresource")
+                .expect("the resources are built into the test binary");
+        });
+        f()
+    })
+}
+
+/// The CPU time the calling thread has used so far (user and system), from
+/// `/proc/thread-self/stat`, or `None` where that cannot be read. Unlike a
+/// wall clock it does not grow while the thread waits for a CPU, so a bound
+/// on it holds on a loaded machine (#67). Counted in clock ticks, which
+/// Linux reports at `USER_HZ` = 100 a second, so it is precise to 10 ms.
+pub fn thread_cpu_time() -> Option<Duration> {
+    let stat = std::fs::read_to_string("/proc/thread-self/stat").ok()?;
+    // The command name, field 2, is in parentheses and may hold spaces;
+    // utime and stime are fields 14 and 15, the 12th and 13th after it.
+    let after_name = &stat[stat.rfind(')')? + 1..];
+    let mut fields = after_name.split_whitespace().skip(11);
+    let utime: u64 = fields.next()?.parse().ok()?;
+    let stime: u64 = fields.next()?.parse().ok()?;
+    Some(Duration::from_millis((utime + stime) * 10))
+}
+
 /// The stack hostile input is handled on in tests: a sixteenth of the main
 /// thread's usual 8 MiB, where the app draws cards, so a recursion that only
 /// just passes here has a wide margin in the app. A stack overflow aborts

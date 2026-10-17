@@ -21,7 +21,7 @@
 
 use rappel_core::domain::DeckSummary;
 
-use crate::ui::text::{group_digits, interval_text};
+use crate::ui::text::{due_count, interval_text, new_count};
 
 const MINUTE_MS: i64 = 60_000;
 const HOUR_MS: i64 = 60 * MINUTE_MS;
@@ -65,8 +65,8 @@ pub fn row_text(summary: &DeckSummary, now: i64, next_day: i64) -> RowText {
     let due = summary.due_count;
     let new = summary.new_count;
     if due > 0 || new > 0 {
-        let due_text = (due > 0).then(|| format!("{} due", digits(due)));
-        let new_text = (new > 0).then(|| format!("{} new", digits(new)));
+        let due_text = (due > 0).then(|| due_count(widen(due)));
+        let new_text = (new > 0).then(|| new_count(widen(new)));
         let spoken = [due_text.as_deref(), new_text.as_deref()]
             .into_iter()
             .flatten()
@@ -106,8 +106,8 @@ pub fn row_text(summary: &DeckSummary, now: i64, next_day: i64) -> RowText {
     }
 }
 
-fn digits(n: u32) -> String {
-    group_digits(usize::try_from(n).unwrap_or(usize::MAX))
+fn widen(n: u32) -> usize {
+    usize::try_from(n).unwrap_or(usize::MAX)
 }
 
 /// When `at` is, from `now`: shown ("in 25 min") and spoken ("in 25

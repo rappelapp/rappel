@@ -1,7 +1,7 @@
 /* The app's only stylesheet, loaded by AdwApplication from `style.css` in
  * the resource base path (AdwApplication docs, "Stylesheet"). It styles the
  * grid of a Markdown table and the sideways-scroll hint of wide formulas (render/),
- * the focus ring of a chart and the deck rows.
+ * the focus ring of a chart, the deck and card rows and the tag pills.
  * No literal colours: lines and shading are the text colour at a low
  * opacity, so they follow light, dark and high-contrast themes. */
 
@@ -56,7 +56,32 @@
   opacity: 1;
 }
 
-.deck-row > box.header > box.title {
+.deck-row > box.header > box.title,
+row > box.header.card-row > box.title {
   margin-top: 12px;
   margin-bottom: 12px;
+}
+
+/* The back of a card row is as tall as a tag pill, so rows with and without
+ * tags line up. */
+row > box.header.card-row label.subtitle {
+  min-height: 18px;
+}
+
+/* A tag pill (widgets/tag_pills.rs): a small rounded label on a faint fill
+ * of the text colour, neutral (no accent), so it reads the same in light and
+ * dark styles. With high contrast (libadwaita sets `prefers-contrast: more`,
+ * and raises `--border-opacity` to 50%), it also gets an outline, so its
+ * edge does not depend on the faint fill. */
+.tag-pill {
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 9999px;
+  background-color: alpha(currentColor, 0.1);
+}
+
+@media (prefers-contrast: more) {
+  .tag-pill {
+    box-shadow: inset 0 0 0 1px var(--border-color);
+  }
 }

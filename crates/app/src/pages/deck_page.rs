@@ -24,6 +24,7 @@ use crate::dialogs::card_info;
 use crate::pages::{ReviewPage, StatsPage};
 use crate::state::AppState;
 use crate::ui::focus::index_after_removal;
+use crate::ui::text::due_new_line;
 use crate::ui::toast::{info_toast, log_failure, show_error, show_toast_from, undo_toast};
 use crate::ui::undo::{self, UndoFailure};
 use crate::ui::{init_once, nav};
@@ -43,13 +44,18 @@ mod imp {
     use crate::ui::debounce::Debounce;
     use crate::ui::rows;
 
-    #[derive(Debug, Default, gtk::CompositeTemplate)]
+    #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
+    #[properties(wrapper_type = super::DeckPage)]
     #[template(resource = "/io/github/rsmirke/Rappel/deck_page.ui")]
     pub struct DeckPage {
+        #[template_child]
+        pub breakpoint: TemplateChild<adw::Breakpoint>,
         #[template_child]
         pub window_title: TemplateChild<adw::WindowTitle>,
         #[template_child]
         pub content_stack: TemplateChild<gtk::Stack>,
+        #[template_child]
+        pub study_bar: TemplateChild<gtk::ActionBar>,
         #[template_child]
         pub card_list: TemplateChild<gtk::ListView>,
         #[template_child]
@@ -64,6 +70,10 @@ mod imp {
         pub focus_after_edit: RefCell<Option<String>>,
         /// The pending re-check of what there is to study.
         pub study_timer: Debounce,
+        /// A narrow window (the breakpoint applies): the rows show fewer
+        /// tag pills.
+        #[property(get, set)]
+        pub compact: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -101,11 +111,28 @@ mod imp {
         }
     }
 
+    #[glib::derived_properties]
     impl ObjectImpl for DeckPage {
         fn constructed(&self) {
             self.parent_constructed();
+            let page = self.obj();
             // Back from studying: what is left to study changed.
-            self.obj().connect_shown(super::DeckPage::update_study);
+            page.connect_shown(super::DeckPage::update_study);
+            page.connect_compact_notify(super::DeckPage::update_study_bar);
+            // AdwBreakpoint emits `apply` and `unapply` as its condition
+            // starts and stops matching, the first time too when the page
+            // is first sized (AdwBreakpoint docs; the browser page does
+            // the same, ADR 0036).
+            self.breakpoint.connect_apply(glib::clone!(
+                #[weak]
+                page,
+                move |_| page.set_compact(true)
+            ));
+            self.breakpoint.connect_unapply(glib::clone!(
+                #[weak]
+                page,
+                move |_| page.set_compact(false)
+            ));
         }
     }
     impl WidgetImpl for DeckPage {}
@@ -144,7 +171,7 @@ impl DeckPage {
         ));
         imp.card_list
             .set_model(Some(&gtk::NoSelection::new(Some(store.clone()))));
-        imp.card_list.set_factory(Some(&row_factory()));
+        imp.card_list.set_factory(Some(&row_factory(&page)));
         imp.card_list.connect_activate(glib::clone!(
             #[weak]
             page,
@@ -528,6 +555,16 @@ impl DeckPage {
         let empty = imp.cards.get().is_none_or(|s| s.n_items() == 0);
         imp.content_stack
             .set_visible_child_name(if empty { "empty" } else { "list" });
+        self.update_study_bar();
+    }
+
+    /// Reveals the bottom Study bar only on a narrow window over a deck
+    /// with cards (see [`study_bar_shown`]).
+    fn update_study_bar(&self) {
+        let imp = self.imp();
+        let empty = imp.cards.get().is_none_or(|s| s.n_items() == 0);
+        imp.study_bar
+            .set_revealed(study_bar_shown(self.compact(), empty));
     }
 
     fn item(&self, position: u32) -> Option<CardObject> {
@@ -670,16 +707,20 @@ fn undo_card_delete(
     }
 }
 
-/// The deck page's subtitle: "3 due · 20 new", or "Nothing to study".
+/// The deck page's subtitle: "1,234 due · 20 new", or "Nothing to study"
+/// (the same counts as the deck list's rows, `ui::text::due_new_line`).
 fn study_subtitle(input: &StudyInput) -> String {
-    let due = input.reviews.len() + input.steps.len();
-    let new = input.new.len();
-    match (due, new) {
-        (0, 0) => "Nothing to study".to_owned(),
-        (due, 0) => format!("{due} due"),
-        (0, new) => format!("{new} new"),
-        (due, new) => format!("{due} due · {new} new"),
-    }
+    due_new_line(input.reviews.len() + input.steps.len(), input.new.len())
+        .unwrap_or_else(|| "Nothing to study".to_owned())
+}
+
+/// Whether the bottom Study bar shows: on a narrow window (`compact`, where
+/// Study leaves the header), unless the deck is empty. An empty deck shows
+/// its status page with Add Card alone; a disabled Study pill under it
+/// would only be noise. On a wide window the header's Study stays, disabled,
+/// so the header does not change shape when the first card is added.
+fn study_bar_shown(compact: bool, empty: bool) -> bool {
+    compact && !empty
 }
 
 /// The longest single wait before re-checking what there is to study. A
@@ -715,13 +756,22 @@ fn insert_in_order(store: &gio::ListStore, item: &CardObject) -> u32 {
     })
 }
 
-/// Builds a [`CardRow`] per visible row and points it at its card.
-fn row_factory() -> gtk::SignalListItemFactory {
+/// Builds a [`CardRow`] per visible row, following the page's `compact`,
+/// and points it at its card.
+fn row_factory(page: &DeckPage) -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            item.set_child(Some(&CardRow::default()));
+    let page = page.downgrade();
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let row = CardRow::default();
+        if let Some(page) = page.upgrade() {
+            page.bind_property("compact", &row, "compact")
+                .sync_create()
+                .build();
         }
+        item.set_child(Some(&row));
     });
     factory.connect_bind(|_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -732,7 +782,8 @@ fn row_factory() -> gtk::SignalListItemFactory {
             item.child().and_downcast::<CardRow>(),
         ) {
             row.bind(&card);
-            // Screen readers read the front and the tags, not "row".
+            // Screen readers read the front, the back and the tags, not
+            // "row" (`card_row::text::row_label`).
             item.set_accessible_label(&card.row_label());
         }
     });
@@ -823,6 +874,14 @@ mod tests {
     }
 
     #[test]
+    fn the_study_bar_shows_only_on_a_narrow_window_with_cards() {
+        assert!(study_bar_shown(true, false));
+        assert!(!study_bar_shown(true, true));
+        assert!(!study_bar_shown(false, false));
+        assert!(!study_bar_shown(false, true));
+    }
+
+    #[test]
     fn subtitle_names_what_is_left() {
         let mut input = StudyInput::default();
         assert_eq!(study_subtitle(&input), "Nothing to study");
@@ -833,6 +892,9 @@ mod tests {
         assert_eq!(study_subtitle(&input), "3 due · 20 new");
         input.new.clear();
         assert_eq!(study_subtitle(&input), "3 due");
+        // Digits are grouped, as in the deck list.
+        input.reviews = vec![due("r"); 1_234];
+        assert_eq!(study_subtitle(&input), "1,235 due");
     }
 
     /// A page over a deck of `n` cards that are all due.
@@ -897,6 +959,24 @@ mod tests {
             undo_suspend(&state, &ids[0], true, &page.downgrade(), None);
             assert_eq!(subtitle(), "2 due");
             assert!(!page.item(0).unwrap().card().suspended);
+        });
+    }
+
+    #[test]
+    fn the_study_bar_follows_the_width_and_the_cards() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(1);
+            let bar = || page.imp().study_bar.is_revealed();
+            assert!(!bar());
+            page.set_compact(true);
+            assert!(bar());
+            // The last card goes: the empty state stands alone.
+            page.delete(&ids[0]);
+            assert!(!bar());
+            undo_card_delete(&state, &ids[0], &page.downgrade(), None);
+            assert!(bar());
+            page.set_compact(false);
+            assert!(!bar());
         });
     }
 

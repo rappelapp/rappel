@@ -10,7 +10,9 @@
 //! timer at the next change, at most a minute, ten minutes or an hour
 //! away (`refresh_delay_ms`, ADR 0041).
 
-use std::time::Duration;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -231,10 +233,13 @@ impl DecksPage {
         if view.visible_page().is_some_and(|p| p.is::<DeckPage>()) {
             return;
         }
+        let started = Instant::now();
         match DeckPage::new(state.clone(), deck) {
             Ok(page) => {
+                let built_ms = started.elapsed().as_millis();
                 self.imp().opened.replace(Some(id.to_owned()));
                 view.push(&page);
+                log_first_frame(&view, started, built_ms);
             }
             Err(err) => self.error_toast(&format!("The cards could not be read: {err}")),
         }
@@ -467,4 +472,41 @@ impl DecksPage {
     fn error_toast(&self, message: &str) {
         show_error(self, "a deck operation", message);
     }
+}
+
+/// How late the first frame after a deck's push may come and still be
+/// logged as its opening time.
+const FIRST_FRAME_LOG_LIMIT: Duration = Duration::from_secs(5);
+
+/// Logs (at debug level) how long opening a deck took: building its page,
+/// and until the first frame painted after the push (issue #42: a deck of
+/// 5,000 cards must open fast). `after-paint` is emitted by the frame clock
+/// once per frame, after the frame is drawn (`GdkFrameClock` docs, "Frame
+/// phases"); the handler disconnects itself after the first one, and logs
+/// nothing if that frame comes more than [`FIRST_FRAME_LOG_LIMIT`] later.
+fn log_first_frame(view: &adw::NavigationView, started: Instant, built_ms: u128) {
+    let Some(clock) = view.frame_clock() else {
+        return;
+    };
+    let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
+    let id = clock.connect_after_paint(glib::clone!(
+        #[strong]
+        handler,
+        move |clock| {
+            // A frame long after the push (the window was hidden, say) says
+            // nothing about opening the deck: disconnect without a log.
+            let elapsed = started.elapsed();
+            if elapsed < FIRST_FRAME_LOG_LIMIT {
+                tracing::debug!(
+                    built_ms,
+                    first_frame_ms = elapsed.as_millis(),
+                    "deck page opened"
+                );
+            }
+            if let Some(id) = handler.take() {
+                clock.disconnect(id);
+            }
+        }
+    ));
+    handler.replace(Some(id));
 }

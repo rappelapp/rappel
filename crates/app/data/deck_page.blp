@@ -14,7 +14,7 @@ template $RappelDeckPage: Adw.NavigationPage {
     width-request: 360;
     height-request: 294;
 
-    Adw.Breakpoint {
+    Adw.Breakpoint breakpoint {
       condition ("max-width: 400sp")
 
       // Only one Study button has the Alt+S mnemonic at a time: while the
@@ -24,7 +24,6 @@ template $RappelDeckPage: Adw.NavigationPage {
       // the bar loses its mnemonic as the header button comes back.
       setters {
         header_study_button.visible: false;
-        study_bar.revealed: true;
         bar_study_button.label: _("_Study");
         bar_study_button.use-underline: true;
       }
@@ -118,8 +117,10 @@ template $RappelDeckPage: Adw.NavigationPage {
                   label: _("Cards");
                 }
 
+                // Not `rich-list`: the rows lay themselves out like
+                // libadwaita's action rows, with the margins of their
+                // `box.header` (data/card_row.blp).
                 styles [
-                  "rich-list",
                   "separators",
                 ]
               };
@@ -128,7 +129,10 @@ template $RappelDeckPage: Adw.NavigationPage {
         }
       };
 
-      // The narrow window's Study button (see the breakpoint above).
+      // The narrow window's Study button (see the breakpoint above). Shown
+      // by pages/deck_page.rs only while the window is narrow and the deck
+      // has cards (`study_bar_shown`): an empty deck's status page has its
+      // own action and stands alone.
       [bottom]
       Gtk.ActionBar study_bar {
         revealed: false;

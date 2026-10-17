@@ -6,10 +6,11 @@ pub mod bar_chart;
 mod browse_item;
 mod browser_row;
 mod card_object;
-mod card_row;
+pub mod card_row;
 pub mod chart_card;
 pub mod deck_row;
 mod history_row;
+pub mod tag_pills;
 mod tag_suggestions;
 
 pub use backup_row::BackupRow;
@@ -19,4 +20,5 @@ pub use card_object::CardObject;
 pub use card_row::CardRow;
 pub use deck_row::DeckRow;
 pub use history_row::HistoryRow;
+pub use tag_pills::TagPills;
 pub use tag_suggestions::TagSuggestions;
