@@ -6,6 +6,9 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+
+## [0.2.0-alpha.3] — 2026-10-17
+
 ### Added
 - **Undo on the review page** (SPEC §4.5, ADR 0030). **Ctrl+Z**, or the Undo button in the header, takes back your last answer, again and again back to the first of the session. The card comes back on its front side with its timer restarted, and the count and the summary drop that answer. It also works on the Session Complete screen, which brings the last card back. The button is off when there is nothing to undo, and nothing can be undone once you leave the page. If the card was changed elsewhere meanwhile (an import, say), a short message says the answer can no longer be undone and nothing changes. An edit made to the card during the session shows when it comes back.
 - **Reset Progress** (#38) in each card's ⋮ menu on the deck page: the card is new again at once, its history stays in the log. A toast offers Undo; if the card was studied since, the toast says the reset can no longer be undone and changes nothing. The deck page and the deck list counts update.
