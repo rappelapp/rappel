@@ -7,7 +7,19 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header).
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header). The product vision below and the order in §4 and §5 are set by ADR 0034.
+
+---
+
+## Product vision
+
+Rappel is an opinionated, modern GNOME flashcard app. It is closer to Mochi than to Anki.
+
+- **Efficiency is not maximalism.** Studying well takes few cards, few buttons and few decisions. Rappel does not try to cover every way anyone has ever used flashcards.
+- **Smart behaviour is built in and invisible until needed** (progressive disclosure). The scheduler, the daily limits, the backups and the search just work. A feature shows itself when the user reaches for it, not before.
+- **Every setting must justify itself.** If a good default can be found, there is no setting. A setting that needs a paragraph to explain is a design failure.
+- **Anki is a source to import from, not a model.** Rappel has no note types, no add-ons, no field templates and no per-deck presets, and will not grow them. An Anki collection comes in as plain cards.
+- **Card links belong to the separate method app**, not to Rappel (see §6).
 
 ---
 
@@ -16,7 +28,7 @@ v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, S
 1. **Data first.** Losing review history is the worst possible bug. Backups, export and migrations come before features.
 2. **Core is UI-agnostic.** `rappel-core` holds all logic and has no GTK dependency. It must stay testable with plain `cargo test`.
 3. **GNOME-native.** Follow the GNOME HIG. Use libadwaita widgets as designed. No custom colors, no web views.
-4. **Few options, good defaults.** A setting needs a reason to exist.
+4. **Few options, good defaults.** A setting needs a reason to exist (see the product vision).
 5. **Untrusted content.** Card text may later come from imports. It is never interpreted as HTML or markup without escaping. Card content never causes network access or access to user files. Reading installed system fonts is allowed (ADR 0021).
 6. **Adaptive from phone (360 px) to desktop, touch-friendly, ready for mobile Linux.**
 
@@ -105,16 +117,19 @@ Storage rules:
 
 ---
 
-## 4. Features for v0.2 (in priority order)
+## 4. Features
+
+The order, set by ADR 0034: browser and search (§4.6), streaming import (§4.1), images (§4.3), audio (§4.9), clean-up (§4.10), polish for phone and touch (§4.8), Anki import (§5), translation (§5), release (§5). Sections keep their numbers; the order above is the priority, not the numbering. Statistics (§4.7) and the editor (§4.4) are done. The rest of §4.5 comes with the browser: suspend (the `suspended` migration of §3, the action in the review and card menus, and the browser's filter and bulk action) and delete during review.
 
 ### 4.1 Export / import
-- Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 2`, `exported_at`, and all decks, cards, tags, card tags and the full review log with its resets and undos, deleted rows included with their `deleted_at`. It also has `settings` (the keys the user changed, ADR 0027) and `media` (empty until images exist; image files will go into `media/`).
+- Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 2`, `exported_at`, and all decks, cards, tags, card tags and the full review log with its resets and undos, deleted rows included with their `deleted_at`. It also has `settings` (the keys the user changed, ADR 0027) and `media` (empty until images or audio exist; their files go into `media/`).
 - Versions: version 1 was written only by test versions (0.2.0-alpha, and `.cards` files) and is refused with "made by an early test version of Rappel and cannot be imported" (ADR 0017). **From 1.0 on, every format version a release wrote stays importable by every later release.**
 - Deterministic: the same database exported at the same time gives the same bytes (lists sorted by id, fixed zip metadata). Only `exported_at` differs between exports.
 - Import into an empty or existing DB in two steps: `plan_import` checks the file and returns a summary without writing anything (new / already present / conflicts, e.g. "12 decks, 840 cards, 5,210 reviews"); `apply_import` backs up the database, then writes in one transaction and rebuilds the schedule of the affected cards from the log.
 - Merge rules: an id not in the DB is added; the same id with the same content is skipped. A tag whose name key a DB tag with another id has is mapped onto that tag (its card tags attach to the DB's id), not added; a tag with the same id and another name is a conflict, and so is an undo of an entry the DB has already undone. The file's settings are applied only into a DB without decks (deleted ones included); otherwise the DB keeps its own. A row that differs only by being deleted is merged: deleted in the DB and live in the file, it is revived (`deleted_at` cleared; a revived deck also revives the cards deleted with it, as `undelete_deck` does, except those the file has, which follow their own row); live in the DB and deleted in the file, it is skipped (an import never deletes); deleted on both sides, at whatever times, it is already present. The same id with any other difference, or a live deck name (revived ones included) already used by another live deck, is a conflict, and any conflict refuses the whole import. The summary also counts revived rows. Importing the same file twice changes nothing.
 - The file is untrusted. A file is refused if any of these fail: size limits; the exact entry names (nothing is extracted, so no zip-slip); a supported format version; every id a lowercase `UUIDv7`; references that resolve; valid kinds, grades and timestamps; undos that cancel an earlier review or reset of the same card, once; tag names without a NUL or a comma; settings within their ranges; no NUL character in a deck name or card side.
 - Round-trip test: export → import into empty DB → export again produces an identical file.
+- **Streaming import** (next, after the browser): `plan_import` and `apply_import` read the archive entry by entry and keep memory bounded, so a file with a large media folder does not need to fit in memory. The checks and merge rules above do not change, and a refused file still writes nothing, so media are not put in the store before the plan is confirmed.
 
 ### 4.2 Math
 - `$...$` inline and `$$...$$` display math in Markdown.
@@ -158,19 +173,35 @@ Storage rules:
 - Remember window size and the last selected deck.
 - Every icon-only button has a tooltip and an accessible label. Full keyboard navigation.
 - Empty states (`AdwStatusPage`) everywhere a list can be empty.
+- Phone and touch: audit every screen at 360 px, touch targets of at least 44 px, no hover-only actions, grade buttons large enough for a thumb.
 - Nested decks: **not** in v0.2.
+
+### 4.9 Audio
+- Attach an audio file to a card side from the editor. It goes into the media store like an image (`<data dir>/media/<sha256>.<ext>`) and is referenced in Markdown as a link, `[](media:<sha256>.<ext>)`; only `media:` URLs play, nothing is fetched (§1 principle 5).
+- Untrusted input: playback opens only a local file built from the hash name, never an arbitrary URI (no `playbin` on card-supplied URLs), with an allow-list of formats and decoders. The ADR adds the row to the untrusted-input table (ADR 0025) and justifies the GStreamer binding as a new dependency.
+- A play button on the card, with a tooltip and an accessible label. Playback is by GStreamer, which GNOME already ships; no recording, and no autoplay at all (the user presses play). Formats and the size limit are decided in the slice's ADR.
+
+### 4.10 Clean-up
+- Remove media files that nothing uses, with the size it frees, always confirmed first. Media referenced by a deleted card still counts as used, since deleted cards can come back (undo, import revival). Backups hold only the database, so media referenced by any retained backup also counts as used, or removed files are set aside for the backup retention period; the clean-up's ADR decides which. It never touches cards, tags (never deleted, ADR 0029) or the review log.
+- Nothing runs by itself. It lives in one place (the primary menu), not in the preferences.
 
 ---
 
-## 5. Later (not v0.2)
-- Meson build + Flatpak manifest + AppStream metainfo + app icon + `.desktop` file (needed to install it properly and to look like a GNOME core app).
-- Translations (gettext), French first.
-- Anki `.apkg` import.
+## 5. After the features above, and later
+
+In this order, after §4's items:
+1. **Anki `.apkg` import**, one way. Cards, tags and review history become plain Rappel cards; note types, templates, add-ons and presets are dropped, not mapped (product vision). Field HTML becomes Markdown or plain text and is never rendered as HTML; Anki's four buttons map to two grades (Again = Fail, the others = Pass); cloze notes come in as ordinary cards with the text shown in full; `<img>` and `[sound:]` become `media:` files (no SVG, remote URLs stay text). An `.apkg` is an untrusted archive holding an untrusted SQLite database, so it gets its own limits and checks in the slice's ADR, as §4.1 has for `.rappel`.
+2. **Translations** (gettext), French first.
+3. **Release**: Meson build + Flatpak manifest + AppStream metainfo + app icon + `.desktop` file (needed to install it properly and to look like a GNOME core app).
+
+Not scheduled:
 - FSRS parameter optimisation from the user's own review log.
 - Sync.
-- Cloze cards.
+- Reversed cards: a card also asked back to front. An option on a single card, not a note type or a template. It needs a schedule and review history per direction, so a migration and an ADR.
 - Obsidian-style in-place live preview in the editor (formulas rendered inside the text being edited, source shown where the cursor is). Needs a spike first, with its own ADR (next free number).
 
 ## 6. Never in this project
-- More than two grades. Card links, proximal-zone suggestions, prerequisite graphs: those belong to the separate method app.
+- More than two grades.
+- Note types, add-ons, field templates, per-deck presets (product vision, ADR 0034).
+- Card links, proximal-zone suggestions, prerequisite graphs: those belong to the separate method app.
 - Network access, telemetry, accounts.

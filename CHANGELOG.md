@@ -6,6 +6,9 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Product vision and roadmap** (ADR 0034, SPEC only). The SPEC now opens with what Rappel is (closer to Mochi than Anki, no note types, add-ons, field templates or per-deck presets) and sets the order: browser and search, streaming import, images, audio, clean-up, polish for phone and touch, Anki import, translation, release. Cloze cards are dropped; reversed cards are listed as later.
+
 ### Added
 - **Statistics** (SPEC §4.7, ADR 0033). **Statistics** in the main menu shows all decks; the ⋮ menu of a deck page shows that deck. Three headline numbers (expected retention, pass rate and time studied over the last 30 days) sit above three charts: reviews per day (passes solid, fails hatched, so they differ without colour), time studied per day, and the cards due over the next 14 days. A chart can be focused: **Left**, **Right**, **Home** and **End** (or a click or tap) pick a day and say its values. Each chart also has a summary for screen readers ("Last 30 days: 412 reviews, 380 passed, busiest day 14 October with 38."). Colours follow the theme and accent colour. With nothing studied yet, the page says so.
 - **Card Information** (#39): the ⋮ menu of each card on the deck page, and a ⋮ menu in the review header or the **I** key. It shows when the card was created and edited, its reviews, pass rate and lapses, stability, difficulty, recall now, next due, and its history, newest first, with each reset as a row of its own. Opening it during a session changes nothing.
