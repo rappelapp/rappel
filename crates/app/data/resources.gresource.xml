@@ -27,6 +27,8 @@
     <file preprocess="xml-stripblanks">stats_page.ui</file>
     <file preprocess="xml-stripblanks">card_info_dialog.ui</file>
     <file preprocess="xml-stripblanks">history_row.ui</file>
+    <!-- Found by AdwApplication itself: app.shortcuts and Ctrl+?. -->
+    <file preprocess="xml-stripblanks">shortcuts-dialog.ui</file>
       <!-- Not compiled: plain CSS, loaded by AdwApplication. -->
     <file>style.css</file>
   </gresource>

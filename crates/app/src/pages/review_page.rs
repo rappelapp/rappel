@@ -254,6 +254,33 @@ enum Key {
     Undo,
 }
 
+/// The page's keys (`setup_keys`). The Keyboard Shortcuts dialog and the
+/// Card Menu's hints list them; tests check both.
+const KEYS: [(&str, Key); 16] = [
+    ("space", Key::Space),
+    ("Return", Key::Enter),
+    ("KP_Enter", Key::Enter),
+    ("1", Key::Fail),
+    ("KP_1", Key::Fail),
+    ("2", Key::Pass),
+    ("KP_2", Key::Pass),
+    ("e", Key::Edit),
+    ("<Shift>e", Key::Edit),
+    ("i", Key::Info),
+    ("<Shift>i", Key::Info),
+    ("s", Key::Suspend),
+    ("<Shift>s", Key::Suspend),
+    ("Delete", Key::Delete),
+    ("KP_Delete", Key::Delete),
+    ("<Control>z", Key::Undo),
+];
+
+/// The triggers of [`KEYS`], for the Keyboard Shortcuts dialog's test.
+#[cfg(test)]
+pub(crate) fn key_triggers() -> impl Iterator<Item = &'static str> {
+    KEYS.iter().map(|(trigger, _)| *trigger)
+}
+
 /// What a key makes the page do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Act {
@@ -328,24 +355,7 @@ impl ReviewPage {
         let shortcuts = gtk::ShortcutController::new();
         // Bubble: a focused button handles its own Space and Enter first.
         shortcuts.set_propagation_phase(gtk::PropagationPhase::Bubble);
-        for (trigger, key) in [
-            ("space", Key::Space),
-            ("Return", Key::Enter),
-            ("KP_Enter", Key::Enter),
-            ("1", Key::Fail),
-            ("KP_1", Key::Fail),
-            ("2", Key::Pass),
-            ("KP_2", Key::Pass),
-            ("e", Key::Edit),
-            ("<Shift>e", Key::Edit),
-            ("i", Key::Info),
-            ("<Shift>i", Key::Info),
-            ("s", Key::Suspend),
-            ("<Shift>s", Key::Suspend),
-            ("Delete", Key::Delete),
-            ("KP_Delete", Key::Delete),
-            ("<Control>z", Key::Undo),
-        ] {
+        for (trigger, key) in KEYS {
             let action = gtk::CallbackAction::new(move |widget, _| {
                 widget
                     .downcast_ref::<Self>()
@@ -1395,5 +1405,80 @@ mod tests {
         assert_eq!(summary_text(&one), "1 card · 0% passed · 3 s");
         assert_eq!(summary_text(&Summary::default()), "0 cards · 0 s");
         assert_eq!(left_text(3), "3 left");
+    }
+
+    /// The action each key's menu item runs, for the hints' test.
+    fn menu_action(key: Key) -> Option<&'static str> {
+        match key {
+            Key::Info => Some("review.card-info"),
+            Key::Suspend => Some("review.suspend"),
+            Key::Delete => Some("review.delete"),
+            _ => None,
+        }
+    }
+
+    /// (action, accel) of every item of `menu` and its sections.
+    fn menu_items(menu: &gtk::gio::MenuModel, out: &mut Vec<(String, Option<String>)>) {
+        let string = |i, name| {
+            menu.item_attribute_value(i, name, Some(glib::VariantTy::STRING))
+                .and_then(|v| v.get::<String>())
+        };
+        for i in 0..menu.n_items() {
+            if let Some(section) = menu.item_link(i, "section") {
+                menu_items(&section, out);
+            } else if let Some(action) = string(i, "action") {
+                out.push((action, string(i, "accel")));
+            }
+        }
+    }
+
+    #[test]
+    fn the_card_menu_shows_the_keys_the_page_binds() {
+        crate::testing::with_gtk(|| {
+            adw::init().unwrap();
+            gtk::gio::resources_register_include!("rappel.gresource").unwrap();
+            let page: ReviewPage = glib::Object::new();
+            let menu = page
+                .imp()
+                .card_menu_button
+                .menu_model()
+                .expect("the card menu button has its menu");
+            let mut items = Vec::new();
+            menu_items(&menu, &mut items);
+            assert_eq!(items.len(), 3);
+            for (action, accel) in items {
+                let accel = accel.unwrap_or_else(|| panic!("{action} shows no key"));
+                let bound = KEYS
+                    .iter()
+                    .find(|(trigger, _)| *trigger == accel)
+                    .unwrap_or_else(|| panic!("{accel} is not one of the page's keys"));
+                assert_eq!(menu_action(bound.1), Some(action.as_str()));
+                assert!(gtk::accelerator_parse(&accel).is_some());
+            }
+            // And GTK's menu shows them: each item's GtkModelButton has the
+            // key as its `accel` (what it displays).
+            let popover = gtk::PopoverMenu::from_model(Some(&menu));
+            let mut shown = Vec::new();
+            let mut todo = vec![popover.upcast::<gtk::Widget>()];
+            while let Some(widget) = todo.pop() {
+                if widget.type_().name() == "GtkModelButton" {
+                    shown.push(widget.property::<Option<String>>("accel"));
+                }
+                let mut child = widget.first_child();
+                while let Some(c) = child {
+                    child = c.next_sibling();
+                    todo.push(c);
+                }
+            }
+            shown.sort();
+            assert_eq!(
+                shown,
+                [
+                    Some("Delete".to_owned()),
+                    Some("i".to_owned()),
+                    Some("s".to_owned())
+                ]
+            );
+        });
     }
 }

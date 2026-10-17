@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. Phase 1 of the roadmap (§4), text only and ending in 0.2.0, is **in progress**. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header), the search index, suspension and bulk writes in core (ADR 0035), the All Cards page (ADR 0036), and suspend and delete during review (ADR 0037). The product vision below is set by ADR 0034, the roadmap in phases (§4, §5) by ADR 0038.
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. Phase 1 of the roadmap (§4), text only and ending in 0.2.0, is **in progress**. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header), the search index, suspension and bulk writes in core (ADR 0035), the All Cards page (ADR 0036), suspend and delete during review (ADR 0037), and the missing features: the keyboard shortcuts dialog, the About dialog and the remembered window size and deck (ADR 0039). The product vision below is set by ADR 0034, the roadmap in phases (§4, §5) by ADR 0038.
 
 ---
 
@@ -124,7 +124,7 @@ The work is done in three phases, each ending in a release (ADR 0038, amending t
 
 **Phase 1 — text only, ends in v0.2.0.**
 1. *Done:* the editor (§4.4), statistics (§4.7), browser and search (§4.6), suspend and delete during review (§4.5).
-2. Missing features (§4.8): keyboard shortcuts dialog, About dialog with the font credits, remembering the window size and the last deck.
+2. *Done:* missing features (§4.8): keyboard shortcuts dialog, About dialog with the font credits, remembering the window size and the last deck.
 3. UI overhaul (§4.8): a visual pass on every screen, and the accessibility issues.
 4. Code clean-up and refactor (§4.10).
 5. Hardening, round 2 (round 1 was ADR 0025).
@@ -191,7 +191,7 @@ The work is done in three phases, each ending in a release (ADR 0038, amending t
 
 ### 4.8 Polish
 - `AdwPreferencesDialog` (done, ADR 0027): daily limits for new cards and reviews, the hour a study day starts, desired retention (asked about first, because it recalculates every due date), and an "Open Backup Folder" button.
-- Phase 1, missing features: `AdwAboutDialog` with credits for the bundled KaTeX fonts (SIL OFL-1.1, see `deny.toml`), keyboard shortcuts dialog, primary menu. Remember window size and the last selected deck.
+- Phase 1, missing features (done, ADR 0039): `AdwAboutDialog` with credits for the bundled KaTeX fonts (SIL OFL-1.1, see `deny.toml`) and the main libraries, the keyboard shortcuts dialog (`AdwShortcutsDialog`, Ctrl+?) listing every shortcut, key hints in menus, primary menu. The window size, maximised state and the deck page open at close are remembered in `window-state.ini` in the data directory.
 - Phase 1, UI overhaul: a visual pass on every screen (spacing, alignment, style classes, consistent wording), checked in light and dark mode. Every icon-only button has a tooltip and an accessible label. Full keyboard navigation. Empty states (`AdwStatusPage`) everywhere a list can be empty. Fix the known accessibility issues.
 - Phase 2, phone and touch: audit every screen at 360 px, touch targets of at least 44 px, no hover-only actions, grade buttons large enough for a thumb.
 

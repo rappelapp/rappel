@@ -14,6 +14,7 @@ use crate::startup::{Problem, data_folder_line, too_new_text};
 use crate::state::AppState;
 use crate::transfer;
 use crate::ui::toast::{persistent_toast, warning_message};
+use crate::window_state;
 
 /// The two jobs of the primary menu.
 #[derive(Debug, Clone, Copy)]
@@ -110,6 +111,10 @@ mod imp {
                     crate::dialogs::preferences::show(window, state);
                 }
             });
+            // The primary menu. Needs no database, so always enabled.
+            klass.install_action("win.about", None, |window, _, _| {
+                crate::dialogs::about::show(window);
+            });
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -137,6 +142,7 @@ mod imp {
         fn close_request(&self) -> glib::Propagation {
             let window = self.obj();
             let Some(editor) = window.unsaved_editor() else {
+                window.save_state();
                 return self.parent_close_request();
             };
             glib::spawn_future_local(glib::clone!(
@@ -213,6 +219,10 @@ impl RappelWindow {
         }
         tracing::debug!("showing the main page");
         imp.stack.set_visible_child_name("main");
+        // Only at startup, before the window is shown; not after a restore.
+        if !self.is_mapped() {
+            self.restore_state();
+        }
         self.action_set_enabled("win.new-deck", true);
         self.action_set_enabled("win.new", true);
         self.action_set_enabled("win.search", true);
@@ -220,6 +230,62 @@ impl RappelWindow {
         for action in TRANSFER_ACTIONS {
             self.action_set_enabled(action, true);
         }
+    }
+
+    /// Applies the size, maximised state and open deck saved when the
+    /// window last closed (`window_state`). Called before the window is
+    /// first presented.
+    fn restore_state(&self) {
+        let imp = self.imp();
+        let Some(state) = imp.state.get() else {
+            return;
+        };
+        let saved = window_state::load(state.data_dir());
+        self.set_default_size(saved.width, saved.height);
+        if saved.maximized {
+            // "It's permitted to call this function before showing a window,
+            // in which case the window will be maximized when it appears
+            // onscreen initially" (gtk_window_maximize docs).
+            self.maximize();
+        }
+        if let Some(id) = saved.deck_id {
+            // Straight to the deck page, without the slide from the list.
+            let view = &imp.navigation_view;
+            let animate = view.is_animate_transitions();
+            view.set_animate_transitions(false);
+            imp.decks_page.reopen(&id);
+            view.set_animate_transitions(animate);
+        }
+    }
+
+    /// Saves the size, maximised state and open deck for the next start.
+    /// Only from the main page: a recovery or error page has no database
+    /// and nothing to remember.
+    fn save_state(&self) {
+        let imp = self.imp();
+        let Some(state) = imp.state.get() else {
+            return;
+        };
+        if imp.stack.visible_child_name().as_deref() != Some("main") {
+            return;
+        }
+        let stack = imp.navigation_view.navigation_stack();
+        let deck_id = window_state::deck_to_reopen(
+            (0..stack.n_items())
+                .filter_map(|i| stack.item(i))
+                .map(|page| page.downcast_ref::<DeckPage>().and_then(DeckPage::deck_id)),
+        );
+        // The size the window has when not maximised: "the recommended way
+        // for saving window state across restarts" (gtk_window_get_default_size
+        // docs).
+        let (width, height) = self.default_size();
+        let saved = window_state::WindowState {
+            width,
+            height,
+            maximized: self.is_maximized(),
+            deck_id,
+        };
+        window_state::save(state.data_dir(), &saved);
     }
 
     /// Runs an export or import unless one is already running. Its actions

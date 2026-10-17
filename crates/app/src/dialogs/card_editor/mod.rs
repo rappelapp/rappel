@@ -48,6 +48,19 @@ use crate::widgets::TagSuggestions;
 /// rendered on every key.
 const PREVIEW_DELAY: Duration = Duration::from_millis(250);
 
+/// The save keys, and whether each starts a new card after saving. The
+/// Keyboard Shortcuts dialog lists them (a test checks it).
+pub(crate) const SAVE_KEYS: [(&str, bool); 4] = [
+    ("<Control>Return", false),
+    ("<Control>KP_Enter", false),
+    ("<Control><Shift>Return", true),
+    ("<Control><Shift>KP_Enter", true),
+];
+
+/// The formatting keys and the marker each wraps the selection in.
+pub(crate) const FORMAT_KEYS: [(&str, &str); 2] =
+    [("<Control>b", format::BOLD), ("<Control>i", format::ITALIC)];
+
 /// What a save did, for the deck page to update its list.
 #[derive(Debug, Clone)]
 pub enum Saved {
@@ -272,12 +285,7 @@ impl CardEditor {
         // Capture phase: the text views would otherwise take the Enter.
         let shortcuts = gtk::ShortcutController::new();
         shortcuts.set_propagation_phase(gtk::PropagationPhase::Capture);
-        for (trigger, and_new) in [
-            ("<Control>Return", false),
-            ("<Control>KP_Enter", false),
-            ("<Control><Shift>Return", true),
-            ("<Control><Shift>KP_Enter", true),
-        ] {
+        for (trigger, and_new) in SAVE_KEYS {
             // Always handled, even with a blank front, so the key never
             // falls through to the text view as a new line.
             let action = gtk::CallbackAction::new(move |widget, _| {
@@ -291,7 +299,7 @@ impl CardEditor {
                 Some(action),
             ));
         }
-        for (trigger, marker) in [("<Control>b", format::BOLD), ("<Control>i", format::ITALIC)] {
+        for (trigger, marker) in FORMAT_KEYS {
             let action = gtk::CallbackAction::new(move |widget, _| {
                 let editor = widget.downcast_ref::<Self>();
                 match editor.and_then(Self::focused_buffer) {

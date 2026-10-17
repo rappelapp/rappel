@@ -194,10 +194,17 @@ template $RappelReviewPage: Adw.NavigationPage {
   };
 }
 
+// The keys are handled by the page's shortcut controller (`setup_keys`),
+// whose callbacks a menu cannot see. The `accel` attribute only shows the
+// key in the menu: GtkMenuTrackerItem reads it before asking the action
+// muxer (gtk_menu_tracker_item_get_accel). GtkModelButton then also makes
+// the key press the item, but in managed scope, so only while the menu is
+// open (gtkmodelbutton.c, update_accel), where it acts like a click.
 menu card_menu {
   section {
     item {
       label: _("Card _Information");
+      accel: "i";
       action: "review.card-info";
     }
   }
@@ -205,11 +212,13 @@ menu card_menu {
   section {
     item {
       label: _("_Suspend Card");
+      accel: "s";
       action: "review.suspend";
     }
 
     item {
       label: _("_Delete Card…");
+      accel: "Delete";
       action: "review.delete";
     }
   }

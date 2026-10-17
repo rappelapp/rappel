@@ -130,6 +130,13 @@ impl DecksPage {
         self.reload_or_toast(Focus::Keep);
     }
 
+    /// At startup: pushes the page of the deck that was open when the
+    /// window last closed. A deck deleted since leaves the deck list showing
+    /// (`open` ignores `DeckNotFound`).
+    pub fn reopen(&self, id: &str) {
+        self.open(id);
+    }
+
     /// Pushes the page of deck `id`.
     fn open(&self, id: &str) {
         let Some(state) = self.imp().state() else {

@@ -12,6 +12,7 @@ mod transfer;
 mod ui;
 mod widgets;
 mod window;
+mod window_state;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -27,6 +28,15 @@ use crate::window::RappelWindow;
 compile_error!(
     "Rappel needs panic = \"unwind\": the RaTeX catch_unwind guards (ADR 0023) rely on it"
 );
+
+/// The application's accelerators. `app.shortcuts` (Ctrl+?) is set up by
+/// `AdwApplication` itself from `data/shortcuts-dialog.blp`, which lists
+/// these too (a test in `dialogs/shortcuts.rs` checks it).
+const ACCELS: [(&str, &str); 3] = [
+    ("win.new", "<Control>n"),
+    ("win.search", "<Control>f"),
+    ("win.preferences", "<Control>comma"),
+];
 
 fn main() -> glib::ExitCode {
     tracing_subscriber::fmt()
@@ -52,9 +62,9 @@ fn main() -> glib::ExitCode {
     // is a GApplication RUN_FIRST signal, so GtkApplication's own handler,
     // which initialises GTK, runs before this one (gio's GApplication docs).
     app.connect_startup(|_| sourceview5::init());
-    app.set_accels_for_action("win.new", &["<Control>n"]);
-    app.set_accels_for_action("win.search", &["<Control>f"]);
-    app.set_accels_for_action("win.preferences", &["<Control>comma"]);
+    for (action, accel) in ACCELS {
+        app.set_accels_for_action(action, &[accel]);
+    }
     app.connect_activate(|app| {
         if let Some(window) = app.active_window() {
             window.present();

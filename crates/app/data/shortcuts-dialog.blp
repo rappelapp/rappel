@@ -1,0 +1,186 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Keyboard Shortcuts (Ctrl+?, primary menu). AdwApplication finds this file
+// at `shortcuts-dialog.ui` under the resource base path and sets up
+// `app.shortcuts` and Ctrl+? itself (AdwApplication docs, "Shortcuts
+// Dialog"). It lists every shortcut the app has; a test in
+// `dialogs/shortcuts.rs` checks the review and editor keys against the code.
+Adw.ShortcutsDialog shortcuts_dialog {
+  Adw.ShortcutsSection {
+    title: _("General");
+
+    Adw.ShortcutsItem {
+      title: _("Main Menu");
+      subtitle: _("On the deck list");
+      accelerator: "F10";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Keyboard Shortcuts");
+      accelerator: "<Control>question";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Preferences");
+      accelerator: "<Control>comma";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Search All Cards");
+      accelerator: "<Control>f";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("New Deck or Card");
+      accelerator: "<Control>n";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Go Back");
+      accelerator: "Escape <Alt>Left";
+    }
+  }
+
+  Adw.ShortcutsSection {
+    title: _("Studying");
+
+    Adw.ShortcutsItem {
+      title: _("Show Answer");
+      accelerator: "space Return";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Fail");
+      accelerator: "1";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Pass");
+      accelerator: "2 space";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Edit Card");
+      accelerator: "e";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Card Information");
+      accelerator: "i";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Suspend Card");
+      accelerator: "s";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Delete Card");
+      accelerator: "Delete";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Undo Last Answer");
+      accelerator: "<Control>z";
+    }
+  }
+
+  Adw.ShortcutsSection {
+    title: _("Card Editor");
+
+    Adw.ShortcutsItem {
+      title: _("Save");
+      accelerator: "<Control>Return";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Save and Add Another");
+      accelerator: "<Control><Shift>Return";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Bold");
+      accelerator: "<Control>b";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Italic");
+      accelerator: "<Control>i";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Close");
+      accelerator: "Escape";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Previous or Next Suggested Tag");
+      subtitle: _("While tags are suggested");
+      accelerator: "Up Down";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Take the Highlighted or First Tag");
+      subtitle: _("While tags are suggested");
+      accelerator: "Tab";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Take the Highlighted Tag");
+      subtitle: _("While tags are suggested");
+      accelerator: "Return";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Close the Suggestions");
+      subtitle: _("While tags are suggested");
+      accelerator: "Escape";
+    }
+  }
+
+  Adw.ShortcutsSection {
+    title: _("All Cards");
+
+    Adw.ShortcutsItem {
+      title: _("Go to the Card List");
+      subtitle: _("From the search field");
+      accelerator: "Down";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Open Card");
+      accelerator: "Return";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Select All");
+      accelerator: "<Control>a";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Select or Deselect Card");
+      subtitle: _("While selecting cards");
+      accelerator: "space";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Stop Selecting, Then Clear the Search");
+      accelerator: "Escape";
+    }
+  }
+
+  Adw.ShortcutsSection {
+    title: _("Statistics Charts");
+
+    Adw.ShortcutsItem {
+      title: _("Previous or Next Day");
+      accelerator: "Left Right";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("First or Last Day");
+      accelerator: "Home End";
+    }
+  }
+}

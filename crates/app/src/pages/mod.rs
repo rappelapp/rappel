@@ -13,4 +13,6 @@ pub use deck_page::DeckPage;
 pub use decks_page::DecksPage;
 pub use recovery_page::{Recovered, RecoveryPage};
 pub use review_page::ReviewPage;
+#[cfg(test)]
+pub(crate) use review_page::key_triggers as review_key_triggers;
 pub use stats_page::StatsPage;

@@ -9,7 +9,7 @@ A native GNOME flashcard app. Two grades only (Fail and Pass), Markdown cards wi
 You need:
 
 - Rust 1.92 or newer (`rustup`)
-- GTK ≥ 4.14, libadwaita ≥ 1.6 and GtkSourceView ≥ 5.10 development files, and
+- GTK ≥ 4.20, libadwaita ≥ 1.8 (ADR 0039) and GtkSourceView ≥ 5.10 development files, and
   GtkSourceView's introspection data (Blueprint needs it)
   (Fedora: `gtk4-devel libadwaita-devel gtksourceview5-devel`;
   Debian/Ubuntu: `libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev gir1.2-gtksource-5`)
