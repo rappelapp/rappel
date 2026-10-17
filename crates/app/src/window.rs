@@ -42,7 +42,7 @@ mod imp {
         #[template_child]
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,
         #[template_child]
-        pub stack: TemplateChild<gtk::Stack>,
+        pub stack: TemplateChild<adw::ViewStack>,
         #[template_child]
         pub navigation_view: TemplateChild<adw::NavigationView>,
         #[template_child]
