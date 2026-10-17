@@ -6,8 +6,9 @@
 //!
 //! Keys, in the bubble phase so a focused button keeps its own Space and
 //! Enter: Space or Enter shows the answer; then 1 is Fail, 2 or Space is
-//! Pass; E edits the card at any time. The focus rests on the card between
-//! answers.
+//! Pass; E edits the card at any time; Ctrl+Z (and the header's Undo button)
+//! takes back the last answer, repeatedly down to the session's first, also
+//! from the summary (ADR 0030). The focus rests on the card between answers.
 //!
 //! Editing opens the deck page's `CardEditor` on the card on screen. A
 //! save re-renders the card in place (the state of the reveal, the timers
@@ -29,6 +30,8 @@ use crate::dialogs::card_editor::{CardEditor, Saved};
 use crate::render::{back_shown, clear, fill, shown_part};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
+use crate::ui::toast::{info_toast, show_toast_from};
+use crate::ui::undo::{self, UndoFailure};
 use crate::ui::{init_once, nav};
 
 type OnSaved = dyn Fn(Saved);
@@ -117,6 +120,7 @@ mod imp {
             });
             klass.install_action("review.done", None, |page, _, _| page.done());
             klass.install_action("review.edit", None, |page, _, _| page.edit());
+            klass.install_action("review.undo", None, |page, _, _| page.undo());
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -171,6 +175,8 @@ enum Key {
     Pass,
     /// E: edit the card.
     Edit,
+    /// Ctrl+Z: take back the last answer.
+    Undo,
 }
 
 /// What a key makes the page do.
@@ -179,16 +185,18 @@ enum Act {
     Reveal,
     Grade(Grade),
     Edit,
+    Undo,
 }
 
 /// What `key` does when the answer is (not) `revealed`. `settled` says
 /// whether [`KEY_SETTLE`] has passed since the reveal. Holding Space a
 /// moment too long repeats it: a reveal must not become a Pass by itself,
-/// since a grade cannot be undone yet. E is never delayed: it grades
-/// nothing.
+/// even though a grade can be undone. E and Ctrl+Z are never delayed: they
+/// grade nothing.
 fn key_action(key: Key, revealed: bool, settled: bool) -> Option<Act> {
     match (key, revealed) {
         (Key::Edit, _) => Some(Act::Edit),
+        (Key::Undo, _) => Some(Act::Undo),
         (Key::Space | Key::Enter, false) => Some(Act::Reveal),
         (Key::Space | Key::Pass | Key::Fail, true) if !settled => None,
         (Key::Space | Key::Pass, true) => Some(Act::Grade(Grade::Pass)),
@@ -237,6 +245,7 @@ impl ReviewPage {
             ("KP_2", Key::Pass),
             ("e", Key::Edit),
             ("<Shift>e", Key::Edit),
+            ("<Control>z", Key::Undo),
         ] {
             let action = gtk::CallbackAction::new(move |widget, _| {
                 widget
@@ -263,7 +272,15 @@ impl ReviewPage {
 
     fn key(&self, key: Key) -> glib::Propagation {
         let imp = self.imp();
-        if imp.current.borrow().is_none() || imp.editing.get() {
+        if imp.editing.get() {
+            return glib::Propagation::Proceed;
+        }
+        // Also on the summary, where no card is on screen.
+        if key == Key::Undo {
+            self.undo();
+            return glib::Propagation::Stop;
+        }
+        if imp.current.borrow().is_none() {
             return glib::Propagation::Proceed;
         }
         let settled = imp
@@ -274,6 +291,7 @@ impl ReviewPage {
             Some(Act::Reveal) => self.reveal(),
             Some(Act::Grade(grade)) => self.grade(grade),
             Some(Act::Edit) => self.edit(),
+            Some(Act::Undo) => self.undo(),
             None => {}
         }
         glib::Propagation::Stop
@@ -481,6 +499,62 @@ impl ReviewPage {
         self.action_set_enabled("review.reveal", reveal);
         self.action_set_enabled("review.fail", grade);
         self.action_set_enabled("review.pass", grade);
+        self.update_undo();
+    }
+
+    /// Enables Undo while the session has an answer to take back.
+    fn update_undo(&self) {
+        let can_undo = self
+            .imp()
+            .session
+            .borrow()
+            .as_ref()
+            .is_some_and(|s| s.last_answer().is_some());
+        self.action_set_enabled("review.undo", can_undo);
+    }
+
+    /// Takes back the last answer of the session: the log first, then the
+    /// session, then the card is shown again as new (front side, timer
+    /// restarted), whether a card or the summary was on screen.
+    fn undo(&self) {
+        let imp = self.imp();
+        let Some(state) = imp.state.get() else {
+            return;
+        };
+        let last = imp
+            .session
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.last_answer().map(|(c, e)| (c.to_owned(), e.to_owned())));
+        let Some((card_id, entry_id)) = last else {
+            return;
+        };
+        match state.undo(&card_id, &entry_id, rappel_core::time::now_ms()) {
+            Ok(_) => {
+                if let Some(session) = imp.session.borrow_mut().as_mut() {
+                    session.undo_last();
+                }
+                imp.current.replace(None);
+                self.show_next();
+            }
+            Err(err) => match undo::failure(&err) {
+                UndoFailure::Stale => {
+                    // Older answers are undone only after this one, so none
+                    // of them can be now.
+                    if let Some(session) = imp.session.borrow_mut().as_mut() {
+                        session.forget_answers();
+                    }
+                    self.update_undo();
+                    // The button may have had the focus and is now off:
+                    // put it where the page's keys work.
+                    self.park_focus();
+                    show_toast_from(self, info_toast("This answer can no longer be undone"));
+                }
+                UndoFailure::Failed => {
+                    self.error_toast(&format!("The answer could not be undone: {err}"));
+                }
+            },
+        }
     }
 
     /// Records the answer for the card on screen and shows the next one.
@@ -499,10 +573,13 @@ impl ReviewPage {
         };
         let duration = capped(imp.shown_at.get().map_or(Duration::ZERO, |t| t.elapsed()));
         let now = rappel_core::time::now_ms();
-        if let Err(err) = state.record_review(&id, grade, duration, now) {
-            self.error_toast(&format!("The answer could not be saved: {err}"));
-            return;
-        }
+        let event = match state.record_review(&id, grade, duration, now) {
+            Ok(event) => event,
+            Err(err) => {
+                self.error_toast(&format!("The answer could not be saved: {err}"));
+                return;
+            }
+        };
         let card_state = state.card_state(&id).unwrap_or_else(|err| {
             // The answer is saved; without its new state the card just
             // does not come back in this session.
@@ -510,7 +587,7 @@ impl ReviewPage {
             CardState::New
         });
         if let Some(session) = imp.session.borrow_mut().as_mut() {
-            session.graded(&id, grade, duration, &card_state);
+            session.graded(&id, &event.id, grade, duration, &card_state);
         }
         imp.current.replace(None);
         self.show_next();
@@ -599,6 +676,8 @@ fn duration_text(time: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    use rappel_core::domain::EventKind;
+
     use super::*;
 
     #[test]
@@ -648,6 +727,164 @@ mod tests {
         for (revealed, settled) in [(false, false), (true, false), (true, true)] {
             assert_eq!(key_action(Edit, revealed, settled), Some(Act::Edit));
         }
+        // Ctrl+Z too, and it grades nothing, so key repeat does no harm.
+        for (revealed, settled) in [(false, false), (true, false), (true, true)] {
+            assert_eq!(key_action(Key::Undo, revealed, settled), Some(Act::Undo));
+        }
+    }
+
+    /// A page over a deck of `n` cards that are all due, with the app state.
+    fn page_of(n: usize) -> (tempfile::TempDir, AppState, ReviewPage, Vec<String>) {
+        adw::init().unwrap();
+        gtk::gio::resources_register_include!("rappel.gresource").unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let state = AppState::open(tmp.path().join("data")).unwrap();
+        let deck = state.create_deck("Deck").unwrap();
+        let now = rappel_core::time::now_ms();
+        let day = 24 * 60 * 60 * 1000;
+        let ids: Vec<String> = (0..n)
+            .map(|i| {
+                let id = state
+                    .add_card(&deck.id, &format!("front {i}"), "back")
+                    .unwrap()
+                    .id;
+                // Two Passes long ago leave the card in review and due now.
+                for at in [now - 60 * day, now - 60 * day + 11 * 60 * 1000] {
+                    state
+                        .record_review(&id, Grade::Pass, Duration::ZERO, at)
+                        .unwrap();
+                }
+                id
+            })
+            .collect();
+        let page = ReviewPage::new(state.clone(), deck, |_| {}).unwrap();
+        (tmp, state, page, ids)
+    }
+
+    /// Reveals and passes the card on screen.
+    fn pass(page: &ReviewPage) {
+        page.reveal();
+        page.grade(Grade::Pass);
+    }
+
+    fn current(page: &ReviewPage) -> Option<String> {
+        page.imp().current.borrow().clone()
+    }
+
+    /// The text of the first label under `widget`, depth first.
+    fn first_label(widget: &gtk::Widget) -> Option<String> {
+        if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+            return Some(label.text().to_string());
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            if let Some(text) = first_label(&c) {
+                return Some(text);
+            }
+            child = c.next_sibling();
+        }
+        None
+    }
+
+    fn can_undo(page: &ReviewPage) -> bool {
+        page.imp()
+            .session
+            .borrow()
+            .as_ref()
+            .is_some_and(|s| s.last_answer().is_some())
+    }
+
+    fn undo_entries(state: &AppState, card: &str) -> usize {
+        let log = state.review_events(card).unwrap();
+        log.iter()
+            .filter(|e| matches!(e.kind, EventKind::Undo { .. }))
+            .count()
+    }
+
+    #[test]
+    fn undo_goes_back_to_the_first_answer() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(3);
+            let before = state.card_state(&ids[0]).unwrap();
+            assert!(!can_undo(&page));
+            pass(&page);
+            pass(&page);
+            assert_eq!(current(&page).as_deref(), Some(ids[2].as_str()));
+            assert!(can_undo(&page));
+            page.undo();
+            assert_eq!(current(&page).as_deref(), Some(ids[1].as_str()));
+            page.undo();
+            // The first card is back: front side, nothing revealed.
+            assert_eq!(current(&page).as_deref(), Some(ids[0].as_str()));
+            assert!(!page.imp().revealed.get());
+            assert_eq!(page.imp().window_title.subtitle(), "3 left");
+            assert!(!can_undo(&page));
+            assert_eq!(state.card_state(&ids[0]).unwrap(), before);
+        });
+    }
+
+    #[test]
+    fn undo_from_the_summary_brings_the_last_card_back() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(2);
+            pass(&page);
+            pass(&page);
+            let imp = page.imp();
+            assert_eq!(imp.stack.visible_child_name().as_deref(), Some("summary"));
+            assert!(current(&page).is_none());
+            page.undo();
+            assert_eq!(imp.stack.visible_child_name().as_deref(), Some("card"));
+            assert_eq!(current(&page).as_deref(), Some(ids[1].as_str()));
+            let summary = imp.session.borrow().as_ref().unwrap().summary();
+            assert_eq!((summary.cards, summary.answers), (1, 1));
+            assert_eq!(undo_entries(&state, &ids[1]), 1);
+        });
+    }
+
+    #[test]
+    fn undo_shows_the_card_as_edited_meanwhile() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(2);
+            pass(&page);
+            state.edit_card(&ids[0], "edited front", "back").unwrap();
+            page.undo();
+            let front = first_label(page.imp().front_box.upcast_ref());
+            assert_eq!(front.as_deref(), Some("edited front"));
+        });
+    }
+
+    #[test]
+    fn rapid_repeated_undo_stops_at_the_first_answer() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(3);
+            for _ in 0..3 {
+                pass(&page);
+            }
+            for _ in 0..5 {
+                page.undo();
+            }
+            assert!(!can_undo(&page));
+            assert_eq!(current(&page).as_deref(), Some(ids[0].as_str()));
+            let undone: usize = ids.iter().map(|id| undo_entries(&state, id)).sum();
+            assert_eq!(undone, 3, "one undo per answer, no more");
+        });
+    }
+
+    #[test]
+    fn an_answer_that_is_no_longer_the_latest_is_not_undone() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(2);
+            pass(&page);
+            // Something else (an import, say) made a newer entry.
+            state
+                .reset_card(&ids[0], rappel_core::time::now_ms())
+                .unwrap();
+            let log = state.review_events(&ids[0]).unwrap().len();
+            page.undo();
+            assert_eq!(state.review_events(&ids[0]).unwrap().len(), log);
+            assert_eq!(current(&page).as_deref(), Some(ids[1].as_str()));
+            assert!(!can_undo(&page));
+        });
     }
 
     #[test]

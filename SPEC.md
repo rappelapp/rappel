@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4; tags still to come), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), and, in `rappel-core` only, undo and reset in the review log (ADR 0028), tags (ADR 0029) and export format version 2 (§4.1); their UI is still to come.
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4; tags still to come), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), and, in `rappel-core` only, tags (ADR 0029) and export format version 2 (§4.1); the tags UI is still to come.
 
 ---
 
@@ -135,7 +135,8 @@ Storage rules:
 - Ctrl+Enter saves, Ctrl+Shift+Enter saves and starts a new card in the same deck.
 
 ### 4.5 Review
-- Undo last grade (Ctrl+Z) via an `undoes` event. *Core done (`Store::undo`, ADR 0028); the key and the Undo toast come with the UI slice.*
+- Undo last grade (Ctrl+Z, and an Undo button in the header) via an `undoes` event, repeatable back to the session's first grade, also from the summary; not available after leaving the page. *Done (ADR 0028, 0030).*
+- Reset Progress in each card's menu on the deck page, with an Undo toast. *Done (ADR 0030, #38).*
 - Daily limits from settings. New cards interleaved with reviews.
 - Card actions during review: Edit (E), Suspend, Delete (with confirmation).
 - Session summary at the end: cards reviewed, pass rate, time spent.

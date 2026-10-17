@@ -122,8 +122,26 @@ impl Summary {
     }
 }
 
+/// What one [`Session::graded`] changed, kept so [`Session::undo_last`] can
+/// put it back exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Answer {
+    card_id: String,
+    /// The log entry the answer was recorded as.
+    entry_id: String,
+    /// Where the card was in the queue, if it was there.
+    queue_pos: Option<usize>,
+    /// The step the card was waiting in, if it was there.
+    removed_step: Option<Due>,
+    /// Whether the card was answered for the first time in this session.
+    newly_seen: bool,
+    grade: Grade,
+    /// The capped duration added to the summary.
+    time: Duration,
+}
+
 /// One study session of one deck.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     /// Due reviews and new cards, in showing order.
     queue: std::collections::VecDeque<String>,
@@ -131,6 +149,10 @@ pub struct Session {
     steps: Vec<Due>,
     seen: HashSet<String>,
     summary: Summary,
+    /// The answers that can still be undone, oldest first.
+    answers: Vec<Answer>,
+    /// A card an undo brought back: it is shown next, whatever is due.
+    pinned: Option<String>,
 }
 
 impl Session {
@@ -143,6 +165,8 @@ impl Session {
             steps: input.steps,
             seen: HashSet::new(),
             summary: Summary::default(),
+            answers: Vec::new(),
+            pinned: None,
         };
         session.sort_steps();
         session
@@ -152,6 +176,9 @@ impl Session {
     /// stays the answer until [`Self::graded`] is called for it.
     #[must_use]
     pub fn next(&self, now: i64) -> Option<&str> {
+        if let Some(card) = &self.pinned {
+            return Some(card);
+        }
         let step = self.steps.first();
         if let Some(step) = step.filter(|s| s.due_at <= now) {
             return Some(&step.card_id);
@@ -171,11 +198,27 @@ impl Session {
     }
 
     /// Records that `card_id` was answered with `grade` after `duration`,
-    /// leading to `state` (as stored by `record_review`). A card left in
-    /// the step comes back later in the session.
-    pub fn graded(&mut self, card_id: &str, grade: Grade, duration: Duration, state: &CardState) {
+    /// leading to `state` (as stored by `record_review`, which made log
+    /// entry `entry_id`). A card left in the step comes back later in the
+    /// session. The answer can be taken back with [`Self::undo_last`].
+    pub fn graded(
+        &mut self,
+        card_id: &str,
+        entry_id: &str,
+        grade: Grade,
+        duration: Duration,
+        state: &CardState,
+    ) {
+        let queue_pos = self.queue.iter().position(|id| id == card_id);
+        let removed_step = self
+            .steps
+            .iter()
+            .position(|d| d.card_id == card_id)
+            .map(|i| self.steps.remove(i));
         self.queue.retain(|id| id != card_id);
-        self.steps.retain(|d| d.card_id != card_id);
+        if self.pinned.as_deref() == Some(card_id) {
+            self.pinned = None;
+        }
         if let CardState::Scheduled(s) = state
             && matches!(s.phase, Phase::Learning | Phase::Relearning)
         {
@@ -185,19 +228,77 @@ impl Session {
             });
             self.sort_steps();
         }
-        if self.seen.insert(card_id.to_owned()) {
+        let newly_seen = self.seen.insert(card_id.to_owned());
+        if newly_seen {
             self.summary.cards += 1;
         }
         self.summary.answers += 1;
         if grade == Grade::Pass {
             self.summary.passes += 1;
         }
-        self.summary.time += capped(duration);
+        let time = capped(duration);
+        self.summary.time += time;
+        self.answers.push(Answer {
+            card_id: card_id.to_owned(),
+            entry_id: entry_id.to_owned(),
+            queue_pos,
+            removed_step,
+            newly_seen,
+            grade,
+            time,
+        });
+    }
+
+    /// The card and log entry of the answer [`Self::undo_last`] would take
+    /// back, or `None` when there is nothing to undo.
+    #[must_use]
+    pub fn last_answer(&self) -> Option<(&str, &str)> {
+        self.answers
+            .last()
+            .map(|a| (a.card_id.as_str(), a.entry_id.as_str()))
+    }
+
+    /// Takes back the newest answer, after the caller undid it in the log:
+    /// the card returns where it was, the summary loses it, and the card is
+    /// the next one shown. Returns its id; `None` when there is nothing to
+    /// undo. Answers are undone newest first, so each inverse is exact.
+    pub fn undo_last(&mut self) -> Option<String> {
+        let answer = self.answers.pop()?;
+        let id = answer.card_id;
+        // The step an answer into the learning steps added.
+        self.steps.retain(|d| d.card_id != id);
+        if let Some(pos) = answer.queue_pos {
+            self.queue.insert(pos.min(self.queue.len()), id.clone());
+        }
+        if let Some(step) = answer.removed_step {
+            self.steps.push(step);
+            self.sort_steps();
+        }
+        if answer.newly_seen {
+            self.seen.remove(&id);
+            self.summary.cards -= 1;
+        }
+        self.summary.answers -= 1;
+        if answer.grade == Grade::Pass {
+            self.summary.passes -= 1;
+        }
+        self.summary.time = self.summary.time.saturating_sub(answer.time);
+        self.pinned = Some(id.clone());
+        Some(id)
+    }
+
+    /// Forgets every answer that could be undone, e.g. once the log says
+    /// the newest can no longer be.
+    pub fn forget_answers(&mut self) {
+        self.answers.clear();
     }
 
     /// Drops `card_id` from the session without counting it as answered,
     /// e.g. when it could not be read.
     pub fn skip(&mut self, card_id: &str) {
+        if self.pinned.as_deref() == Some(card_id) {
+            self.pinned = None;
+        }
         self.queue.retain(|id| id != card_id);
         self.steps.retain(|d| d.card_id != card_id);
     }

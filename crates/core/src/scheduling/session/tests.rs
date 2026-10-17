@@ -2,7 +2,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::domain::Schedule;
-use crate::test_support::T0;
+use crate::test_support::{DAY_MS, T0};
 
 const MIN: i64 = 60 * 1000;
 
@@ -40,7 +40,7 @@ fn run(
     while let Some(id) = session.next(now).map(str::to_owned) {
         assert!(shown.len() < 1_000, "the session does not end");
         let (grade, state) = answer(&id);
-        session.graded(&id, grade, Duration::from_secs(1), &state);
+        session.graded(&id, "e", grade, Duration::from_secs(1), &state);
         shown.push(id);
     }
     shown
@@ -152,6 +152,7 @@ fn early_showing_is_at_most_twenty_minutes_and_otherwise_ends() {
     assert_eq!(session.next(T0), Some("near"));
     session.graded(
         "near",
+        "e",
         Grade::Pass,
         Duration::ZERO,
         &state(Phase::Review, T0 + 86_400_000),
@@ -173,6 +174,7 @@ fn a_failed_review_relearns_in_the_session() {
     let mut session = Session::new(input);
     session.graded(
         "r1",
+        "e",
         Grade::Fail,
         Duration::ZERO,
         &state(Phase::Relearning, T0 + 10 * MIN),
@@ -184,6 +186,7 @@ fn a_failed_review_relearns_in_the_session() {
     );
     session.graded(
         "r1",
+        "e",
         Grade::Pass,
         Duration::ZERO,
         &state(Phase::Review, T0 + 86_400_000),
@@ -198,14 +201,15 @@ fn summary_counts_answers_passes_and_capped_time() {
         ..StudyInput::default()
     });
     let review = state(Phase::Review, T0 + 86_400_000);
-    session.graded("a", Grade::Pass, Duration::from_secs(10), &review);
+    session.graded("a", "e", Grade::Pass, Duration::from_secs(10), &review);
     session.graded(
         "b",
+        "e",
         Grade::Fail,
         Duration::from_secs(600),
         &state(Phase::Relearning, T0),
     );
-    session.graded("b", Grade::Pass, Duration::from_millis(2_500), &review);
+    session.graded("b", "e", Grade::Pass, Duration::from_millis(2_500), &review);
     let summary = session.summary();
     assert_eq!(summary.cards, 2);
     assert_eq!(summary.answers, 3);
@@ -239,4 +243,161 @@ fn a_skipped_card_is_dropped_and_not_counted() {
     assert_eq!(session.next(T0), Some("b"));
     assert_eq!(session.remaining(), 1);
     assert_eq!(session.summary(), Summary::default());
+}
+
+/// A session of reviews `a..` and new cards, with every card still to come.
+fn session_of(reviews: &[&str], new: &[&str]) -> Session {
+    Session::new(StudyInput {
+        reviews: reviews.iter().map(|id| due(id, T0)).collect(),
+        new: ids(new),
+        ..StudyInput::default()
+    })
+}
+
+#[test]
+fn undoing_the_only_answer_gives_back_the_session() {
+    let fresh = session_of(&["a", "b"], &["n"]);
+    for (grade, phase) in [
+        (Grade::Pass, Phase::Review),
+        (Grade::Fail, Phase::Relearning),
+    ] {
+        let mut session = fresh.clone();
+        let id = session.next(T0).unwrap().to_owned();
+        session.graded(
+            &id,
+            "e1",
+            grade,
+            Duration::from_secs(5),
+            &state(phase, T0 + MIN),
+        );
+        assert_eq!(session.last_answer(), Some((id.as_str(), "e1")));
+        assert_eq!(session.undo_last().as_deref(), Some(id.as_str()));
+        // Only the pin differs from the session before the answer.
+        assert_eq!(session.next(T0), Some(id.as_str()));
+        session.pinned = None;
+        assert_eq!(session, fresh);
+    }
+}
+
+#[test]
+fn undo_goes_back_to_the_first_answer_and_then_stops() {
+    let mut session = session_of(&["a", "b", "c"], &[]);
+    let review = state(Phase::Review, T0 + 86_400_000);
+    for (id, entry) in [("a", "e1"), ("b", "e2"), ("c", "e3")] {
+        session.graded(id, entry, Grade::Pass, Duration::from_secs(1), &review);
+    }
+    assert_eq!(session.next(T0), None);
+    for (id, entry) in [("c", "e3"), ("b", "e2"), ("a", "e1")] {
+        assert_eq!(session.last_answer(), Some((id, entry)));
+        assert_eq!(session.undo_last().as_deref(), Some(id));
+        assert_eq!(session.next(T0), Some(id));
+    }
+    // Repeating Ctrl+Z past the first answer does nothing.
+    assert_eq!(session.last_answer(), None);
+    assert_eq!(session.undo_last(), None);
+    assert_eq!(session.summary(), Summary::default());
+    assert_eq!(session.remaining(), 3);
+}
+
+#[test]
+fn an_undone_card_is_shown_before_a_step_card_that_became_due() {
+    let mut session = session_of(&["a", "b"], &[]);
+    session.graded(
+        "a",
+        "e1",
+        Grade::Fail,
+        Duration::ZERO,
+        &state(Phase::Relearning, T0 + MIN),
+    );
+    session.graded(
+        "b",
+        "e2",
+        Grade::Pass,
+        Duration::ZERO,
+        &state(Phase::Review, T0 + DAY_MS),
+    );
+    // "a" is in the step and due; undoing "b" still shows "b".
+    assert_eq!(session.next(T0 + 2 * MIN), Some("a"));
+    session.undo_last();
+    assert_eq!(session.next(T0 + 2 * MIN), Some("b"));
+    // Answering it clears the pin.
+    session.graded(
+        "b",
+        "e3",
+        Grade::Pass,
+        Duration::ZERO,
+        &state(Phase::Review, T0 + DAY_MS),
+    );
+    assert_eq!(session.next(T0 + 2 * MIN), Some("a"));
+}
+
+#[test]
+fn undoing_a_second_answer_of_a_step_card_puts_it_back_in_the_step() {
+    let mut session = session_of(&["a"], &[]);
+    let step = state(Phase::Relearning, T0 + 10 * MIN);
+    session.graded("a", "e1", Grade::Fail, Duration::ZERO, &step);
+    let after_first = session.clone();
+    session.graded(
+        "a",
+        "e2",
+        Grade::Fail,
+        Duration::ZERO,
+        &state(Phase::Relearning, T0 + 20 * MIN),
+    );
+    session.undo_last();
+    session.pinned = None;
+    session.answers = after_first.answers.clone();
+    assert_eq!(session, after_first);
+}
+
+#[test]
+fn forgetting_the_answers_turns_undo_off_and_keeps_the_rest() {
+    let mut session = session_of(&["a", "b"], &[]);
+    session.graded(
+        "a",
+        "e1",
+        Grade::Pass,
+        Duration::ZERO,
+        &state(Phase::Review, T0 + DAY_MS),
+    );
+    session.forget_answers();
+    assert_eq!(session.last_answer(), None);
+    assert_eq!(session.undo_last(), None);
+    assert_eq!(session.summary().answers, 1);
+}
+
+proptest! {
+    /// Any run of answers and undos leaves the session equal to one that
+    /// only got the answers that survive.
+    #[test]
+    fn undos_leave_the_surviving_answers(
+        ops in proptest::collection::vec((any::<bool>(), any::<bool>(), any::<bool>()), 0..40),
+    ) {
+        let make = || session_of(&["r1", "r2", "r3", "r4"], &["n1", "n2"]);
+        let (mut session, mut plain) = (make(), make());
+        let mut kept: Vec<(String, Grade, Phase)> = Vec::new();
+        for (i, (undo, pass, learning)) in ops.into_iter().enumerate() {
+            if undo {
+                if let Some(id) = session.undo_last() {
+                    kept.pop();
+                    prop_assert!(!id.is_empty());
+                }
+                continue;
+            }
+            let Some(id) = session.next(T0).map(str::to_owned) else { continue };
+            let grade = if pass { Grade::Pass } else { Grade::Fail };
+            let phase = if learning { Phase::Relearning } else { Phase::Review };
+            let st = state(phase, T0 + MIN + i64::try_from(i).unwrap());
+            session.graded(&id, &format!("e{i}"), grade, Duration::from_secs(2), &st);
+            kept.push((id, grade, phase));
+        }
+        // Replaying the surviving answers on a plain session, in order,
+        // each time answering the card the first session had on screen.
+        for (i, (id, grade, phase)) in kept.iter().enumerate() {
+            let st = state(*phase, T0 + MIN + i64::try_from(i).unwrap());
+            plain.graded(id, "x", *grade, Duration::from_secs(2), &st);
+        }
+        prop_assert_eq!(session.summary(), plain.summary());
+        prop_assert_eq!(session.remaining(), plain.remaining());
+    }
 }

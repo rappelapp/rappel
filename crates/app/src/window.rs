@@ -245,6 +245,19 @@ impl RappelWindow {
         ));
     }
 
+    /// After a reset or its undo: the counts of every open deck page and of
+    /// the deck list.
+    pub fn study_changed(&self) {
+        let imp = self.imp();
+        let stack = imp.navigation_view.navigation_stack();
+        for page in (0..stack.n_items()).filter_map(|i| stack.item(i)) {
+            if let Some(deck) = page.downcast_ref::<DeckPage>() {
+                deck.update_study();
+            }
+        }
+        imp.decks_page.refresh();
+    }
+
     /// After an import: reads the decks and every open deck page's cards
     /// again. A study session keeps the cards it started with.
     pub fn data_changed(&self) {

@@ -1,5 +1,5 @@
 //! One deck's page: its cards in a `GtkListView`, or an empty state, with
-//! add, edit and delete (undone from a toast). Layout in
+//! add, edit, delete and reset progress (each undone from a toast). Layout in
 //! `data/deck_page.blp` (ADR 0013).
 //!
 //! The subtitle and the Study button follow what there is to study. A
@@ -23,7 +23,8 @@ use crate::dialogs::card_editor::{CardEditor, Saved};
 use crate::pages::ReviewPage;
 use crate::state::AppState;
 use crate::ui::focus::index_after_removal;
-use crate::ui::toast::{log_failure, show_error, show_toast_from, undo_toast};
+use crate::ui::toast::{info_toast, log_failure, show_error, show_toast_from, undo_toast};
+use crate::ui::undo::{self, UndoFailure};
 use crate::ui::{init_once, nav};
 use crate::widgets::{CardObject, CardRow};
 use crate::window::RappelWindow;
@@ -81,6 +82,7 @@ mod imp {
             // Activated by the card rows' menus with the card id.
             rows::install_id_action(klass, "deck.edit-card", super::DeckPage::edit);
             rows::install_id_action(klass, "deck.delete-card", super::DeckPage::delete);
+            rows::install_id_action(klass, "deck.reset-card", super::DeckPage::reset);
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -152,7 +154,7 @@ impl DeckPage {
 
     /// Recomputes what there is to study: the subtitle and whether Study
     /// is enabled.
-    fn update_study(&self) {
+    pub fn update_study(&self) {
         let imp = self.imp();
         let (Some(state), Some(deck)) = (imp.state.get(), imp.deck.get()) else {
             return;
@@ -333,6 +335,34 @@ impl DeckPage {
         show_toast_from(self, toast);
     }
 
+    /// Makes the card new again at once, keeping its history; the toast's
+    /// Undo cancels the reset (ADR 0028, 0030).
+    fn reset(&self, id: &str) {
+        let Some(state) = self.imp().state.get() else {
+            return;
+        };
+        let entry = match state.reset_card(id, rappel_core::time::now_ms()) {
+            Ok(entry) => entry,
+            Err(err) => {
+                self.error_toast(&format!("The progress could not be reset: {err}"));
+                return;
+            }
+        };
+        let window = self.root().and_downcast::<RappelWindow>();
+        counts_changed(self, window.as_ref());
+
+        // As for a delete: Undo must work from another page, so the closure
+        // keeps the state and weak references, not the page.
+        let (card_id, entry_id) = (id.to_owned(), entry.id);
+        let state = state.clone();
+        let page = self.downgrade();
+        let window = window.map(|w| w.downgrade());
+        let toast = undo_toast("Progress reset", move || {
+            undo_reset(&state, &card_id, &entry_id, &page, window.as_ref());
+        });
+        show_toast_from(self, toast);
+    }
+
     /// Puts an undeleted card back in its place and focuses it, if it is
     /// a card of this deck. Harmless when it is already there.
     pub fn restored(&self, card: &Card) {
@@ -406,6 +436,58 @@ fn position_in(store: &gio::ListStore, id: &str) -> Option<u32> {
             .and_downcast::<CardObject>()
             .is_some_and(|c| c.card().id == id)
     })
+}
+
+/// Updates the counts after a reset or its undo: the deck's subtitle and
+/// Study button, and the deck list. Through `window` when there is one, since
+/// the deck may have been reopened in a new page.
+fn counts_changed(page: &DeckPage, window: Option<&RappelWindow>) {
+    match window {
+        Some(window) => window.study_changed(),
+        None => page.update_study(),
+    }
+}
+
+/// The Undo of a reset: cancels reset entry `entry_id` of card `card_id`.
+/// If the card was studied since, the entry is no longer its latest and
+/// nothing changes but a short message.
+fn undo_reset(
+    state: &AppState,
+    card_id: &str,
+    entry_id: &str,
+    page: &glib::WeakRef<DeckPage>,
+    window: Option<&glib::WeakRef<RappelWindow>>,
+) {
+    let window = window.and_then(glib::WeakRef::upgrade);
+    match state.undo(card_id, entry_id, rappel_core::time::now_ms()) {
+        Ok(_) => {
+            if let Some(page) = page.upgrade() {
+                counts_changed(&page, window.as_ref());
+            } else if let Some(window) = &window {
+                window.study_changed();
+            }
+        }
+        Err(err) => {
+            let (what, message) = match undo::failure(&err) {
+                UndoFailure::Stale => {
+                    // Not an error: the card moved on, and nothing was written.
+                    if let Some(window) = &window {
+                        show_toast_from(window, info_toast("The reset can no longer be undone"));
+                    }
+                    return;
+                }
+                UndoFailure::Failed => (
+                    "a card operation",
+                    format!("The reset could not be undone: {err}"),
+                ),
+            };
+            if let Some(window) = window {
+                show_error(&window, what, &message);
+            } else {
+                log_failure(what, &message);
+            }
+        }
+    }
 }
 
 /// The Undo of a card delete: brings card `id` back, on `page` if it is
@@ -518,6 +600,7 @@ fn row_factory() -> gtk::SignalListItemFactory {
 
 #[cfg(test)]
 mod tests {
+    use rappel_core::domain::Grade;
     use rappel_core::scheduling::Due;
 
     use super::*;
@@ -597,5 +680,77 @@ mod tests {
         assert_eq!(study_subtitle(&input), "3 due · 20 new");
         input.new.clear();
         assert_eq!(study_subtitle(&input), "3 due");
+    }
+
+    /// A page over a deck of `n` cards that are all due.
+    fn page_of(n: usize) -> (tempfile::TempDir, AppState, DeckPage, Vec<String>) {
+        adw::init().unwrap();
+        gio::resources_register_include!("rappel.gresource").unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let state = AppState::open(tmp.path().join("data")).unwrap();
+        let deck = state.create_deck("Deck").unwrap();
+        let now = rappel_core::time::now_ms();
+        let day = 24 * 60 * 60 * 1000;
+        let ids = (0..n)
+            .map(|i| {
+                let id = state
+                    .add_card(&deck.id, &format!("front {i}"), "back")
+                    .unwrap()
+                    .id;
+                for at in [now - 60 * day, now - 60 * day + 11 * 60 * 1000] {
+                    state
+                        .record_review(&id, Grade::Pass, Duration::ZERO, at)
+                        .unwrap();
+                }
+                id
+            })
+            .collect();
+        let page = DeckPage::new(state.clone(), deck).unwrap();
+        (tmp, state, page, ids)
+    }
+
+    #[test]
+    fn a_reset_changes_the_counts_and_its_undo_changes_them_back() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(2);
+            let subtitle = || page.imp().window_title.subtitle().to_string();
+            assert_eq!(subtitle(), "2 due");
+            page.reset(&ids[0]);
+            assert_eq!(subtitle(), "1 due · 1 new");
+            // The reset is the card's latest entry: the toast's Undo works.
+            let entry = state
+                .review_events(&ids[0])
+                .unwrap()
+                .last()
+                .unwrap()
+                .id
+                .clone();
+            undo_reset(&state, &ids[0], &entry, &page.downgrade(), None);
+            assert_eq!(subtitle(), "2 due");
+        });
+    }
+
+    #[test]
+    fn an_undo_after_the_card_was_studied_again_changes_nothing() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(1);
+            page.reset(&ids[0]);
+            let reset = state
+                .review_events(&ids[0])
+                .unwrap()
+                .last()
+                .unwrap()
+                .id
+                .clone();
+            let now = rappel_core::time::now_ms();
+            state
+                .record_review(&ids[0], Grade::Pass, Duration::ZERO, now)
+                .unwrap();
+            let log = state.review_events(&ids[0]).unwrap();
+            let card_state = state.card_state(&ids[0]).unwrap();
+            undo_reset(&state, &ids[0], &reset, &page.downgrade(), None);
+            assert_eq!(state.review_events(&ids[0]).unwrap(), log);
+            assert_eq!(state.card_state(&ids[0]).unwrap(), card_state);
+        });
     }
 }

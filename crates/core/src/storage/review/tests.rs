@@ -764,11 +764,11 @@ mod study {
             } else {
                 Grade::Pass
             };
-            store
+            let event = store
                 .record_review(&card, grade, Duration::from_secs(40), now)
                 .unwrap();
             let state = store.card_state(&card).unwrap();
-            session.graded(&card, grade, Duration::from_secs(40), &state);
+            session.graded(&card, &event.id, grade, Duration::from_secs(40), &state);
             answers += 1;
             now += 40_000;
             assert!(answers < 200, "the session does not end");

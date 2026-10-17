@@ -1,10 +1,10 @@
 //! One row of the deck page's card list: the front on one line and a menu
-//! with Edit and Delete. Layout in `data/card_row.blp`.
+//! with Edit, Reset Progress and Delete. Layout in `data/card_row.blp`.
 //!
 //! Rows are recycled by the `GtkListView`: [`CardRow::bind`] points a row
 //! at another card. As in `DeckRow`, the menu items activate the row's own
-//! `row.edit` / `row.delete` actions, which forward to the page's
-//! `deck.edit-card` / `deck.delete-card` with the bound card's id.
+//! `row.edit` / `row.reset` / `row.delete` actions, which forward to the
+//! page's `deck.edit-card` / `deck.reset-card` / `deck.delete-card` with the bound card's id.
 
 use adw::subclass::prelude::*;
 use gtk::glib;
@@ -39,6 +39,9 @@ mod imp {
             klass.bind_template();
             klass.install_action("row.edit", None, |row, _, _| {
                 row.forward("deck.edit-card");
+            });
+            klass.install_action("row.reset", None, |row, _, _| {
+                row.forward("deck.reset-card");
             });
             klass.install_action("row.delete", None, |row, _, _| {
                 row.forward("deck.delete-card");

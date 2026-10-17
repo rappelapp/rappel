@@ -243,6 +243,28 @@ impl AppState {
             .record_review(card_id, grade, duration, now)
     }
 
+    /// Makes a card new again, keeping its history (see
+    /// [`Store::reset_card`]).
+    pub fn reset_card(&self, card_id: &str, now: i64) -> rappel_core::Result<ReviewEvent> {
+        self.0.store.borrow_mut().reset_card(card_id, now)
+    }
+
+    /// Cancels the card's latest review or reset (see [`Store::undo`]).
+    pub fn undo(
+        &self,
+        card_id: &str,
+        event_id: &str,
+        now: i64,
+    ) -> rappel_core::Result<ReviewEvent> {
+        self.0.store.borrow_mut().undo(card_id, event_id, now)
+    }
+
+    /// A card's whole log (see [`Store::review_events`]); tests check it.
+    #[cfg(test)]
+    pub fn review_events(&self, card_id: &str) -> rappel_core::Result<Vec<ReviewEvent>> {
+        self.0.store.borrow().review_events(card_id)
+    }
+
     /// A card's scheduling state (see [`Store::card_state`]).
     pub fn card_state(&self, card_id: &str) -> rappel_core::Result<CardState> {
         self.0.store.borrow().card_state(card_id)

@@ -12,6 +12,17 @@ template $RappelReviewPage: Adw.NavigationPage {
     Adw.HeaderBar {
       title-widget: Adw.WindowTitle window_title {};
 
+      [start]
+      Gtk.Button undo_button {
+        icon-name: "edit-undo-symbolic";
+        action-name: "review.undo";
+        tooltip-text: _("Undo Last Answer (Ctrl+Z)");
+
+        accessibility {
+          label: _("Undo Last Answer");
+        }
+      }
+
       [end]
       Gtk.Button edit_button {
         visible: false;
