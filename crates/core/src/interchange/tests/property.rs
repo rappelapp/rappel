@@ -17,11 +17,19 @@ enum Op {
         pass: bool,
         clock_delta: i64,
     },
+    /// Undoes the card's latest surviving review or reset.
+    Undo(usize),
+    Reset(usize),
+    AddTag(usize, usize),
+    RemoveTag(usize, usize),
+    SetMaxNew(u32),
 }
 
 /// Names that collide by key, so renames and creates sometimes fail.
 const NAMES: [&str; 5] = ["Maths", "maths", "Physique", "PHYSIQUE", "Ελληνικά"];
 const TEXTS: [&str; 4] = ["q", "two\nlines", "\"quoted\" & <b>", "√2 ≈ 1.414"];
+/// Tag names that collide by key, so some adds reuse a tag.
+const TAGS: [&str; 4] = ["algebra", "Algebra", "géométrie", "Unused"];
 
 fn op() -> impl Strategy<Value = Op> {
     let i = || 0usize..16;
@@ -37,6 +45,11 @@ fn op() -> impl Strategy<Value = Op> {
         8 => (i(), any::<bool>(), 0..20 * DAY_MS).prop_map(|(card, pass, clock_delta)| {
             Op::Review { card, pass, clock_delta }
         }),
+        2 => i().prop_map(Op::Undo),
+        1 => i().prop_map(Op::Reset),
+        2 => (i(), 0..TAGS.len()).prop_map(|(c, t)| Op::AddTag(c, t)),
+        1 => (i(), i()).prop_map(|(c, t)| Op::RemoveTag(c, t)),
+        1 => (0u32..30).prop_map(Op::SetMaxNew),
     ]
 }
 
@@ -102,6 +115,35 @@ fn run(store: &mut Store, ops: &[Op]) {
                     let _ = store.record_review(&c, grade, Duration::from_millis(700), clock);
                 }
             }
+            Op::Undo(c) => {
+                if let Some(c) = pick(&cards, c) {
+                    let log = store.review_events(&c).unwrap();
+                    let latest = crate::scheduling::surviving(&log)
+                        .unwrap()
+                        .last()
+                        .map(|e| e.id.clone());
+                    if let Some(id) = latest {
+                        let _ = store.undo(&c, &id, clock);
+                    }
+                }
+            }
+            Op::Reset(c) => {
+                if let Some(c) = pick(&cards, c) {
+                    let _ = store.reset_card(&c, clock);
+                }
+            }
+            Op::AddTag(c, t) => {
+                if let Some(c) = pick(&cards, c) {
+                    let _ = store.add_tag(&c, TAGS[t]);
+                }
+            }
+            Op::RemoveTag(c, t) => {
+                let tags: Vec<String> = store.tags().unwrap().into_iter().map(|t| t.id).collect();
+                if let (Some(c), Some(t)) = (pick(&cards, c), pick(&tags, t)) {
+                    let _ = store.remove_tag(&c, &t);
+                }
+            }
+            Op::SetMaxNew(n) => store.set_max_new_per_day(n).unwrap(),
         }
     }
 }

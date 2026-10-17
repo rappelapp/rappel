@@ -66,10 +66,36 @@ pub(super) fn insert_sample(conn: &Connection) {
         "INSERT INTO decks (id, name, name_key, created_at, updated_at) VALUES ('{DECK}', 'Maths', 'maths', 1, 1);
          INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
              VALUES ('{CARD}', '{DECK}', 'front', 'back', 1, 1);
-         INSERT INTO review_events VALUES ('{EVENT}', '{CARD}', 2, 'pass', 1500);
          INSERT INTO card_schedule VALUES ('{CARD}', 'learning', 3, 1.5, 5.0, 2, 1, 0);"
     ))
     .unwrap();
+    insert_review(conn, EVENT, CARD, 2, "pass", 1500);
+}
+
+/// Inserts one review, into the log of any schema version: from migration
+/// 0007 on, a row also has a `kind`.
+pub(super) fn insert_review(
+    conn: &Connection,
+    id: &str,
+    card: &str,
+    at: i64,
+    grade: &str,
+    duration_ms: i64,
+) {
+    let has_kind = conn
+        .prepare("SELECT 1 FROM pragma_table_info('review_events') WHERE name = 'kind'")
+        .unwrap()
+        .exists([])
+        .unwrap();
+    let sql = if has_kind {
+        "INSERT INTO review_events (id, card_id, reviewed_at, grade, duration_ms, kind)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'review')"
+    } else {
+        "INSERT INTO review_events (id, card_id, reviewed_at, grade, duration_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5)"
+    };
+    conn.execute(sql, rusqlite::params![id, card, at, grade, duration_ms])
+        .unwrap();
 }
 
 pub(super) fn count(conn: &Connection, table: &str) -> i64 {
@@ -146,16 +172,8 @@ pub(super) fn corrupt_btree(db: &Path, name: &str) {
 /// Inserts review events for `card` at `DAY0 + offsets`, ids from `first_id`.
 pub(super) fn insert_events(conn: &Connection, card: &str, first_id: u32, reviews: &[(i64, &str)]) {
     for (i, (offset, grade)) in (first_id..).zip(reviews) {
-        conn.execute(
-            "INSERT INTO review_events VALUES (?1, ?2, ?3, ?4, 1000)",
-            rusqlite::params![
-                format!("01920000-0000-7000-8000-1{i:011}"),
-                card,
-                DAY0 + offset,
-                grade
-            ],
-        )
-        .unwrap();
+        let id = format!("01920000-0000-7000-8000-1{i:011}");
+        insert_review(conn, &id, card, DAY0 + offset, grade, 1000);
     }
 }
 

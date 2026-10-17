@@ -1,6 +1,5 @@
 //! Exporting the whole database to a `.rappel` file.
 
-use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -10,14 +9,18 @@ use rusqlite::Connection;
 
 use super::ExportSummary;
 use super::archive::write_archive;
-use super::format::{CardRecord, DeckRecord, Document, EventRecord, FORMAT_VERSION};
+use super::format::{
+    CardRecord, CardTagRecord, DeckRecord, Document, EventRecord, FORMAT_VERSION, SettingsRecord,
+    TagRecord,
+};
 use crate::error::{Error, Result};
-use crate::storage::Store;
+use crate::storage::{Store, stored_settings};
 use crate::time::now_ms;
 
 impl Store {
-    /// Writes every deck, card and review event, deleted ones included,
-    /// to the `.rappel` file `path`, replacing it if it exists.
+    /// Writes every deck, card, tag, card tag and log entry, deleted ones
+    /// included, and the stored settings, to the `.rappel` file `path`,
+    /// replacing it if it exists.
     ///
     /// The file is written next to `path` with mode `0600`, synced, and
     /// only then renamed, so `path` is never a partial export. The same
@@ -38,6 +41,7 @@ impl Store {
         let summary = ExportSummary {
             decks: document.decks.len(),
             cards: document.cards.len(),
+            tags: document.tags.len(),
             review_events: document.review_events.len(),
         };
         let mut json =
@@ -48,8 +52,8 @@ impl Store {
     }
 }
 
-/// Every row, read in one transaction so the tables agree, each table
-/// sorted by id.
+/// Every row and the stored settings, read in one transaction so the
+/// tables agree, each table sorted by id (`card_tags` by card, then tag).
 fn read_document(conn: &Connection, now: i64) -> Result<Document> {
     let tx = conn.unchecked_transaction()?;
     let decks = tx
@@ -81,20 +85,48 @@ fn read_document(conn: &Connection, now: i64) -> Result<Document> {
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    let tags = tx
+        .prepare("SELECT id, name FROM tags ORDER BY id")?
+        .query_map([], |r| {
+            Ok(TagRecord {
+                id: r.get(0)?,
+                name: r.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let card_tags = tx
+        .prepare("SELECT card_id, tag_id FROM card_tags ORDER BY card_id, tag_id")?
+        .query_map([], |r| {
+            Ok(CardTagRecord {
+                card_id: r.get(0)?,
+                tag_id: r.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     let review_events = tx
         .prepare(
-            "SELECT id, card_id, reviewed_at, grade, duration_ms FROM review_events ORDER BY id",
+            "SELECT id, card_id, kind, reviewed_at, grade, duration_ms, undoes
+             FROM review_events ORDER BY id",
         )?
         .query_map([], |r| {
             Ok(EventRecord {
                 id: r.get(0)?,
                 card_id: r.get(1)?,
-                reviewed_at: r.get(2)?,
-                grade: r.get(3)?,
-                duration_ms: r.get(4)?,
+                kind: r.get(2)?,
+                reviewed_at: r.get(3)?,
+                grade: r.get(4)?,
+                duration_ms: r.get(5)?,
+                undoes: r.get(6)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    let stored = stored_settings(&tx)?;
+    let settings = SettingsRecord {
+        desired_retention: stored.desired_retention,
+        max_new_per_day: stored.max_new_per_day,
+        max_reviews_per_day: stored.max_reviews_per_day,
+        day_start_hour: stored.day_start_hour,
+    };
     // Read only: ending the transaction cannot lose anything.
     tx.finish()?;
     Ok(Document {
@@ -102,8 +134,10 @@ fn read_document(conn: &Connection, now: i64) -> Result<Document> {
         exported_at: now,
         decks,
         cards,
+        tags,
+        card_tags,
         review_events,
-        settings: BTreeMap::new(),
+        settings,
         media: Vec::new(),
     })
 }

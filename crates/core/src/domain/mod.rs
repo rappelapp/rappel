@@ -6,6 +6,9 @@ use std::str::FromStr;
 use unicode_normalization::UnicodeNormalization;
 
 mod settings;
+mod tag;
+
+pub use tag::{MAX_TAG_NAME_BYTES, Tag, check_tag_name};
 
 pub use settings::{
     DEFAULT_DESIRED_RETENTION, DESIRED_RETENTION_RANGE, MAX_DAILY_LIMIT, MAX_DAY_START_HOUR,
@@ -55,19 +58,58 @@ impl FromStr for Grade {
     }
 }
 
-/// One row of `review_events`: a card was answered at a point in time.
+/// One entry of a card's log, a row of `review_events` (ADR 0028).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewEvent {
-    /// Event id (`UUIDv7` string).
+    /// Entry id (`UUIDv7` string).
     pub id: String,
-    /// The reviewed card's id.
+    /// The card's id.
     pub card_id: String,
-    /// When the answer was given, UTC milliseconds.
+    /// When the entry was made (for a review, when the answer was given),
+    /// UTC milliseconds.
     pub reviewed_at: i64,
-    /// The answer.
-    pub grade: Grade,
-    /// Time spent on the card, milliseconds.
+    /// A review, a reset or an undo.
+    pub kind: EventKind,
+    /// Time spent on the card, milliseconds; 0 for a reset or an undo.
     pub duration_ms: i64,
+}
+
+impl ReviewEvent {
+    /// The answer, if this entry is a review.
+    #[must_use]
+    pub fn grade(&self) -> Option<Grade> {
+        match self.kind {
+            EventKind::Review(grade) => Some(grade),
+            EventKind::Reset | EventKind::Undo { .. } => None,
+        }
+    }
+}
+
+/// What a log entry records (ADR 0028).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventKind {
+    /// The card was answered.
+    Review(Grade),
+    /// The card's progress was reset: it is new from here on.
+    Reset,
+    /// The entry with this id, a review or a reset of the same card, is
+    /// cancelled. The log stays append-only; replaying it skips both.
+    Undo {
+        /// The id of the cancelled entry.
+        undoes: String,
+    },
+}
+
+impl EventKind {
+    /// The value stored in `review_events.kind`.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Review(_) => "review",
+            Self::Reset => "reset",
+            Self::Undo { .. } => "undo",
+        }
+    }
 }
 
 /// Where a card that has been reviewed at least once stands.
@@ -167,8 +209,17 @@ pub struct Deck {
 ///
 /// Migration 0004 stored keys computed with this function, so changing
 /// its result for any name needs a new migration that recomputes them.
+/// Tags use the same key ([`name_key`], ADR 0029).
 #[must_use]
 pub fn deck_name_key(name: &str) -> String {
+    name_key(name)
+}
+
+/// The key under which deck and tag names must be unique; see
+/// [`deck_name_key`]. Stored in `decks.name_key` and `tags.name_key`, so
+/// changing its result needs a migration that recomputes both.
+#[must_use]
+pub fn name_key(name: &str) -> String {
     // NFC again after lower-casing: case mapping does not promise NFC
     // output (Unicode's recommended caseless matching normalises on both
     // sides).

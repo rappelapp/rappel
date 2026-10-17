@@ -30,16 +30,31 @@ fn id(n: u64) -> String {
     format!("01920000-0000-7000-8000-{n:012x}")
 }
 
+/// What fills a test file once its cards are written.
+#[derive(Clone, Copy)]
+enum Rows {
+    /// Review events.
+    Reviews,
+    /// Pairs of a reset and the undo that cancels it (ADR 0028).
+    ResetUndo,
+    /// Card tags, over `TAGS` tags (ADR 0029): the smallest rows.
+    CardTags,
+}
+
+/// How many tags a `Rows::CardTags` file has.
+const TAGS: u64 = 1_000;
+
 /// Writes a `.rappel` file whose `cards.json` is about `json_bytes` long:
-/// one deck, `cards` cards with `text` on the front, and review events
-/// for the rest. Streamed, so building it costs no memory to speak of.
-/// Returns the JSON's length.
+/// one deck, `cards` cards with `text` on the front, and `rows` for the
+/// rest. Streamed, so building it costs no memory to speak of. Returns the
+/// JSON's length.
 fn write_export(
     path: &Path,
     json_bytes: u64,
     cards: u64,
     text: &str,
     stored: bool,
+    rows: Rows,
 ) -> zip::result::ZipResult<u64> {
     const T: i64 = 1_792_067_696_789;
     let file = BufWriter::new(File::create(path)?);
@@ -56,7 +71,7 @@ fn write_export(
     let mut json = Counting(&mut zip, 0);
     write!(
         json,
-        r#"{{"format_version":1,"exported_at":{T},"decks":[{{"id":"{}","name":"Deck","created_at":{T},"updated_at":{T},"deleted_at":null}}],"cards":["#,
+        r#"{{"format_version":2,"exported_at":{T},"decks":[{{"id":"{}","name":"Deck","created_at":{T},"updated_at":{T},"deleted_at":null}}],"cards":["#,
         id(0)
     )?;
     for c in 1..=cards {
@@ -68,20 +83,56 @@ fn write_export(
             id(0)
         )?;
     }
+    json.write_all(br#"],"tags":["#)?;
+    // Tag ids come after every card id, and are sorted.
+    let tag = |t: u64| id(cards + 1 + t);
+    if matches!(rows, Rows::CardTags) {
+        for t in 0..TAGS {
+            let comma = if t == 0 { "" } else { "," };
+            write!(json, r#"{comma}{{"id":"{}","name":"tag {t}"}}"#, tag(t))?;
+        }
+    }
+    json.write_all(br#"],"card_tags":["#)?;
+    if matches!(rows, Rows::CardTags) {
+        // By card, then tag, as an export writes them.
+        'cards: for c in 1..=cards {
+            for t in 0..TAGS {
+                if json.1 >= json_bytes {
+                    break 'cards;
+                }
+                let comma = if c == 1 && t == 0 { "" } else { "," };
+                write!(
+                    json,
+                    r#"{comma}{{"card_id":"{}","tag_id":"{}"}}"#,
+                    id(c),
+                    tag(t)
+                )?;
+            }
+        }
+    }
     json.write_all(br#"],"review_events":["#)?;
-    let mut n = cards + 1;
+    let mut n = cards + 1 + TAGS;
     let mut first = true;
-    while json.1 < json_bytes {
+    while !matches!(rows, Rows::CardTags) && json.1 < json_bytes {
         let comma = if first { "" } else { "," };
         first = false;
         let card = id(1 + n % cards);
         let at = T + i64::try_from(n).map_err(io::Error::other)?;
-        write!(
-            json,
-            r#"{comma}{{"id":"{}","card_id":"{card}","reviewed_at":{at},"grade":"pass","duration_ms":1200}}"#,
-            id(n)
-        )?;
-        n += 1;
+        match rows {
+            Rows::Reviews => write!(
+                json,
+                r#"{comma}{{"id":"{}","card_id":"{card}","kind":"review","reviewed_at":{at},"grade":"pass","duration_ms":1200,"undoes":null}}"#,
+                id(n)
+            )?,
+            Rows::ResetUndo | Rows::CardTags => write!(
+                json,
+                r#"{comma}{{"id":"{}","card_id":"{card}","kind":"reset","reviewed_at":{at},"grade":null,"duration_ms":0,"undoes":null}},{{"id":"{}","card_id":"{card}","kind":"undo","reviewed_at":{at},"grade":null,"duration_ms":0,"undoes":"{}"}}"#,
+                id(n),
+                id(n + 1),
+                id(n)
+            )?,
+        }
+        n += 2;
     }
     json.write_all(br#"],"settings":{},"media":[]}"#)?;
     let len = json.1;
@@ -136,16 +187,32 @@ fn planning_an_import_stays_within_the_memory_budget() {
     // of that case's peak.
     let cases = [
         // Many small rows, stored: the archive is as large as the JSON,
-        // the worst case per byte.
-        ("review events, stored", 5_000, "q", true),
+        // the worst case per byte. Measured each first: reviews 3.75
+        // bytes per JSON byte, resets and undos about the same, card tags
+        // less (their rows are smaller, but they hold no set of pairs).
+        ("review events, stored", 5_000, "q", true, Rows::Reviews),
+        (
+            "resets and undos, stored",
+            5_000,
+            "q",
+            true,
+            Rows::ResetUndo,
+        ),
+        ("card tags, stored", 5_000, "q", true, Rows::CardTags),
         // Deflated.
-        ("review events, deflated", 5_000, "q", false),
+        ("review events, deflated", 5_000, "q", false, Rows::Reviews),
         // Long card sides: few, large strings.
-        ("long cards, deflated", 4_000, &*"x".repeat(8_000), false),
+        (
+            "long cards, deflated",
+            4_000,
+            &*"x".repeat(8_000),
+            false,
+            Rows::Reviews,
+        ),
     ];
-    for (what, cards, text, stored) in cases {
+    for (what, cards, text, stored, rows) in cases {
         let path = tmp.path().join("big.rappel");
-        let json = write_export(&path, MEASURED_JSON, cards, text, stored).unwrap();
+        let json = write_export(&path, MEASURED_JSON, cards, text, stored, rows).unwrap();
         let (plan, peak) = peak_of(|| store.plan_import(&path)).unwrap();
         let plan = plan.unwrap();
         assert!(plan.summary().decks.new == 1, "{what}");

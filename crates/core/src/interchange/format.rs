@@ -1,18 +1,23 @@
-//! The `cards.json` document (format version 1), as serde types.
+//! The `cards.json` document (format version 2), as serde types.
 //!
 //! Field order here is the order in the file, and every list is written
-//! sorted by id, so a database always gives the same bytes (ADR 0017).
-//! Reading denies unknown fields: a file that does not match exactly is
-//! refused rather than half understood.
-
-use std::collections::BTreeMap;
+//! sorted by id (`card_tags` by card id, then tag id), so a database always
+//! gives the same bytes (ADR 0017). Reading denies unknown fields: a file
+//! that does not match exactly is refused rather than half understood.
 
 use serde::{Deserialize, Serialize};
 
-/// The format version this build writes, and the newest it reads.
-pub const FORMAT_VERSION: u32 = 1;
+/// The format version this build writes, and the only one it reads.
+/// Version 1 was written by early test versions only (0.2.0-alpha) and is
+/// refused (ADR 0017). From 1.0 on, every released version must stay
+/// importable.
+pub const FORMAT_VERSION: u32 = 2;
 
-/// Only the version, read before the rest so that a file from a newer
+/// The version written by early test versions of Rappel, refused with a
+/// message of its own.
+pub(super) const EARLY_TEST_VERSION: i64 = 1;
+
+/// Only the version, read before the rest so that a file from another
 /// version is refused as such, not for its unknown fields.
 #[derive(Debug, Deserialize)]
 pub(super) struct Header {
@@ -29,10 +34,13 @@ pub(super) struct Document {
     pub exported_at: i64,
     pub decks: Vec<DeckRecord>,
     pub cards: Vec<CardRecord>,
+    pub tags: Vec<TagRecord>,
+    pub card_tags: Vec<CardTagRecord>,
     pub review_events: Vec<EventRecord>,
-    /// Settings are not exported in version 1 (ADR 0027); must be empty.
-    pub settings: BTreeMap<String, serde_json::Value>,
-    /// No media exist yet; must be empty in version 1.
+    /// The settings the user changed; a key that is not here has its
+    /// default (ADR 0027).
+    pub settings: SettingsRecord,
+    /// No media exist yet; must be empty.
     pub media: Vec<serde_json::Value>,
 }
 
@@ -68,14 +76,56 @@ pub(super) struct CardRecord {
     pub deleted_at: Option<i64>,
 }
 
-/// A `review_events` row. The grade stays a string here and is checked by
-/// validation, so a bad grade is reported with its place in the file.
+/// A `tags` row. `name_key` is not exported: it is derived from `name`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TagRecord {
+    pub id: String,
+    pub name: String,
+}
+
+/// A `card_tags` row: card `card_id` has tag `tag_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CardTagRecord {
+    pub card_id: String,
+    pub tag_id: String,
+}
+
+/// A `review_events` row: a review, a reset or an undo (ADR 0028). Kind
+/// and grade stay strings here and are checked by validation, so a bad
+/// value is reported with its place in the file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct EventRecord {
     pub id: String,
     pub card_id: String,
+    /// `review`, `reset` or `undo`.
+    pub kind: String,
     pub reviewed_at: i64,
-    pub grade: String,
+    /// Required, though `null` for a reset or an undo.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub grade: Option<String>,
     pub duration_ms: i64,
+    /// Required, though `null` for a review or a reset: the id of the
+    /// entry an undo cancels.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub undoes: Option<String>,
+}
+
+/// The stored settings: only the keys the user changed are present, in
+/// this order. Typed, so a value of the wrong type is a JSON error; ranges
+/// are checked by validation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SettingsRecord {
+    /// Written as an `f32`, so 0.85 reads `0.85`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desired_retention: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_new_per_day: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_reviews_per_day: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day_start_hour: Option<u8>,
 }

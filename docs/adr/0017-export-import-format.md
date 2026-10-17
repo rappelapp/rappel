@@ -8,6 +8,8 @@
 - Amended: 2026-10-16, deleted rows are revived from the file instead of being conflicts (see Merge rules)
 - Amended: 2026-10-16, a row deleted on both sides is already present, whatever the stamps; a NUL in a name or card side refuses the file
 - Amended by: ADR 0018 (limits enforced when writing), ADR 0020 (export extension), ADR 0026 (which backups an import can push out)
+- Amended: 2026-10-17, format version 2: tags, card tags, log entry kinds (ADR 0028, 0029) and the settings (ADR 0027); version 1 is no longer read
+- Amended: 2026-10-17, a tag with the name of a database tag is mapped onto it instead of being a conflict
 
 ## Context
 
@@ -17,10 +19,15 @@ SPEC §4.1 asks for a full export of the database and an import that works into 
 
 **A zip archive.** An export is a `.rappel` file (named `.cards` before ADR 0020): a zip archive with exactly two entries, `cards.json` and an empty `media/` directory. Media (SPEC §4.3) will go into `media/` as files named by their hash, instead of base64 inside the JSON, which would make the JSON a third larger and force the whole thing into memory as one string. The zip is read and written with the `zip` crate, with only Deflate enabled (through `zlib-rs`, pure Rust): no encryption and no other codecs, so less code reads untrusted input.
 
-**`cards.json`, format version 1.** It holds `format_version`, `exported_at`, `decks`, `cards`, `review_events`, `settings` (an empty object for now) and `media` (an empty list for now). Every row is exported, deleted ones with their `deleted_at`. The derived or internal columns are left out: `decks.name_key` (recomputed), `cards.seq` (internal) and `card_schedule` (a cache, rebuilt from the log). Tags are not in version 1 because no tags table exists yet. The slice that adds them also adds them to the format as version 2. A reader accepts every version up to its own and refuses newer ones.
+**`cards.json`, format version 2.** It holds, in this order, `format_version`, `exported_at`, `decks`, `cards`, `tags`, `card_tags`, `review_events`, `settings` and `media` (an empty list for now). Every row is exported, deleted ones with their `deleted_at`.
+- A log entry has `kind` (`review`, `reset` or `undo`), `reviewed_at`, `grade` (null unless a review), `duration_ms` and `undoes` (null unless an undo); `grade` and `undoes` must be present even when null (ADR 0028).
+- `settings` holds the keys the user changed, as typed values (the retention as an `f32`, so 0.85 reads `0.85`); a key that is not there has its default (ADR 0027).
+- The derived or internal columns are left out: `decks.name_key` and `tags.name_key` (recomputed), `cards.seq` (internal) and `card_schedule` (a cache, rebuilt from the log).
+
+**Which versions are read.** Version 1 (no tags, no entry kinds, empty settings) was written only by test versions before any release: 0.2.0-alpha builds and the last Cards builds (`.cards`, ADR 0020). It is refused with its own message ("made by an early test version of Rappel and cannot be imported", `EarlyTestVersion`) instead of being converted, because nobody has files of it worth keeping and a second reader would be code to maintain and attack. A version above the reader's own is refused as unsupported. **From 1.0 on, every format version a release wrote must stay importable by every later release.** Converting an older version on import is how that will be done.
 
 **Deterministic bytes.**
-- Lists are sorted by id, struct fields have a fixed order, and `settings` is a `BTreeMap`.
+- Lists are sorted by id (`card_tags` by card id, then tag id), struct fields have a fixed order, and `settings` is a struct whose absent keys are left out.
 - The JSON is pretty-printed with a trailing newline.
 - Zip entries come in a fixed order, with the zip format's earliest timestamp (1980-01-01) instead of the clock, fixed permissions, no extra fields and no comment.
 
@@ -39,8 +46,12 @@ So the same database exported at the same time gives identical bytes; only `expo
   | live | deleted | already present: an import never deletes |
   | deleted | deleted at another time | already present: nothing to merge, the database keeps its own stamp |
 - A revived deck also revives the database's cards in that deck that share its `deleted_at` stamp (the batch deleted with it, exactly as `undelete_deck` does, ADR 0012) and that are not in the file. Cards that are in the file are decided by their own row: live in the file, they are revived; deleted in the file, they stay deleted.
-- A review event with the same id and the same content is present; any difference is a conflict.
+- A log entry with the same id and the same content is present; any difference is a conflict. A new undo of an entry that the database has already undone with another undo is a conflict (`AlreadyUndone`): an entry is undone once (ADR 0028).
 - A live deck in the file (new, present or revived) whose name key is used by another live deck in the database is a conflict too.
+- A tag with the same id and the same name is present; another name is a conflict (`TagDiffers`).
+- A tag whose id is not in the database but whose name key a database tag has is **mapped** onto that tag: it is counted as present and not inserted, and the file's card tags that name it attach to the database's tag id. The database keeps its own spelling ("maths" stays "maths" when the file says "Maths"). This is the one place an import remaps an id, and it is safe where the general case is not: a tag has no content but its name, its id is referenced only by `card_tags`, and the mapping is recomputed from the names on every plan. So importing the same file again maps it the same way and changes nothing. Two machines that each created "maths" therefore merge cleanly (ADR 0029).
+- A card tag (a card having a tag) is present or new; it has nothing that could differ.
+- **Settings** are applied only into a database that has no decks at all, deleted ones included: moving to a new machine brings them, a merge never changes them. A merge must not change the retention behind the user's back, since that would reschedule every card. Applied, the file's settings replace the stored ones (keys it does not have go back to their defaults; a file with an empty `settings` brings all the defaults) before the schedules are rebuilt, so imported cards use them: the database ends with the settings the file's database had. The summary says `Applied`, `Kept` or `Unchanged` (the stored settings already equal the file's); a deck created between plan and apply makes the plan stale.
 
 Deleting a deck or card sets only `deleted_at`, never `updated_at`, so a row that differs only in `deleted_at` is exactly the row the file has, deleted (or brought back) since. Merging it cannot lose anything. The common case is: export, delete, change your mind, import. Before this amendment it was a conflict, and the user could not get their data back from their own export. A revived card keeps its review log and its `card_schedule` row, which deleting it never touched. A revived deck cannot clash with another deck from the file, because the file is refused if two of its live decks share a name. A revived card is never left in a deleted deck: the file refuses live cards in deleted decks, so its deck is live in the file, and in the database it is live, revived, or a conflict.
 
@@ -58,16 +69,21 @@ Any conflict refuses the whole import. Merging content field by field would need
 - A deck name is empty or untrimmed, a card front is empty, a card side is over 1 MiB, or a deck name is over 1 KiB.
 - A deck name or card side has a NUL character (U+0000). GTK takes C strings, and glib-rs asserts there is no NUL in debug builds, so the app would panic showing such a name. It is refused, not replaced: a replaced name would differ from the file's, so importing the same file again would be a conflict and an export would not round-trip. The store refuses a NUL in a name or side too (`Error::ContainsNul`), so the app never writes one.
 - Two live decks in the file share a name key, or a live card is in a deleted deck (states the app never produces).
-- `settings` or `media` is not empty.
+- `format_version` is 1 (`EarlyTestVersion`) or any version but 2.
+- A tag name is empty, untrimmed, over 256 bytes, or has a NUL or a comma; two tags in the file share a name key; a card tag refers to a card or tag that is not in the file, or appears twice.
+- A log entry's `kind` is unknown, or its fields do not fit its kind (a grade on a reset, a review without a grade, a duration on an undo, `undoes` on a review). An undo does not cancel an earlier review or reset of the same card in the file (dated no later and with a smaller id), or two undos cancel the same entry.
+- A setting is unknown, of the wrong type or out of its range.
+- `media` is not empty.
 
-**Foreign ids are refused, not re-issued (#12).** Re-issuing would need remapping every reference. It would also break the merge rules: the same file imported twice would add everything twice, because its rows would get new ids each time. Every export Rappel writes passes the check. The optional `CHECK` tightening in #12 (a migration) is left for later; today only `IdGen` and this checked import write ids.
+**Foreign ids are refused, not re-issued (#12).** Re-issuing would need remapping every reference (the tag mapping above is the only remap, and it maps onto ids already in the database). It would also break the merge rules: the same file imported twice would add everything twice, because its rows would get new ids each time. Every export Rappel writes passes the check. The optional `CHECK` tightening in #12 (a migration) is left for later; today only `IdGen` and this checked import write ids.
 
 **Apply.**
 1. If nothing is new or revived, apply returns at once. Nothing is written and no backup is made, so importing a file twice is a true no-op.
 2. Otherwise the database is backed up first with the online backup API, as before a migration (ADR 0007). If the backup fails, there is no import. Old backups are pruned as at startup.
 3. In one `IMMEDIATE` transaction the file is compared again. If the result differs from the plan, the import is refused (`ImportPlanStale`). The plan keeps exactly which rows it would add and bring back (positions in the file, and the ids of batch cards), not only the counts, so two changes here that cancel out in the counts (for example one deck undeleted and another deleted) are refused too. The rows written are always the ones the user confirmed.
-4. Revived decks, then revived cards, get `deleted_at` cleared (`updated_at` stays the same, as with undo). Then the new rows are inserted, so a new card can go into a revived deck.
-5. The `card_schedule` row of every card that got events is rebuilt from its whole log. Imported events may come before or between the existing ones, and the replay order (time, then id) handles both.
+4. Revived decks, then revived cards, get `deleted_at` cleared (`updated_at` stays the same, as with undo). Then the new decks and cards are inserted, so a new card can go into a revived deck.
+5. Then new tags, card tags and log entries are inserted, the entries by id, so an undo's target is always there before it. If the plan says so, the settings are replaced.
+6. The `card_schedule` row of every card that got entries is rebuilt from its whole log. Imported entries may come before or between the existing ones, and the replay order (time, then id) handles both.
 
 An in-memory store has no backup directory and refuses to import.
 
@@ -75,6 +91,7 @@ An in-memory store has no backup directory and refuses to import.
 
 - Export, import into an empty database, export again gives the same bytes. This is tested on fixed and random databases, together with the schedule cache.
 - An import never edits existing content and never deletes. It only clears `deleted_at` on rows the file has live. To bring in a changed card, the user has to resolve the conflict first. A UI that offers this (for example "import as a copy") would be a later decision.
+- A version 1 file, from a test build, cannot be imported; its owner has to start again or recreate it. This was accepted because nothing had been released.
 - New dependencies: `zip` (MIT), with `flate2` and `zlib-rs` (MIT/Apache-2.0, Zlib), `serde` and `serde_json` (MIT/Apache-2.0).
 - The 1 KiB deck name, 1 MiB card side and 256 MiB file limits are not enforced when decks and cards are written. A larger deck name or card side would export but not import; nothing in the app comes close today. Enforcing them when writing is a follow-up.
 - A review dated in the future (up to the year 9999) is accepted. Refusing reviews after `exported_at` would also refuse the app's own exports after its clock went backwards. Such a review keeps that card's later reviews at its date (`max(now, last review)`, ADR 0008).

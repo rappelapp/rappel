@@ -4,23 +4,19 @@
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::Store;
-use crate::domain::{CardState, Grade, ReviewEvent, Schedule};
+use crate::domain::{CardState, EventKind, Grade, ReviewEvent, Schedule};
 use crate::error::{Error, Result};
 use crate::scheduling::Scheduler;
 
 impl Store {
-    /// The review log of `card_id`, oldest first (`reviewed_at`, then id).
+    /// The log of `card_id`, every kind of entry, oldest first
+    /// (`reviewed_at`, then id).
     ///
     /// # Errors
     /// SQLite errors, or [`Error::InvalidColumn`] for a value the schema
     /// should have rejected.
     pub fn review_events(&self, card_id: &str) -> Result<Vec<ReviewEvent>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, card_id, reviewed_at, grade, duration_ms FROM review_events
-             WHERE card_id = ?1 ORDER BY reviewed_at, id",
-        )?;
-        let rows = stmt.query_map([card_id], raw_event)?;
-        rows.map(|row| row?.into_event()).collect()
+        read_log(&self.conn, card_id)
     }
 
     /// The cached scheduling state of `card_id`; [`CardState::New`] if it
@@ -51,6 +47,8 @@ impl Store {
 /// Replaces every `card_schedule` row with one rebuilt from
 /// `review_events`. Returns the number of rows written. The caller provides
 /// the transaction (a migration's, or `Store::rebuild_schedule_cache`'s).
+/// It also reads a log from before migration 0007, for the migrations
+/// that rebuild before it.
 pub(super) fn write_schedule_cache(tx: &Transaction<'_>, scheduler: &Scheduler) -> Result<usize> {
     tx.execute("DELETE FROM card_schedule", [])?;
     let mut cards = 0;
@@ -65,10 +63,11 @@ pub(super) fn write_schedule_cache(tx: &Transaction<'_>, scheduler: &Scheduler) 
 
         // Streams the log card by card, so memory use is one card's
         // history, not the whole log.
-        let mut select = tx.prepare(
-            "SELECT id, card_id, reviewed_at, grade, duration_ms FROM review_events
-             ORDER BY card_id, reviewed_at, id",
-        )?;
+        let columns = event_columns(tx)?;
+        let mut select = tx.prepare(&format!(
+            "SELECT {columns} FROM review_events
+             ORDER BY card_id, reviewed_at, id"
+        ))?;
         let mut rows = select.query([])?;
         let mut batch: Vec<ReviewEvent> = Vec::new();
         while let Some(row) = rows.next()? {
@@ -93,19 +92,28 @@ pub(crate) fn rebuild_cards<'a>(
     scheduler: &Scheduler,
     card_ids: impl IntoIterator<Item = &'a str>,
 ) -> Result<()> {
-    let mut select = conn.prepare(
-        "SELECT id, card_id, reviewed_at, grade, duration_ms FROM review_events
-         WHERE card_id = ?1 ORDER BY reviewed_at, id",
-    )?;
+    let columns = event_columns(conn)?;
     for card_id in card_ids {
-        let events = select
-            .query_map([card_id], raw_event)?
-            .map(|row| row?.into_event())
-            .collect::<Result<Vec<_>>>()?;
-        let state = scheduler.rebuild_state(card_id, &events)?;
+        let state = scheduler.rebuild_state(card_id, &log_with(conn, columns, card_id)?)?;
         write_card_state(conn, card_id, &state)?;
     }
     Ok(())
+}
+
+/// The log of `card_id`, oldest first (see [`Store::review_events`]), in
+/// any schema version (the migration tests read old logs).
+pub(super) fn read_log(conn: &Connection, card_id: &str) -> Result<Vec<ReviewEvent>> {
+    log_with(conn, event_columns(conn)?, card_id)
+}
+
+/// [`read_log`] with the columns already chosen by [`event_columns`].
+fn log_with(conn: &Connection, columns: &str, card_id: &str) -> Result<Vec<ReviewEvent>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {columns} FROM review_events
+         WHERE card_id = ?1 ORDER BY reviewed_at, id"
+    ))?;
+    let rows = stmt.query_map([card_id], raw_event)?;
+    rows.map(|row| row?.into_event()).collect()
 }
 
 /// The cached state of `card_id` (see [`Store::card_state`]).
@@ -183,39 +191,96 @@ pub(super) fn write_card_state(conn: &Connection, card_id: &str, state: &CardSta
     }
 }
 
-/// A `review_events` row before its grade is parsed.
+/// The columns [`raw_event`] reads, in its order.
+pub(super) const EVENT_COLUMNS: &str = "id, card_id, kind, reviewed_at, grade, duration_ms, undoes";
+
+/// [`EVENT_COLUMNS`] for a log from before migration 0007, where every
+/// entry is a review. Migrations 0002 and 0005 rebuild the cache from such
+/// a log when a database (or a restored backup) is upgraded.
+const BEFORE_KINDS_COLUMNS: &str = "id, card_id, 'review', reviewed_at, grade, duration_ms, NULL";
+
+/// The columns to select for [`raw_event`]: [`EVENT_COLUMNS`], or
+/// [`BEFORE_KINDS_COLUMNS`] if `review_events` does not have migration
+/// 0007's `kind` column yet.
+fn event_columns(conn: &Connection) -> Result<&'static str> {
+    let has_kind = conn
+        .prepare("SELECT 1 FROM pragma_table_info('review_events') WHERE name = 'kind'")?
+        .exists([])?;
+    Ok(if has_kind {
+        EVENT_COLUMNS
+    } else {
+        BEFORE_KINDS_COLUMNS
+    })
+}
+
+/// A `review_events` row before its kind and grade are parsed.
 pub(super) struct RawEvent {
     id: String,
     card_id: String,
+    kind: String,
     reviewed_at: i64,
-    grade: String,
+    grade: Option<String>,
     duration_ms: i64,
+    undoes: Option<String>,
 }
 
+/// Reads a row selected with [`EVENT_COLUMNS`].
 pub(super) fn raw_event(r: &Row<'_>) -> rusqlite::Result<RawEvent> {
     Ok(RawEvent {
         id: r.get(0)?,
         card_id: r.get(1)?,
-        reviewed_at: r.get(2)?,
-        grade: r.get(3)?,
-        duration_ms: r.get(4)?,
+        kind: r.get(2)?,
+        reviewed_at: r.get(3)?,
+        grade: r.get(4)?,
+        duration_ms: r.get(5)?,
+        undoes: r.get(6)?,
     })
 }
 
 impl RawEvent {
     pub(super) fn into_event(self) -> Result<ReviewEvent> {
-        let grade: Grade = self
-            .grade
-            .parse()
-            .map_err(|_| invalid("review_events.grade", &self.grade))?;
+        let kind = match (self.kind.as_str(), self.grade, self.undoes) {
+            ("review", Some(grade), None) => EventKind::Review(
+                grade
+                    .parse::<Grade>()
+                    .map_err(|_| invalid("review_events.grade", &grade))?,
+            ),
+            ("reset", None, None) => EventKind::Reset,
+            ("undo", None, Some(undoes)) => EventKind::Undo { undoes },
+            // The schema's CHECKs refuse every other combination.
+            _ => return Err(invalid("review_events.kind", &self.kind)),
+        };
         Ok(ReviewEvent {
             id: self.id,
             card_id: self.card_id,
             reviewed_at: self.reviewed_at,
-            grade,
+            kind,
             duration_ms: self.duration_ms,
         })
     }
+}
+
+/// Appends `event` to `review_events`: how the store records, resets and
+/// undoes. An import inserts the file's checked rows as they are.
+pub(crate) fn insert_event(conn: &Connection, event: &ReviewEvent) -> Result<()> {
+    let undoes = match &event.kind {
+        EventKind::Undo { undoes } => Some(undoes.as_str()),
+        EventKind::Review(_) | EventKind::Reset => None,
+    };
+    conn.prepare(
+        "INSERT INTO review_events (id, card_id, kind, reviewed_at, grade, duration_ms, undoes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?
+    .execute(params![
+        event.id,
+        event.card_id,
+        event.kind.as_str(),
+        event.reviewed_at,
+        event.grade().map(Grade::as_str),
+        event.duration_ms,
+        undoes,
+    ])?;
+    Ok(())
 }
 
 pub(super) fn invalid(column: &'static str, value: &dyn std::fmt::Display) -> Error {

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-15
-- Amended by: ADR 0020 (database file name), ADR 0026 (which backups are kept)
+- Amended by: ADR 0020 (database file name), ADR 0026 (which backups are kept), ADR 0028 (`review_events` gets `kind` and `undoes`)
 
 ## Context
 

@@ -95,7 +95,34 @@ impl Store {
 /// The settings on `conn`, the defaults for keys never written and for a
 /// database that has no settings table yet (a migration's rebuild).
 pub(crate) fn settings_in(conn: &Connection) -> Result<Settings> {
-    let mut settings = Settings::default();
+    let stored = stored_settings(conn)?;
+    let defaults = Settings::default();
+    Ok(Settings {
+        desired_retention: stored
+            .desired_retention
+            .unwrap_or(defaults.desired_retention),
+        max_new_per_day: stored.max_new_per_day.unwrap_or(defaults.max_new_per_day),
+        max_reviews_per_day: stored
+            .max_reviews_per_day
+            .unwrap_or(defaults.max_reviews_per_day),
+        day_start_hour: stored.day_start_hour.unwrap_or(defaults.day_start_hour),
+    })
+}
+
+/// The settings that are stored, each `None` where the key was never
+/// written. What an export carries (ADR 0027).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct StoredSettings {
+    pub desired_retention: Option<f32>,
+    pub max_new_per_day: Option<u32>,
+    pub max_reviews_per_day: Option<u32>,
+    pub day_start_hour: Option<u8>,
+}
+
+/// The stored settings on `conn`, each value checked; none before the
+/// settings table exists.
+pub(crate) fn stored_settings(conn: &Connection) -> Result<StoredSettings> {
+    let mut settings = StoredSettings::default();
     if !table_exists(conn)? {
         return Ok(settings);
     }
@@ -107,34 +134,60 @@ pub(crate) fn settings_in(conn: &Connection) -> Result<Settings> {
     }
     let bad = |key: &str, value: &str| invalid("settings.value", &format!("{key} = {value:?}"));
     if let Some(v) = stored.get(RETENTION) {
-        settings.desired_retention = v
-            .parse()
-            .ok()
-            .and_then(|n| Settings::check_retention(n).ok())
-            .ok_or_else(|| bad(RETENTION, v))?;
+        settings.desired_retention = Some(
+            v.parse()
+                .ok()
+                .and_then(|n| Settings::check_retention(n).ok())
+                .ok_or_else(|| bad(RETENTION, v))?,
+        );
     }
     if let Some(v) = stored.get(MAX_NEW) {
-        settings.max_new_per_day = v
-            .parse()
-            .ok()
-            .and_then(|n| Settings::check_max_new(n).ok())
-            .ok_or_else(|| bad(MAX_NEW, v))?;
+        settings.max_new_per_day = Some(
+            v.parse()
+                .ok()
+                .and_then(|n| Settings::check_max_new(n).ok())
+                .ok_or_else(|| bad(MAX_NEW, v))?,
+        );
     }
     if let Some(v) = stored.get(MAX_REVIEWS) {
-        settings.max_reviews_per_day = v
-            .parse()
-            .ok()
-            .and_then(|n| Settings::check_max_reviews(n).ok())
-            .ok_or_else(|| bad(MAX_REVIEWS, v))?;
+        settings.max_reviews_per_day = Some(
+            v.parse()
+                .ok()
+                .and_then(|n| Settings::check_max_reviews(n).ok())
+                .ok_or_else(|| bad(MAX_REVIEWS, v))?,
+        );
     }
     if let Some(v) = stored.get(DAY_START) {
-        settings.day_start_hour = v
-            .parse()
-            .ok()
-            .and_then(|n| Settings::check_day_start_hour(n).ok())
-            .ok_or_else(|| bad(DAY_START, v))?;
+        settings.day_start_hour = Some(
+            v.parse()
+                .ok()
+                .and_then(|n| Settings::check_day_start_hour(n).ok())
+                .ok_or_else(|| bad(DAY_START, v))?,
+        );
     }
     Ok(settings)
+}
+
+/// Makes the settings table hold exactly `settings`, inside the caller's
+/// transaction (an import into an empty database). The values must have
+/// been checked. Does not rebuild the schedule cache.
+pub(crate) fn replace_settings(conn: &Connection, settings: &StoredSettings) -> Result<()> {
+    conn.execute("DELETE FROM settings", [])?;
+    let values = [
+        (RETENTION, settings.desired_retention.map(|v| v.to_string())),
+        (MAX_NEW, settings.max_new_per_day.map(|v| v.to_string())),
+        (
+            MAX_REVIEWS,
+            settings.max_reviews_per_day.map(|v| v.to_string()),
+        ),
+        (DAY_START, settings.day_start_hour.map(|v| v.to_string())),
+    ];
+    for (key, value) in values {
+        if let Some(value) = value {
+            write(conn, key, &value)?;
+        }
+    }
+    Ok(())
 }
 
 /// A scheduler with the stored desired retention. Read inside each

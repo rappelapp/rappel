@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-16
 - Amends: ADR 0004 (data directory names), ADR 0005 (database file name), ADR 0007 (backup names), ADR 0017 (export extension)
+- Amended: 2026-10-17, `.cards` files are no longer imported: they are format version 1, which only test versions wrote (ADR 0017)
 
 ## Context
 
@@ -14,10 +15,11 @@ The project is renamed from Cards to Rappel (French for "recall" or "reminder").
 
 **Not renamed.**
 - The word "cards" as the thing a deck holds: the `cards` table, `Card`, `storage/cards.rs`, "No Cards Yet", migrations (they are never edited, ADR 0005).
-- The archive's internal layout: `cards.json`, `media/`, `format_version` 1. The file is the same format as before, so an old `.cards` export and a new `.rappel` export are read by the same code. Import looks at the content, never the extension. The only place extensions matter is the file chooser, which shows both (`IMPORT_EXTENSIONS`). A future incompatible format would bump `format_version`; renaming `cards.json` would break old files for no benefit.
+- The archive's internal layout: `cards.json` and `media/`. Import looks at the content, never the extension. The only place extensions matter is the file chooser, which shows both (`IMPORT_EXTENSIONS`). Renaming `cards.json` would break old files for no benefit.
+- *Amended 2026-10-17:* `.cards` files are format version 1, which Rappel no longer reads (ADR 0017, format version 2). They stay in the file chooser, so choosing one gives the clear refusal ("made by an early test version of Rappel and cannot be imported") instead of the file not being there.
 - Git history, tags, past PR titles, past changelog entries.
 
-**No automatic migration of the old data folder.** Rappel never reads `~/.local/share/cards`. Silently adopting or moving a folder written by another app name risks mixing two databases (the failure ADR 0007 exists to prevent). To move data: **Export…** in the last Cards build, then **Import…** in Rappel. The import restores decks, cards and the whole review history. Backups made by Cards are not carried over.
+**No automatic migration of the old data folder.** Rappel never reads `~/.local/share/cards`. Silently adopting or moving a folder written by another app name risks mixing two databases (the failure ADR 0007 exists to prevent). To move data: **Export…** in the last Cards build, then **Import…** in Rappel. The import restores decks, cards and the whole review history. *(No longer possible since format version 2, ADR 0017: nothing had been released, and there was no such data worth keeping.)* Backups made by Cards are not carried over.
 
 **Debug guard.** A debug build refuses `cards` next to `rappel` as a release directory (`LEGACY_RELEASE_DIR_NAME`), so development cannot touch data that has not been moved yet. Release builds can still be pointed at it explicitly with `RAPPEL_DATA_DIR`.
 

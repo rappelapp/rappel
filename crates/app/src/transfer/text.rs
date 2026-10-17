@@ -3,7 +3,9 @@
 use std::path::Path;
 
 use rappel_core::content;
-use rappel_core::interchange::{Conflict, FILE_EXTENSION, ImportReport, ImportSummary};
+use rappel_core::interchange::{
+    Conflict, FILE_EXTENSION, ImportProblem, ImportReport, ImportSummary, SettingsImport,
+};
 
 use super::names::Lookup;
 use crate::ui::text::{count, decks_cards_reviews};
@@ -47,6 +49,21 @@ pub(super) fn exported_text(path: &Path) -> String {
     format!("Exported to “{name}”")
 }
 
+/// The toast for a refused file. A file from an early test version says
+/// so in its own words: its message already says it cannot be imported.
+pub(super) fn refused_text(problem: &ImportProblem) -> String {
+    match problem {
+        ImportProblem::EarlyTestVersion => {
+            "This file was made by an early test version of Rappel and cannot be imported"
+                .to_owned()
+        }
+        other => format!("This file cannot be imported: {other}"),
+    }
+}
+
+/// "reviews" here counts every entry of the log, resets and undos too
+/// (ADR 0028). Those are rare beside reviews, and the counts only tell
+/// the user roughly how much a file holds, so they are not named apart.
 pub(super) fn imported_text(report: &ImportReport) -> String {
     let added = decks_cards_reviews(report.decks, report.cards, report.review_events);
     let revived = decks_cards_reviews(report.revived_decks, report.revived_cards, 0);
@@ -54,7 +71,15 @@ pub(super) fn imported_text(report: &ImportReport) -> String {
         (Some(added), Some(revived)) => format!("Imported {added}, and brought back {revived}"),
         (Some(added), None) => format!("Imported {added}"),
         (None, Some(revived)) => format!("Brought back {revived}"),
-        (None, None) => "Nothing was imported: everything was already here".to_owned(),
+        (None, None) => {
+            let tags = report.tags + report.card_tags > 0;
+            match (tags, report.settings_applied) {
+                (true, true) => "Imported tags and settings".to_owned(),
+                (true, false) => "Imported tags".to_owned(),
+                (false, true) => "Imported settings".to_owned(),
+                (false, false) => "Nothing was imported: everything was already here".to_owned(),
+            }
+        }
     }
 }
 
@@ -86,7 +111,7 @@ pub(super) fn plan_view(summary: &ImportSummary) -> PlanView {
         summary.review_events.new,
     );
     let revived = decks_cards_reviews(summary.decks.revived, summary.cards.revived, 0);
-    if new.is_none() && revived.is_none() {
+    if summary.is_noop() {
         return PlanView {
             heading: "Nothing to Import",
             body: "Everything in this file is already here.".to_owned(),
@@ -96,6 +121,18 @@ pub(super) fn plan_view(summary: &ImportSummary) -> PlanView {
     let mut sentences = Vec::new();
     if let Some(new) = new {
         sentences.push(format!("This adds {new}."));
+    }
+    if summary.tags.new > 0 {
+        sentences.push(format!(
+            "This adds {}.",
+            count(summary.tags.new, "tag", "tags")
+        ));
+    }
+    if summary.card_tags.new > 0 {
+        sentences.push(format!(
+            "This puts {} on cards.",
+            count(summary.card_tags.new, "tag", "tags")
+        ));
     }
     if let Some(revived) = revived {
         sentences.push(format!("This brings back {revived} you deleted."));
@@ -114,6 +151,15 @@ pub(super) fn plan_view(summary: &ImportSummary) -> PlanView {
         sentences.push(format!(
             "{present} {verb} already here and will be skipped."
         ));
+    }
+    match summary.settings {
+        SettingsImport::Applied => {
+            sentences.push("Your settings are replaced by the file’s.".to_owned());
+        }
+        SettingsImport::Kept => {
+            sentences.push("Your settings stay as they are.".to_owned());
+        }
+        SettingsImport::Unchanged => {}
     }
     sentences.push("Your data is backed up first.".to_owned());
     let body = sentences.join(" ");
@@ -158,6 +204,10 @@ pub(super) fn conflicts_text(
                         "The file has another deck with the name of one of yours".to_owned()
                     }
                 },
+                Conflict::TagDiffers(_) => "A tag has another name in the file".to_owned(),
+                Conflict::AlreadyUndone { .. } => {
+                    "The file undoes a review or reset that is already undone here".to_owned()
+                }
             };
             format!("• {line}")
         })
@@ -200,7 +250,7 @@ mod tests {
             decks,
             cards,
             review_events: reviews,
-            conflicts: Vec::new(),
+            ..ImportSummary::default()
         }
     }
 
@@ -376,7 +426,10 @@ mod tests {
         let report = ImportReport {
             decks: 1,
             cards: 2,
+            tags: 0,
+            card_tags: 0,
             review_events: 0,
+            settings_applied: false,
             revived_decks: 0,
             revived_cards: 0,
             backup: None,
@@ -405,6 +458,82 @@ mod tests {
         assert_eq!(
             imported_text(&report),
             "Nothing was imported: everything was already here"
+        );
+        let tags = ImportReport {
+            card_tags: 2,
+            ..report.clone()
+        };
+        assert_eq!(imported_text(&tags), "Imported tags");
+        let settings = ImportReport {
+            settings_applied: true,
+            ..report.clone()
+        };
+        assert_eq!(imported_text(&settings), "Imported settings");
+        let both = ImportReport {
+            tags: 1,
+            ..settings
+        };
+        assert_eq!(imported_text(&both), "Imported tags and settings");
+    }
+
+    #[test]
+    fn a_refused_file_says_why_once() {
+        assert_eq!(
+            refused_text(&ImportProblem::EarlyTestVersion),
+            "This file was made by an early test version of Rappel and cannot be imported"
+        );
+        assert_eq!(
+            refused_text(&ImportProblem::NotAFile),
+            "This file cannot be imported: it is not a regular file (a folder, a pipe or a device)"
+        );
+    }
+
+    #[test]
+    fn tags_and_settings_alone_offer_import() {
+        let mut s = summary(counts(0, 1), counts(0, 2), counts(0, 0));
+        s.tags = counts(2, 0);
+        s.card_tags = counts(3, 0);
+        let view = plan_view(&s);
+        assert!(view.can_import);
+        assert_eq!(
+            view.body,
+            "This adds 2 tags. This puts 3 tags on cards. \
+             1 deck and 2 cards are already here and will be skipped. \
+             Your data is backed up first."
+        );
+        let mut s = ImportSummary {
+            settings: SettingsImport::Applied,
+            ..ImportSummary::default()
+        };
+        let view = plan_view(&s);
+        assert!(view.can_import);
+        assert_eq!(
+            view.body,
+            "Your settings are replaced by the file’s. Your data is backed up first."
+        );
+        // Kept settings alone are nothing to import.
+        s.settings = SettingsImport::Kept;
+        assert_eq!(plan_view(&s).heading, "Nothing to Import");
+        s.cards = counts(1, 0);
+        assert_eq!(
+            plan_view(&s).body,
+            "This adds 1 card. Your settings stay as they are. Your data is backed up first."
+        );
+    }
+
+    #[test]
+    fn conflicts_of_tags_and_undos_have_their_own_lines() {
+        let conflicts = [
+            Conflict::TagDiffers(OTHER.to_owned()),
+            Conflict::AlreadyUndone {
+                event_id: EVENT.to_owned(),
+                existing_id: OTHER.to_owned(),
+            },
+        ];
+        assert_eq!(
+            conflicts_text(&conflicts, names, fronts),
+            "• A tag has another name in the file\n\
+             • The file undoes a review or reset that is already undone here"
         );
     }
 }

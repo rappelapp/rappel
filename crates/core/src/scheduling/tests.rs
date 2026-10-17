@@ -20,8 +20,22 @@ fn event(i: usize, at: i64, grade: Grade) -> ReviewEvent {
         id: format!("01929d4e-0000-7000-8000-{i:012}"),
         card_id: CARD.to_owned(),
         reviewed_at: at,
-        grade,
+        kind: EventKind::Review(grade),
         duration_ms: 1000,
+    }
+}
+
+/// The grade of a review entry.
+fn grade_of(e: &ReviewEvent) -> Grade {
+    e.grade().expect("the test only builds reviews here")
+}
+
+/// Entry `i` of kind `kind` at `at`.
+fn entry(i: usize, at: i64, kind: EventKind) -> ReviewEvent {
+    ReviewEvent {
+        kind,
+        duration_ms: 0,
+        ..event(i, at, Grade::Pass)
     }
 }
 
@@ -324,6 +338,185 @@ fn on_time_review_pass_ignores_the_floor() {
     assert_eq!(days, fuzzed_days(interval, fuzz_factor(CARD, prev.reps)));
 }
 
+// --- Undo and reset (ADR 0028) ---
+
+fn undo(i: usize, at: i64, target: &ReviewEvent) -> ReviewEvent {
+    entry(
+        i,
+        at,
+        EventKind::Undo {
+            undoes: target.id.clone(),
+        },
+    )
+}
+
+#[test]
+fn rebuild_skips_an_undone_review_and_its_undo() {
+    let s = Scheduler::default();
+    let r0 = event(0, T0, Grade::Fail);
+    let r1 = event(1, T0 + STEP_MS, Grade::Pass);
+    let r2 = event(2, T0 + 3 * DAY_MS, Grade::Fail);
+    let u = undo(3, T0 + 3 * DAY_MS + 1, &r2);
+    let full = [r0.clone(), r1.clone(), r2, u];
+    assert_eq!(
+        s.rebuild_state(CARD, &full).unwrap(),
+        s.rebuild_state(CARD, &[r0, r1]).unwrap()
+    );
+}
+
+/// #11: the fuzz is seeded from the number of earlier reviews, which must
+/// count the surviving reviews only. A Pass after an undone review is
+/// scheduled exactly as in a log that never had it, due date included.
+#[test]
+fn an_undone_review_does_not_count_for_the_fuzz() {
+    let s = Scheduler::default();
+    let r0 = event(0, T0, Grade::Fail);
+    let r1 = event(1, T0 + STEP_MS, Grade::Pass);
+    let r2 = event(2, T0 + 5 * DAY_MS, Grade::Pass);
+    let u = undo(3, T0 + 5 * DAY_MS, &r2);
+    let r3 = event(4, T0 + 6 * DAY_MS, Grade::Pass);
+    let with_undo = s
+        .rebuild_state(CARD, &[r0.clone(), r1.clone(), r2, u, r3.clone()])
+        .unwrap();
+    let never = s.rebuild_state(CARD, &[r0, r1, r3]).unwrap();
+    assert_eq!(with_undo, never);
+    assert_eq!(scheduled(with_undo).reps, 3);
+}
+
+#[test]
+fn a_reset_makes_the_card_new_and_restarts_its_counters() {
+    let s = Scheduler::default();
+    let before = [
+        event(0, T0, Grade::Fail),
+        event(1, T0 + STEP_MS, Grade::Pass),
+        event(2, T0 + 5 * DAY_MS, Grade::Fail),
+    ];
+    let reset = entry(3, T0 + 6 * DAY_MS, EventKind::Reset);
+    let mut log = before.to_vec();
+    log.push(reset.clone());
+    assert_eq!(s.rebuild_state(CARD, &log).unwrap(), CardState::New);
+    // After the reset, the card is scheduled as a new one would be.
+    let after = event(4, T0 + 7 * DAY_MS, Grade::Pass);
+    log.push(after.clone());
+    let st = scheduled(s.rebuild_state(CARD, &log).unwrap());
+    assert_eq!(
+        CardState::Scheduled(st),
+        s.rebuild_state(CARD, std::slice::from_ref(&after)).unwrap()
+    );
+    assert_eq!((st.reps, st.lapses, st.phase), (1, 0, Phase::Learning));
+    // Undoing the reset brings the old history back.
+    log.push(undo(5, T0 + 7 * DAY_MS, &reset));
+    let mut kept = before.to_vec();
+    kept.push(after);
+    assert_eq!(
+        s.rebuild_state(CARD, &log).unwrap(),
+        s.rebuild_state(CARD, &kept).unwrap()
+    );
+}
+
+#[test]
+fn an_undo_must_name_one_review_or_reset_of_the_log() {
+    let s = Scheduler::default();
+    let r0 = event(0, T0, Grade::Pass);
+    let u1 = undo(1, T0, &r0);
+    let invalid = |log: &[ReviewEvent], id: &str| {
+        let err = s.rebuild_state(CARD, log).unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidUndo { event_id } if event_id == id),
+            "{err:?}"
+        );
+    };
+    // Its target is missing.
+    invalid(std::slice::from_ref(&u1), &u1.id);
+    // Its target is an undo.
+    let u2 = undo(2, T0, &u1);
+    invalid(&[r0.clone(), u1.clone(), u2.clone()], &u2.id);
+    // Two undos of one entry.
+    let u3 = undo(3, T0, &r0);
+    invalid(&[r0, u1, u3.clone()], &u3.id);
+}
+
+/// A file may hold one card with very many undos (ADR 0025): the rebuild
+/// stays linear. 100,000 review and undo pairs took seconds when each undo
+/// searched the whole log.
+#[test]
+fn a_log_of_many_undos_rebuilds_in_time() {
+    let log: Vec<ReviewEvent> = (0..100_000)
+        .flat_map(|i| {
+            let review = event(2 * i, T0, Grade::Pass);
+            let undo = undo(2 * i + 1, T0, &review);
+            [review, undo]
+        })
+        .collect();
+    let state = crate::test_support::within(
+        std::time::Duration::from_secs(2),
+        "rebuilding 100,000 undone reviews",
+        move || Scheduler::default().rebuild_state(CARD, &log),
+    );
+    assert_eq!(state.unwrap(), CardState::New);
+}
+
+/// One step of a random log: a review, an undo of the latest surviving
+/// review or reset (skipped if there is none), or a reset.
+#[derive(Debug, Clone)]
+enum Op {
+    Review(i64, Grade),
+    UndoLatest,
+    Reset(i64),
+}
+
+fn op() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        6 => (gap(), grade()).prop_map(|(g, gr)| Op::Review(g, gr)),
+        2 => Just(Op::UndoLatest),
+        1 => gap().prop_map(Op::Reset),
+    ]
+}
+
+/// The log the ops make, and the reviews that should count: those no undo
+/// cancels, after the last reset no undo cancels.
+fn log_of(card: &str, ops: &[Op]) -> (Vec<ReviewEvent>, Vec<ReviewEvent>) {
+    let mut at = T0;
+    let mut log = Vec::new();
+    let mut alive: Vec<ReviewEvent> = Vec::new();
+    for (i, op) in ops.iter().enumerate() {
+        let made = match *op {
+            Op::Review(gap, grade) => {
+                at += gap;
+                let e = event(i, at, grade);
+                alive.push(e.clone());
+                e
+            }
+            Op::Reset(gap) => {
+                at += gap;
+                let e = entry(i, at, EventKind::Reset);
+                alive.push(e.clone());
+                e
+            }
+            Op::UndoLatest => {
+                let Some(target) = alive.pop() else { continue };
+                undo(i, at, &target)
+            }
+        };
+        log.push(ReviewEvent {
+            card_id: card.to_owned(),
+            ..made
+        });
+    }
+    let since_reset = alive
+        .iter()
+        .rposition(|e| e.kind == EventKind::Reset)
+        .map_or(0, |p| p + 1);
+    let counted = alive[since_reset..]
+        .iter()
+        .map(|e| ReviewEvent {
+            card_id: card.to_owned(),
+            ..e.clone()
+        })
+        .collect();
+    (log, counted)
+}
+
 // --- Property tests ---
 
 /// Time between two reviews: mostly same-session gaps or up to 400 days,
@@ -382,13 +575,13 @@ proptest! {
         let mut fsrs_reviews = vec![];
         for (n, e) in events.iter().enumerate() {
             let prev = state;
-            state = s.schedule(&card, &prev, e.grade, e.reviewed_at).unwrap();
+            state = s.schedule(&card, &prev, grade_of(e), e.reviewed_at).unwrap();
             let st = scheduled(state);
 
             // Counters.
             if let CardState::Scheduled(p) = prev
                 && p.phase == Phase::Review
-                && e.grade == Grade::Fail
+                && grade_of(e) == Grade::Fail
             {
                 lapses += 1;
             }
@@ -429,7 +622,7 @@ proptest! {
                 CardState::New => 0,
                 CardState::Scheduled(p) => elapsed_days(p.last_review_at, e.reviewed_at),
             };
-            let rating = match e.grade { Grade::Fail => 1, Grade::Pass => 3 };
+            let rating = match grade_of(e) { Grade::Fail => 1, Grade::Pass => 3 };
             fsrs_reviews.push(FSRSReview { rating, delta_t });
             let expected = fsrs::FSRS::default()
                 .memory_state(FSRSItem { reviews: fsrs_reviews.clone() }, None)
@@ -470,8 +663,32 @@ proptest! {
         let mut sorted = events.clone();
         sorted.sort_by(|a, b| (a.reviewed_at, &a.id).cmp(&(b.reviewed_at, &b.id)));
         let one_by_one = sorted.iter().fold(CardState::New, |st, e| {
-            s.schedule(&card, &st, e.grade, e.reviewed_at).unwrap()
+            s.schedule(&card, &st, grade_of(e), e.reviewed_at).unwrap()
         });
         prop_assert_eq!(s.rebuild_state(&card, &events).unwrap(), one_by_one);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+
+    /// Undo and reset (ADR 0028, #11): rebuilding a log with undos and
+    /// resets gives exactly the state of the log that only ever had the
+    /// counted reviews, due date and fuzz included.
+    #[test]
+    fn rebuild_with_undos_and_resets_equals_the_clean_log(
+        card in card_id(),
+        ops in prop::collection::vec(op(), 1..60),
+        retention in prop_oneof![Just(0.80_f32), Just(0.90), Just(0.97)],
+    ) {
+        let s = Scheduler::new(retention).unwrap();
+        let (log, counted) = log_of(&card, &ops);
+        let clean = counted.iter().fold(CardState::New, |st, e| {
+            s.schedule(&card, &st, grade_of(e), e.reviewed_at).unwrap()
+        });
+        prop_assert_eq!(s.rebuild_state(&card, &log).unwrap(), clean);
+        if let CardState::Scheduled(st) = clean {
+            prop_assert_eq!(st.reps as usize, counted.len());
+        }
     }
 }

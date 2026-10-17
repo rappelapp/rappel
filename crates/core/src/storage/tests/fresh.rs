@@ -12,10 +12,12 @@ fn fresh_database_is_created_private_migrated_and_not_backed_up() {
         tables(&store.conn),
         [
             "card_schedule",
+            "card_tags",
             "cards",
             "decks",
             "review_events",
-            "settings"
+            "settings",
+            "tags"
         ]
     );
     assert_eq!(mode(&e.db), 0o600);

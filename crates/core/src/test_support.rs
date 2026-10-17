@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::domain::{CardState, Grade, Schedule};
+use crate::domain::{CardState, Grade, ReviewEvent, Schedule};
 pub(crate) use crate::scheduling::DAY_MS;
 use crate::storage::Store;
 
@@ -19,10 +19,10 @@ pub(crate) fn scheduled(state: CardState) -> Schedule {
 }
 
 /// Records `grade` for `card` at `at`, answered in 3 seconds.
-pub(crate) fn answer(store: &mut Store, card: &str, grade: Grade, at: i64) {
+pub(crate) fn answer(store: &mut Store, card: &str, grade: Grade, at: i64) -> ReviewEvent {
     store
         .record_review(card, grade, Duration::from_secs(3), at)
-        .unwrap();
+        .unwrap()
 }
 
 /// A `card_schedule` row: card id, phase, due, stability and difficulty as

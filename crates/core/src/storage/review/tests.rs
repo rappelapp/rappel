@@ -2,7 +2,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::Error;
-use crate::domain::CardState;
+use crate::domain::{CardState, EventKind};
 use crate::id::IdGen;
 use crate::scheduling::{STEP_MS, Scheduler};
 use crate::test_support::{DAY_MS, T0, schedule_table, scheduled};
@@ -34,8 +34,8 @@ fn record_review_writes_the_event_and_the_schedule() {
         .record_review(&cards[0], Grade::Pass, Duration::from_millis(1234), T0)
         .unwrap();
     assert_eq!(
-        (e.card_id.as_str(), e.reviewed_at, e.grade, e.duration_ms),
-        (cards[0].as_str(), T0, Grade::Pass, 1234)
+        (e.card_id.as_str(), e.reviewed_at, e.grade(), e.duration_ms),
+        (cards[0].as_str(), T0, Some(Grade::Pass), 1234)
     );
     assert_eq!(store.review_events(&cards[0]).unwrap(), [e]);
     let s = scheduled(store.card_state(&cards[0]).unwrap());
@@ -111,8 +111,8 @@ fn a_restart_does_not_reissue_the_next_id_of_another_card() {
     store
         .conn
         .execute(
-            "INSERT INTO review_events (id, card_id, reviewed_at, grade, duration_ms)
-             VALUES (?1, ?2, ?5, 'pass', 0), (?3, ?4, ?5, 'pass', 0)",
+            "INSERT INTO review_events (id, card_id, kind, reviewed_at, grade, duration_ms)
+             VALUES (?1, ?2, 'review', ?5, 'pass', 0), (?3, ?4, 'review', ?5, 'pass', 0)",
             params![x, cards[0], x_plus_1, cards[1], T0],
         )
         .unwrap();
@@ -140,8 +140,8 @@ fn a_malformed_largest_id_refuses_the_write_and_rolls_back() {
     store
         .conn
         .execute(
-            "INSERT INTO review_events (id, card_id, reviewed_at, grade, duration_ms)
-             VALUES (?1, ?2, ?3, 'pass', 0)",
+            "INSERT INTO review_events (id, card_id, kind, reviewed_at, grade, duration_ms)
+             VALUES (?1, ?2, 'review', ?3, 'pass', 0)",
             params![bad, cards[0], T0],
         )
         .unwrap();
@@ -272,6 +272,18 @@ enum Step {
         clock_delta: i64,
         duration_ms: u64,
     },
+    /// Undoes the card's latest surviving review or reset, or (with
+    /// `latest` false) tries to undo its oldest entry instead.
+    Undo {
+        card: usize,
+        latest: bool,
+        clock_delta: i64,
+    },
+    /// Resets the card.
+    Reset {
+        card: usize,
+        clock_delta: i64,
+    },
     /// A new process: the id generator starts from scratch.
     Restart,
     AddCard,
@@ -290,7 +302,7 @@ fn step() -> impl Strategy<Value = Step> {
         3 => 0..=3 * STEP_MS,
         3 => 0..=60 * DAY_MS,
     ];
-    let review = (0usize..64, any::<bool>(), delta, 0u64..120_000).prop_map(
+    let review = (0usize..64, any::<bool>(), delta.clone(), 0u64..120_000).prop_map(
         |(card, pass, clock_delta, duration_ms)| Step::Review {
             card,
             pass,
@@ -298,8 +310,19 @@ fn step() -> impl Strategy<Value = Step> {
             duration_ms,
         },
     );
+    let undo = (0usize..64, prop::bool::weighted(0.8), delta.clone()).prop_map(
+        |(card, latest, clock_delta)| Step::Undo {
+            card,
+            latest,
+            clock_delta,
+        },
+    );
+    let reset = (0usize..64, delta.clone())
+        .prop_map(|(card, clock_delta)| Step::Reset { card, clock_delta });
     prop_oneof![
         30 => review,
+        8 => undo,
+        2 => reset,
         3 => Just(Step::Restart),
         3 => Just(Step::AddCard),
         2 => (0usize..64).prop_map(Step::DeleteCard),
@@ -308,10 +331,12 @@ fn step() -> impl Strategy<Value = Step> {
     ]
 }
 
-/// What the store should hold: each card's recorded events and whether it
-/// was deleted on its own, and which cards went with a deck delete.
+/// What the store should hold: each card's recorded entries, those no
+/// undo cancels (in order), whether it was deleted on its own, and
+/// whether the deck is deleted.
 struct Model {
     events: Vec<Vec<ReviewEvent>>,
+    alive: Vec<Vec<ReviewEvent>>,
     deleted_alone: Vec<bool>,
     deck_deleted: bool,
 }
@@ -320,15 +345,39 @@ impl Model {
     fn live(&self, card: usize) -> bool {
         !self.deck_deleted && !self.deleted_alone[card]
     }
+
+    /// The card's state from the model alone, without `rebuild_state`:
+    /// one `schedule` per surviving review after the last surviving reset.
+    fn expected(&self, card_id: &str, card: usize) -> CardState {
+        let alive = &self.alive[card];
+        let since = alive
+            .iter()
+            .rposition(|e| e.kind == EventKind::Reset)
+            .map_or(0, |p| p + 1);
+        alive[since..].iter().fold(CardState::New, |st, e| {
+            let grade = e.grade().expect("only reviews follow the last reset");
+            Scheduler::default()
+                .schedule(card_id, &st, grade, e.reviewed_at)
+                .unwrap()
+        })
+    }
+
+    fn floor(&self, card: usize, clock: i64) -> i64 {
+        self.events[card]
+            .last()
+            .map_or(clock, |l| l.reviewed_at.max(clock))
+    }
 }
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
-    /// The cache written review by review equals a full rebuild from the
+    /// The cache written entry by entry equals a full rebuild from the
     /// log, whatever the clock does, however often the app restarts, and
-    /// whatever cards and decks are added, deleted and brought back.
-    /// Deleted cards refuse reviews and keep their history.
+    /// whatever cards and decks are added, deleted and brought back, with
+    /// undos and resets among the reviews (ADR 0028). Only the latest
+    /// surviving entry can be undone. Deleted cards refuse reviews, undos
+    /// and resets, and keep their history.
     #[test]
     fn cache_equals_rebuild_after_random_reviews(
         n_cards in 1usize..=4,
@@ -338,6 +387,7 @@ proptest! {
         let mut clock = T0;
         let mut model = Model {
             events: vec![Vec::new(); n_cards],
+            alive: vec![Vec::new(); n_cards],
             deleted_alone: vec![false; n_cards],
             deck_deleted: false,
         };
@@ -353,11 +403,53 @@ proptest! {
                     );
                     if model.live(card) {
                         let e = result.unwrap();
-                        let floor = model.events[card]
-                            .last()
-                            .map_or(clock, |l| l.reviewed_at.max(clock));
-                        prop_assert_eq!(e.reviewed_at, floor);
+                        prop_assert_eq!(e.reviewed_at, model.floor(card, clock));
+                        model.events[card].push(e.clone());
+                        model.alive[card].push(e);
+                    } else {
+                        prop_assert!(matches!(result, Err(Error::CardNotFound(_))));
+                    }
+                }
+                Step::Undo { card, latest, clock_delta } => {
+                    clock += clock_delta;
+                    let card = card % cards.len();
+                    let target = if latest {
+                        model.alive[card].last()
+                    } else {
+                        model.events[card].first()
+                    };
+                    let Some(target) = target.cloned() else { continue };
+                    let is_latest = model.alive[card].last() == Some(&target);
+                    let result = store.undo(&cards[card], &target.id, clock);
+                    if !model.live(card) {
+                        prop_assert!(matches!(result, Err(Error::CardNotFound(_))));
+                    } else if is_latest {
+                        let e = result.unwrap();
+                        prop_assert_eq!(e.reviewed_at, model.floor(card, clock));
+                        prop_assert_eq!(
+                            &e.kind,
+                            &EventKind::Undo { undoes: target.id.clone() }
+                        );
                         model.events[card].push(e);
+                        model.alive[card].pop();
+                    } else {
+                        prop_assert!(
+                            matches!(result, Err(Error::NotLatestEntry(_))),
+                            "{:?}",
+                            result
+                        );
+                    }
+                }
+                Step::Reset { card, clock_delta } => {
+                    clock += clock_delta;
+                    let card = card % cards.len();
+                    let result = store.reset_card(&cards[card], clock);
+                    if model.live(card) {
+                        let e = result.unwrap();
+                        prop_assert_eq!(e.reviewed_at, model.floor(card, clock));
+                        prop_assert_eq!(store.card_state(&cards[card]).unwrap(), CardState::New);
+                        model.events[card].push(e.clone());
+                        model.alive[card].push(e);
                     } else {
                         prop_assert!(matches!(result, Err(Error::CardNotFound(_))));
                     }
@@ -369,6 +461,7 @@ proptest! {
                     } else {
                         cards.push(result.unwrap().id);
                         model.events.push(Vec::new());
+                        model.alive.push(Vec::new());
                         model.deleted_alone.push(false);
                     }
                 }
@@ -404,14 +497,148 @@ proptest! {
             // (c) The log replays in the order it was recorded, deleted
             // cards included.
             prop_assert_eq!(&store.review_events(card).unwrap(), events);
-            // (a) The cache equals the rebuild of this card's log.
+            // (a) The cache equals the rebuild of this card's log, and the
+            // state of a log that never had the undone entries (#11).
             prop_assert_eq!(store.card_state(card).unwrap(), rebuilt(&store, card));
+            prop_assert_eq!(store.card_state(card).unwrap(), model.expected(card, i));
         }
         // (b) Rebuilding the whole cache changes nothing.
         let before = schedule_table(&store);
         store.rebuild_schedule_cache(&Scheduler::default()).unwrap();
         prop_assert_eq!(schedule_table(&store), before);
     }
+}
+
+#[test]
+fn undo_appends_an_entry_and_rebuilds_the_card() {
+    let (mut store, _, cards) = store_with_cards(1);
+    let card = &cards[0];
+    let first = store
+        .record_review(card, Grade::Fail, Duration::ZERO, T0)
+        .unwrap();
+    let before = store.card_state(card).unwrap();
+    let second = store
+        .record_review(card, Grade::Pass, Duration::ZERO, T0 + STEP_MS)
+        .unwrap();
+    // A clock behind the last entry is floored to it, as for a review.
+    let undo = store.undo(card, &second.id, T0).unwrap();
+    assert_eq!(undo.reviewed_at, T0 + STEP_MS);
+    assert_eq!(
+        undo.kind,
+        EventKind::Undo {
+            undoes: second.id.clone()
+        }
+    );
+    assert_eq!((undo.duration_ms, undo.grade()), (0, None));
+    assert!(undo.id > second.id);
+    assert_eq!(
+        store.review_events(card).unwrap(),
+        [first.clone(), second, undo]
+    );
+    assert_eq!(store.card_state(card).unwrap(), before);
+    // The one before can be undone next; then the card is new.
+    store.undo(card, &first.id, T0 + STEP_MS).unwrap();
+    assert_eq!(store.card_state(card).unwrap(), CardState::New);
+}
+
+#[test]
+fn only_the_latest_surviving_review_or_reset_can_be_undone() {
+    let (mut store, _, cards) = store_with_cards(2);
+    let card = &cards[0];
+    let first = store
+        .record_review(card, Grade::Fail, Duration::ZERO, T0)
+        .unwrap();
+    let second = store
+        .record_review(card, Grade::Pass, Duration::ZERO, T0 + 1)
+        .unwrap();
+    let missing = "01920000-0000-7000-8000-00000000dead";
+    let log = store.review_events(card).unwrap();
+    let cache = schedule_table(&store);
+    let refused =
+        |store: &mut Store, card: &str, id: &str| store.undo(card, id, T0 + 2).unwrap_err();
+    assert!(matches!(
+        refused(&mut store, card, &first.id),
+        Error::NotLatestEntry(_)
+    ));
+    assert!(matches!(
+        refused(&mut store, card, missing),
+        Error::EventNotFound(_)
+    ));
+    // Another card's entry is not in this card's log.
+    assert!(matches!(
+        refused(&mut store, &cards[1], &second.id),
+        Error::EventNotFound(_)
+    ));
+    // The refusals wrote nothing.
+    assert_eq!(store.review_events(card).unwrap(), log);
+    assert_eq!(schedule_table(&store), cache);
+    let undo = store.undo(card, &second.id, T0 + 2).unwrap();
+    let after_undo = schedule_table(&store);
+    // Already undone, and an undo itself: neither is the latest any more.
+    assert!(matches!(
+        refused(&mut store, card, &second.id),
+        Error::NotLatestEntry(_)
+    ));
+    assert!(matches!(
+        refused(&mut store, card, &undo.id),
+        Error::NotLatestEntry(_)
+    ));
+    assert_eq!(store.review_events(card).unwrap().len(), log.len() + 1);
+    assert_eq!(schedule_table(&store), after_undo);
+    // A reset can be undone, and brings the schedule back.
+    let kept = store.card_state(card).unwrap();
+    let reset = store.reset_card(card, T0 + 3).unwrap();
+    assert_eq!(store.card_state(card).unwrap(), CardState::New);
+    store.undo(card, &reset.id, T0 + 3).unwrap();
+    assert_eq!(store.card_state(card).unwrap(), kept);
+}
+
+#[test]
+fn a_deleted_card_cannot_be_reset_or_undone_and_nothing_is_written() {
+    let (mut store, _, cards) = store_with_cards(1);
+    let card = &cards[0];
+    let e = store
+        .record_review(card, Grade::Pass, Duration::ZERO, T0)
+        .unwrap();
+    store.delete_card_at(card, T0 + 1).unwrap();
+    let cache = schedule_table(&store);
+    assert!(matches!(
+        store.reset_card(card, T0 + 2),
+        Err(Error::CardNotFound(_))
+    ));
+    assert!(matches!(
+        store.undo(card, &e.id, T0 + 2),
+        Err(Error::CardNotFound(_))
+    ));
+    assert_eq!(store.review_events(card).unwrap(), [e]);
+    assert_eq!(schedule_table(&store), cache);
+}
+
+#[test]
+fn a_reset_card_is_new_and_reviewed_again_from_scratch() {
+    let (mut store, _, cards) = store_with_cards(1);
+    let card = &cards[0];
+    for (i, grade) in [Grade::Fail, Grade::Pass, Grade::Pass]
+        .into_iter()
+        .enumerate()
+    {
+        let at = T0 + i64::try_from(i).unwrap() * 3 * DAY_MS;
+        store
+            .record_review(card, grade, Duration::ZERO, at)
+            .unwrap();
+    }
+    let reset = store.reset_card(card, T0 + 10 * DAY_MS).unwrap();
+    assert_eq!((reset.kind.as_str(), reset.duration_ms), ("reset", 0));
+    assert_eq!(store.card_state(card).unwrap(), CardState::New);
+    store
+        .record_review(card, Grade::Pass, Duration::ZERO, T0 + 11 * DAY_MS)
+        .unwrap();
+    let s = scheduled(store.card_state(card).unwrap());
+    assert_eq!(
+        (s.reps, s.lapses, s.due_at),
+        (1, 0, T0 + 11 * DAY_MS + STEP_MS)
+    );
+    assert_eq!(store.card_state(card).unwrap(), rebuilt(&store, card));
 }
 
 mod study {
@@ -850,6 +1077,55 @@ mod limits {
         let input = store.study_input(&deck, NOW, DAY_START).unwrap();
         assert_eq!((input.new_today, input.reviews_today), (1, 1));
         assert!(input.reviews.is_empty() && input.new.is_empty());
+    }
+
+    #[test]
+    fn an_undone_review_gives_its_place_in_the_limits_back() {
+        let (mut store, deck, cards) = overdue(3);
+        let fresh = store.add_card_at(&deck, "fresh", "a", T0).unwrap().id;
+        store.set_max_reviews_per_day(1).unwrap();
+        store.set_max_new_per_day(1).unwrap();
+        let new_review = answer(&mut store, &fresh, Grade::Pass, NOW);
+        let old_review = answer(&mut store, &cards[0], Grade::Pass, NOW);
+        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        assert_eq!((input.new_today, input.reviews_today), (1, 1));
+        store.undo(&cards[0], &old_review.id, NOW).unwrap();
+        store.undo(&fresh, &new_review.id, NOW).unwrap();
+        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        assert_eq!((input.new_today, input.reviews_today), (0, 0));
+        assert_eq!(input.new, [fresh]);
+        assert_eq!(input.reviews.len(), 1);
+        assert_eq!(input.reviews[0].card_id, cards[0]);
+    }
+
+    #[test]
+    fn a_reset_card_is_new_again_and_its_old_reviews_do_not_count() {
+        let (mut store, deck, cards) = overdue(2);
+        // Reviewed today, then reset: neither a review nor a new card of
+        // today any more, and offered as new.
+        answer(&mut store, &cards[0], Grade::Pass, NOW);
+        store.reset_card(&cards[0], NOW).unwrap();
+        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        assert_eq!((input.new_today, input.reviews_today), (0, 0));
+        assert_eq!(input.new, [cards[0].clone()]);
+        assert_eq!(input.reviews.len(), 1);
+        // Its first review after the reset is a new card of today.
+        answer(&mut store, &cards[0], Grade::Pass, NOW + 1);
+        let input = store.study_input(&deck, NOW + 1, DAY_START).unwrap();
+        assert_eq!((input.new_today, input.reviews_today), (1, 0));
+        // Undoing the reset brings back its old history.
+        let log = store.review_events(&cards[0]).unwrap();
+        let reset = log
+            .iter()
+            .find(|e| e.kind.as_str() == "reset")
+            .unwrap()
+            .clone();
+        let last = log.last().unwrap().clone();
+        store.undo(&cards[0], &last.id, NOW + 1).unwrap();
+        store.undo(&cards[0], &reset.id, NOW + 1).unwrap();
+        let input = store.study_input(&deck, NOW + 1, DAY_START).unwrap();
+        assert_eq!((input.new_today, input.reviews_today), (0, 1));
+        assert_eq!(input.new, Vec::<String>::new());
     }
 
     #[test]

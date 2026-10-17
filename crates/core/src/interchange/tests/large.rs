@@ -32,47 +32,9 @@ fn five_thousand_cards_with_reviews_round_trip() {
 /// An export made by the last version before the rename to Rappel (named
 /// `.cards`, format version 1): 3 decks (one deleted), 5 cards (two deleted,
 /// one of them with its deck) and 4 review events. Written once with that
-/// build and never regenerated: it guards the archive layout against drift.
+/// build and never regenerated: it guards the archive layout against drift,
+/// and its version is refused (ADR 0017).
 const PRE_RENAME_EXPORT: &[u8] = include_bytes!("../../../tests/fixtures/export-v1.cards");
-
-#[test]
-fn imports_an_export_made_before_the_rename() {
-    let mut env = Env::new();
-    let plan = env.plan(PRE_RENAME_EXPORT).unwrap();
-    assert_eq!(
-        (
-            plan.summary().decks.new,
-            plan.summary().cards.new,
-            plan.summary().review_events.new
-        ),
-        (3, 5, 4)
-    );
-
-    let report = env.import(PRE_RENAME_EXPORT).unwrap();
-    assert_eq!(
-        (report.decks, report.cards, report.review_events),
-        (3, 5, 4)
-    );
-
-    // Every row came across unchanged: ids, texts, deleted stamps, reviews.
-    let old = json_of(PRE_RENAME_EXPORT);
-    let now = json_of(&env.export());
-    assert_eq!(old["format_version"], 1);
-    for table in ["decks", "cards", "review_events"] {
-        assert_eq!(now[table], old[table], "{table}");
-    }
-    assert_eq!(old["cards"].as_array().unwrap().len(), 5);
-}
-
-#[test]
-fn importing_a_pre_rename_export_twice_changes_nothing() {
-    let mut env = Env::new();
-    env.import(PRE_RENAME_EXPORT).unwrap();
-    let after_first = env.export();
-    assert!(env.plan(PRE_RENAME_EXPORT).unwrap().summary().is_noop());
-    env.import(PRE_RENAME_EXPORT).unwrap();
-    assert_eq!(env.export(), after_first);
-}
 
 #[test]
 fn the_pre_rename_export_has_the_same_layout_as_a_new_one() {
@@ -97,21 +59,20 @@ fn imports_accept_the_old_and_the_new_extension() {
     assert!(IMPORT_EXTENSIONS.contains(&"cards"));
 }
 
+/// A `.cards` file is still offered by the file chooser, and refused by
+/// its version, whatever its name, with nothing written.
 #[test]
-fn imports_a_pre_rename_export_from_disk_whatever_its_extension() {
-    let mut env = Env::new();
+fn a_pre_rename_export_is_refused_by_its_version_whatever_its_extension() {
+    let env = Env::new();
     for name in ["old.cards", "renamed.rappel"] {
         let path = env.tmp.path().join(name);
         fs::write(&path, PRE_RENAME_EXPORT).unwrap();
-        let plan = env.store.plan_import(&path).unwrap();
-        if name == "old.cards" {
-            let report = env.store.apply_import(&plan).unwrap();
-            assert_eq!(
-                (report.decks, report.cards, report.review_events),
-                (3, 5, 4)
-            );
-        } else {
-            assert!(plan.summary().is_noop(), "{name}");
-        }
+        let err = env.store.plan_import(&path).unwrap_err();
+        assert!(
+            matches!(err, Error::ImportRefused(ImportProblem::EarlyTestVersion)),
+            "{name}: {err:?}"
+        );
     }
+    assert_eq!(env.store.decks().unwrap(), []);
+    assert_eq!(env.backups(), 0);
 }

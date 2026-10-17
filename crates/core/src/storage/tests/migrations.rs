@@ -346,18 +346,19 @@ fn migration_0006_adds_settings_and_keeps_everything_else() {
 fn a_rebuilding_migration_uses_the_stored_retention() {
     let e = env();
     {
-        let mut v6 = e.open_with(DAY0, &MIGRATIONS[..6]).unwrap();
-        insert_sample(&v6.conn);
+        let mut current = e.open(DAY0).unwrap();
+        insert_sample(&current.conn);
         insert_events(
-            &v6.conn,
+            &current.conn,
             CARD,
             10,
             &[(DAY_MS, "pass"), (9 * DAY_MS, "pass")],
         );
-        v6.set_desired_retention(0.80).unwrap();
+        current.set_desired_retention(0.80).unwrap();
     }
+    let next = latest(MIGRATIONS) + 1;
     let rebuild = Migration {
-        version: 7,
+        version: next,
         name: "fake rebuild",
         sql: "SELECT 1;",
         rebuild_schedule: true,
@@ -366,7 +367,7 @@ fn a_rebuilding_migration_uses_the_stored_retention() {
     let mut migrations = MIGRATIONS.to_vec();
     migrations.push(rebuild);
     let store = e.open_with(DAY0, &migrations).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 7);
+    assert_eq!(store.schema_version().unwrap(), next);
     let events = store.review_events(CARD).unwrap();
     let at_80 = Scheduler::new(0.80)
         .unwrap()
@@ -375,4 +376,126 @@ fn a_rebuilding_migration_uses_the_stored_retention() {
     let at_90 = Scheduler::default().rebuild_state(CARD, &events).unwrap();
     assert_ne!(at_80, at_90, "the test needs the retentions to differ");
     assert_eq!(store.card_state(CARD).unwrap(), at_80);
+}
+
+/// The `CREATE` statement of `name` in the schema.
+fn schema_sql(conn: &Connection, name: &str) -> String {
+    conn.query_row(
+        "SELECT sql FROM sqlite_schema WHERE name = ?1",
+        [name],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// Migration 0007 rebuilds `review_events` with entry kinds (ADR 0028):
+/// every row comes across as a review, unchanged; the schedule cache is
+/// untouched; the append-only triggers are back; the self-reference names
+/// the renamed table.
+#[test]
+fn migration_0007_keeps_every_review_and_the_cache() {
+    use crate::domain::{EventKind, Grade};
+    use crate::test_support::schedule_table;
+
+    let e = env();
+    let before = {
+        let mut v6 = e.open_with(DAY0, &MIGRATIONS[..6]).unwrap();
+        insert_sample(&v6.conn);
+        v6.conn
+            .execute_batch(&format!(
+                "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+                     VALUES ('{CARD2}', '{DECK}', 'f', 'b', 1, 1);"
+            ))
+            .unwrap();
+        insert_events(&v6.conn, CARD2, 10, &REVIEWS);
+        // The cache of both cards, as version 6 builds it.
+        v6.rebuild_schedule_cache(&Scheduler::default()).unwrap();
+        let rows: Vec<(String, String, i64, String, i64)> = v6
+            .conn
+            .prepare("SELECT id, card_id, reviewed_at, grade, duration_ms FROM review_events ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        (rows, schedule_table(&v6))
+    };
+    let store = e.open_with(DAY0, &MIGRATIONS[..7]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 7);
+    let after: Vec<(String, String, i64, String, i64)> = store
+        .conn
+        .prepare(
+            "SELECT id, card_id, reviewed_at, grade, duration_ms FROM review_events
+             WHERE kind = 'review' AND undoes IS NULL ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(after, before.0);
+    assert_eq!(count(&store.conn, "review_events"), 5);
+    assert_eq!(schedule_table(&store), before.1);
+    let events = store.review_events(CARD).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind, EventKind::Review(Grade::Pass));
+    // The triggers came back with the table.
+    for sql in [
+        "UPDATE review_events SET grade = 'fail'",
+        "DELETE FROM review_events",
+    ] {
+        let err = store.conn.execute(sql, []).unwrap_err();
+        assert!(err.to_string().contains("append-only"), "{sql}: {err}");
+    }
+    let table = schema_sql(&store.conn, "review_events");
+    assert!(
+        table.contains("REFERENCES \"review_events\"(id)"),
+        "{table}"
+    );
+    assert!(!table.contains("review_events_v7"), "{table}");
+    for name in [
+        "review_events_card_reviewed",
+        "review_events_undoes",
+        "review_events_no_update",
+        "review_events_no_delete",
+        "review_events_undo_target",
+    ] {
+        schema_sql(&store.conn, name);
+    }
+    // The pre-migration backup is the version-6 database.
+    assert_eq!(e.backups().len(), 1);
+}
+
+/// Migration 0008 only adds the empty tag tables.
+#[test]
+fn migration_0008_adds_tags_and_keeps_everything_else() {
+    use crate::test_support::schedule_table;
+
+    let e = env();
+    let before = {
+        let v7 = e.open_with(DAY0, &MIGRATIONS[..7]).unwrap();
+        insert_sample(&v7.conn);
+        assert!(!tables(&v7.conn).contains(&"tags".to_owned()));
+        (
+            schedule_table(&v7),
+            v7.review_events(CARD).unwrap(),
+            v7.list_cards(DECK).unwrap(),
+        )
+    };
+    let store = e.open_with(DAY0, &MIGRATIONS[..8]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(count(&store.conn, "tags"), 0);
+    assert_eq!(count(&store.conn, "card_tags"), 0);
+    assert_eq!(store.tags().unwrap(), []);
+    assert_eq!(
+        (
+            schedule_table(&store),
+            store.review_events(CARD).unwrap(),
+            store.list_cards(DECK).unwrap()
+        ),
+        before
+    );
+    assert_eq!(e.backups().len(), 1);
 }

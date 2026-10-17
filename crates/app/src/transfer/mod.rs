@@ -21,7 +21,9 @@ use crate::ui::toast::{info_toast, show_error};
 use crate::ui::{dialog, worker};
 use crate::window::RappelWindow;
 use names::Names;
-use text::{conflicts_text, export_file_name, exported_text, imported_text, plan_view};
+use text::{
+    conflicts_text, export_file_name, exported_text, imported_text, plan_view, refused_text,
+};
 
 /// Asks where to save, then exports there on a worker thread.
 pub async fn export(window: &RappelWindow, state: &AppState) {
@@ -62,11 +64,7 @@ pub async fn import(window: &RappelWindow, state: &AppState) {
     let plan = match result {
         Ok(Ok(plan)) => plan,
         Ok(Err(Error::ImportRefused(problem))) => {
-            show_error(
-                window,
-                "an import check",
-                &format!("This file cannot be imported: {problem}"),
-            );
+            show_error(window, "an import check", &refused_text(&problem));
             return;
         }
         Ok(Err(err)) => {

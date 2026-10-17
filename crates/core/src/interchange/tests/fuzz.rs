@@ -385,8 +385,9 @@ proptest! {
     }
 }
 
-/// Deep nesting where the format holds free JSON values (`settings`
-/// values, `media` items, parsed as `serde_json::Value`, recursively)
+/// Deep nesting where the format holds free JSON values (`media` items,
+/// parsed as `serde_json::Value`, recursively; settings are typed since
+/// version 2)
 /// stops at `serde_json`'s recursion limit (128) with an error, on a small
 /// stack, instead of overflowing it. A shallow nesting gets through the
 /// parser to the check behind it, which shows the path is reached.
@@ -394,18 +395,11 @@ proptest! {
 fn deeply_nested_json_is_refused() {
     let text = String::from_utf8(read_cards_json(&base().0, &Limits::DEFAULT).unwrap()).unwrap();
     // The empty field, and the same field holding VALUE.
-    let fields = [
-        (
-            r#""settings": {}"#,
-            r#""settings": {"k": VALUE}"#,
-            ImportProblem::UnsupportedSettings,
-        ),
-        (
-            r#""media": []"#,
-            r#""media": [VALUE]"#,
-            ImportProblem::UnsupportedMedia,
-        ),
-    ];
+    let fields = [(
+        r#""media": []"#,
+        r#""media": [VALUE]"#,
+        ImportProblem::UnsupportedMedia,
+    )];
     for (empty, holding, shallow_problem) in fields {
         assert!(text.contains(empty), "{empty}");
         for depth in [3, 200, 10_000, 1_000_000] {
@@ -455,8 +449,8 @@ fn duplicate_keys_are_refused() {
     let json = read_cards_json(&base().0, &Limits::DEFAULT).unwrap();
     let text = String::from_utf8(json).unwrap();
     let doubled = text.replacen(
-        "\"format_version\": 1,",
-        "\"format_version\": 1, \"format_version\": 1,",
+        "\"format_version\": 2,",
+        "\"format_version\": 2, \"format_version\": 2,",
         1,
     );
     assert_ne!(doubled, text);

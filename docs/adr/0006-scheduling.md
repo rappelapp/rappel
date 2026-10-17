@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-15
-- Amended by: ADR 0009 (the Pass row for review cards), ADR 0027 (the stored desired retention is used)
+- Amended by: ADR 0009 (the Pass row for review cards), ADR 0027 (the stored desired retention is used), ADR 0028 (the rebuild skips undone entries and starts again at a reset; the fuzz counts surviving reviews)
 
 ## Context
 

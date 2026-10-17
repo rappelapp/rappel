@@ -56,11 +56,22 @@ fn export_delete_all_import_revives_everything() {
                 present: 2,
                 revived: 2
             },
-            review_events: TableCounts {
+            tags: TableCounts {
                 new: 0,
-                present: 5,
+                present: 3,
                 revived: 0
             },
+            card_tags: TableCounts {
+                new: 0,
+                present: 3,
+                revived: 0
+            },
+            review_events: TableCounts {
+                new: 0,
+                present: 8,
+                revived: 0
+            },
+            settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }
     );
@@ -122,11 +133,22 @@ fn a_mixed_import_revives_adds_and_skips() {
                 present: 2,
                 revived: 3
             },
-            review_events: TableCounts {
+            tags: TableCounts {
                 new: 0,
-                present: 5,
+                present: 3,
                 revived: 0
             },
+            card_tags: TableCounts {
+                new: 0,
+                present: 3,
+                revived: 0
+            },
+            review_events: TableCounts {
+                new: 0,
+                present: 8,
+                revived: 0
+            },
+            settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }
     );
@@ -213,11 +235,22 @@ fn a_row_deleted_in_the_file_but_live_here_is_present() {
                 present: 4,
                 revived: 0
             },
-            review_events: TableCounts {
+            tags: TableCounts {
                 new: 0,
-                present: 5,
+                present: 3,
                 revived: 0
             },
+            card_tags: TableCounts {
+                new: 0,
+                present: 3,
+                revived: 0
+            },
+            review_events: TableCounts {
+                new: 0,
+                present: 8,
+                revived: 0
+            },
+            settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }
     );

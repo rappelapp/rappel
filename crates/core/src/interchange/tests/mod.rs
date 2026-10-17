@@ -83,8 +83,10 @@ fn replace_all(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
 }
 
 /// A small but varied database: a renamed deck, a deleted deck, edited,
-/// deleted and undeleted cards, and reviews on live and deleted cards.
-/// Returns the store and the ids of the live deck and its first card.
+/// deleted and undeleted cards, reviews on live and deleted cards, a
+/// reset and an undo, tags (one on two cards, one on a deleted card, one
+/// unused). Returns the store and the ids of the live deck and its first
+/// card. 2 decks, 4 cards, 3 tags, 3 card tags, 8 log entries.
 fn sample(store: &mut Store) -> (String, String) {
     let maths = store.create_deck("Maths").unwrap().id;
     store.rename_deck(&maths, "Mathématiques").unwrap();
@@ -113,6 +115,17 @@ fn sample(store: &mut Store) -> (String, String) {
             .unwrap();
         t += DAY_MS;
     }
+    // q3: reset, reviewed again, and that review undone.
+    store.reset_card(&q3, t).unwrap();
+    let again = store
+        .record_review(&q3, Grade::Pass, Duration::from_millis(900), t + 1)
+        .unwrap();
+    store.undo(&q3, &again.id, t + 2).unwrap();
+    store.add_tag(&q1, "Algebra").unwrap();
+    store.add_tag(&q2, "algebra").unwrap();
+    store.add_tag(&p1, "Light").unwrap();
+    let unused = store.add_tag(&q3, "Unused").unwrap();
+    store.remove_tag(&q3, &unused.id).unwrap();
     store.delete_card(&q3).unwrap();
     store.undelete_card(&q3).unwrap();
     store.delete_card(&q2).unwrap();
@@ -136,7 +149,7 @@ fn refused(result: crate::Result<ImportPlan>) -> ImportProblem {
 /// A hand-written file with fixed ids pins the format: importing it into
 /// an empty database and exporting again gives exactly this text.
 const FIXTURE: &str = r#"{
-  "format_version": 1,
+  "format_version": 2,
   "exported_at": 1800707696789,
   "decks": [
     {
@@ -174,22 +187,80 @@ const FIXTURE: &str = r#"{
       "deleted_at": 1792067700000
     }
   ],
+  "tags": [
+    {
+      "id": "01920000-0000-7000-8000-000000000009",
+      "name": "Algebra"
+    },
+    {
+      "id": "01920000-0000-7000-8000-00000000000a",
+      "name": "Unused"
+    }
+  ],
+  "card_tags": [
+    {
+      "card_id": "01920000-0000-7000-8000-000000000003",
+      "tag_id": "01920000-0000-7000-8000-000000000009"
+    },
+    {
+      "card_id": "01920000-0000-7000-8000-000000000004",
+      "tag_id": "01920000-0000-7000-8000-000000000009"
+    }
+  ],
   "review_events": [
     {
       "id": "01920000-0000-7000-8000-000000000005",
       "card_id": "01920000-0000-7000-8000-000000000003",
+      "kind": "review",
       "reviewed_at": 1792067696789,
       "grade": "pass",
-      "duration_ms": 1200
+      "duration_ms": 1200,
+      "undoes": null
     },
     {
       "id": "01920000-0000-7000-8000-000000000006",
       "card_id": "01920000-0000-7000-8000-000000000004",
+      "kind": "review",
       "reviewed_at": 1792067696789,
       "grade": "fail",
-      "duration_ms": 0
+      "duration_ms": 0,
+      "undoes": null
+    },
+    {
+      "id": "01920000-0000-7000-8000-000000000007",
+      "card_id": "01920000-0000-7000-8000-000000000003",
+      "kind": "reset",
+      "reviewed_at": 1792067700000,
+      "grade": null,
+      "duration_ms": 0,
+      "undoes": null
+    },
+    {
+      "id": "01920000-0000-7000-8000-000000000008",
+      "card_id": "01920000-0000-7000-8000-000000000003",
+      "kind": "undo",
+      "reviewed_at": 1792067700001,
+      "grade": null,
+      "duration_ms": 0,
+      "undoes": "01920000-0000-7000-8000-000000000007"
     }
   ],
+  "settings": {
+    "desired_retention": 0.85,
+    "max_new_per_day": 10,
+    "day_start_hour": 5
+  },
+  "media": []
+}
+"#;
+
+/// A minimal file of format version 1, as early test versions wrote it.
+const FIXTURE_V1: &str = r#"{
+  "format_version": 1,
+  "exported_at": 1800707696789,
+  "decks": [],
+  "cards": [],
+  "review_events": [],
   "settings": {},
   "media": []
 }
@@ -210,6 +281,7 @@ mod conflicts;
 mod format;
 mod fuzz;
 mod large;
+mod log_and_tags;
 mod property;
 mod refused;
 mod revive;

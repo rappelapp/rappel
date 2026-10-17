@@ -6,12 +6,14 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use super::cards::live_card;
 use super::decks::ensure_live_deck;
-use super::schedule::{read_card_state, write_card_state};
+use super::schedule::{insert_event, read_card_state, read_log, rebuild_cards, write_card_state};
 use super::settings::{scheduler_in, settings_in};
 use super::{Store, observe_max_id};
-use crate::domain::{Grade, Phase, ReviewEvent};
-use crate::error::Result;
+use crate::domain::{CardState, EventKind, Grade, Phase, ReviewEvent};
+use crate::error::{Error, Result};
+use crate::id::IdGen;
 use crate::scheduling::session::{Due, EARLY_MS, StudyInput, allowance};
+use crate::scheduling::surviving;
 
 impl Store {
     /// Records that card `card_id` was answered with `grade` after
@@ -41,17 +43,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         live_card(&tx, card_id)?;
         let state = read_card_state(&tx, card_id)?;
-        let last_at: Option<i64> = tx.query_row(
-            "SELECT max(reviewed_at) FROM review_events WHERE card_id = ?1",
-            [card_id],
-            |r| r.get(0),
-        )?;
-        let reviewed_at = last_at.map_or(now, |last| now.max(last));
-        // The new id must sort after this card's last event. It must also
-        // differ from every other event's id: after a restart, the previous
-        // run may have issued `x + 1` for another card, so observing only
-        // this card's `x` is not enough. The largest id covers both.
-        observe_max_id(&tx, &mut self.ids, "review_events.id")?;
+        let reviewed_at = next_entry_time(&tx, &mut self.ids, card_id, now)?;
         // Read inside the transaction, so a retention changed on another
         // connection is used as soon as it is committed (ADR 0027).
         let next = scheduler_in(&tx)?.schedule(card_id, &state, grade, reviewed_at)?;
@@ -59,21 +51,82 @@ impl Store {
             id: self.ids.next(now)?,
             card_id: card_id.to_owned(),
             reviewed_at,
-            grade,
+            kind: EventKind::Review(grade),
             duration_ms: i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
         };
-        tx.execute(
-            "INSERT INTO review_events (id, card_id, reviewed_at, grade, duration_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                event.id,
-                event.card_id,
-                event.reviewed_at,
-                event.grade.as_str(),
-                event.duration_ms
-            ],
-        )?;
+        insert_event(&tx, &event)?;
         write_card_state(&tx, card_id, &next)?;
+        tx.commit()?;
+        Ok(event)
+    }
+
+    /// Resets card `card_id` at `now` (UTC milliseconds): appends a reset
+    /// to its log and makes the card new, in one transaction (ADR 0028).
+    /// Its history stays in the log; replaying it starts again from here.
+    /// The entry is dated like a review ([`Self::record_review`]).
+    ///
+    /// # Errors
+    /// [`Error::CardNotFound`](crate::Error::CardNotFound) for a missing or
+    /// deleted card; id and SQLite errors. On error nothing is written.
+    pub fn reset_card(&mut self, card_id: &str, now: i64) -> Result<ReviewEvent> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        live_card(&tx, card_id)?;
+        let reviewed_at = next_entry_time(&tx, &mut self.ids, card_id, now)?;
+        let event = ReviewEvent {
+            id: self.ids.next(now)?,
+            card_id: card_id.to_owned(),
+            reviewed_at,
+            kind: EventKind::Reset,
+            duration_ms: 0,
+        };
+        insert_event(&tx, &event)?;
+        write_card_state(&tx, card_id, &CardState::New)?;
+        tx.commit()?;
+        Ok(event)
+    }
+
+    /// Cancels entry `event_id` of card `card_id` at `now`: appends an undo
+    /// that names it, then rebuilds the card's cached schedule from its
+    /// log, in one transaction (ADR 0028, #11). Only the card's latest
+    /// review or reset that is not already undone can be cancelled, so a
+    /// stale Undo button cannot reach further back; an undo is never
+    /// undone. The undo is dated like a review ([`Self::record_review`]).
+    ///
+    /// # Errors
+    /// [`Error::CardNotFound`](crate::Error::CardNotFound) for a missing or
+    /// deleted card; [`Error::EventNotFound`](crate::Error::EventNotFound)
+    /// if the entry is not in the card's log;
+    /// [`Error::NotLatestEntry`](crate::Error::NotLatestEntry) if it is not
+    /// the latest surviving review or reset; scheduler, id and SQLite
+    /// errors. On error nothing is written.
+    pub fn undo(&mut self, card_id: &str, event_id: &str, now: i64) -> Result<ReviewEvent> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        live_card(&tx, card_id)?;
+        let log = read_log(&tx, card_id)?;
+        if !log.iter().any(|e| e.id == event_id) {
+            return Err(Error::EventNotFound(event_id.to_owned()));
+        }
+        if surviving(&log)?.last().is_none_or(|e| e.id != event_id) {
+            return Err(Error::NotLatestEntry(event_id.to_owned()));
+        }
+        let reviewed_at = next_entry_time(&tx, &mut self.ids, card_id, now)?;
+        let event = ReviewEvent {
+            id: self.ids.next(now)?,
+            card_id: card_id.to_owned(),
+            reviewed_at,
+            kind: EventKind::Undo {
+                undoes: event_id.to_owned(),
+            },
+            duration_ms: 0,
+        };
+        insert_event(&tx, &event)?;
+        // Rebuilt from the log, never patched: the result must equal a
+        // replay of the log that never had the cancelled entry (#11).
+        rebuild_cards(&tx, &scheduler_in(&tx)?, [card_id])?;
         tx.commit()?;
         Ok(event)
     }
@@ -139,6 +192,38 @@ impl Store {
     }
 }
 
+/// The time for a new entry of `card_id` written at `now`, inside the
+/// write's transaction: `max(now, latest entry)`, so a clock that went
+/// backwards cannot put it before the card's last entry. Also raises
+/// the id generator above every entry, so the new id sorts after this
+/// card's last entry and differs from every other one: after a
+/// restart, the previous run may have issued `x + 1` for another card,
+/// so observing only this card's `x` is not enough (ADR 0008).
+fn next_entry_time(tx: &Connection, ids: &mut IdGen, card_id: &str, now: i64) -> Result<i64> {
+    let last_at: Option<i64> = tx.query_row(
+        "SELECT max(reviewed_at) FROM review_events WHERE card_id = ?1",
+        [card_id],
+        |r| r.get(0),
+    )?;
+    observe_max_id(tx, ids, "review_events.id")?;
+    Ok(last_at.map_or(now, |last| now.max(last)))
+}
+
+/// The common table `counted(card_id, reviewed_at)`: the reviews of deck
+/// `?1`'s cards (deleted ones included) that the daily limits count. Those
+/// are the reviews no undo cancels, made after the card's last reset that
+/// no undo cancels (ADR 0028): an undone review gives its place in today's
+/// budget back, and a reset card is new again, as its rebuilt state is.
+const COUNTED_REVIEWS: &str = "counted(card_id, reviewed_at) AS (
+    SELECT e.card_id, e.reviewed_at FROM review_events e JOIN cards c ON c.id = e.card_id
+    WHERE c.deck_id = ?1 AND e.kind = 'review'
+      AND NOT EXISTS (SELECT 1 FROM review_events u WHERE u.undoes = e.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM review_events r
+          WHERE r.card_id = e.card_id AND r.kind = 'reset'
+            AND (r.reviewed_at, r.id) > (e.reviewed_at, e.id)
+            AND NOT EXISTS (SELECT 1 FROM review_events u WHERE u.undoes = r.id)))";
+
 /// [`Store::study_input`] on `conn`, for callers that already hold a read
 /// transaction. [`Store::list_decks`] counts with it too, so the deck list
 /// and the deck page always agree.
@@ -171,11 +256,11 @@ pub(super) fn study_input_in(
     // Cards that had a review before today and one today: not new today,
     // and not counted by `new_today`.
     let reviews_today: u32 = conn.query_row(
-        "SELECT count(*) FROM (
-             SELECT e.card_id FROM review_events e JOIN cards c ON c.id = e.card_id
-             WHERE c.deck_id = ?1
-             GROUP BY e.card_id
-             HAVING min(e.reviewed_at) < ?2 AND max(e.reviewed_at) >= ?2)",
+        &format!(
+            "WITH {COUNTED_REVIEWS} SELECT count(*) FROM (
+                 SELECT card_id FROM counted GROUP BY card_id
+                 HAVING min(reviewed_at) < ?2 AND max(reviewed_at) >= ?2)"
+        ),
         params![deck_id, day_start],
         |r| r.get(0),
     )?;
@@ -191,10 +276,11 @@ pub(super) fn study_input_in(
         -1,
     )?;
     let new_today: u32 = conn.query_row(
-        "SELECT count(*) FROM (
-             SELECT e.card_id FROM review_events e JOIN cards c ON c.id = e.card_id
-             WHERE c.deck_id = ?1
-             GROUP BY e.card_id HAVING min(e.reviewed_at) >= ?2)",
+        &format!(
+            "WITH {COUNTED_REVIEWS} SELECT count(*) FROM (
+                 SELECT card_id FROM counted GROUP BY card_id
+                 HAVING min(reviewed_at) >= ?2)"
+        ),
         params![deck_id, day_start],
         |r| r.get(0),
     )?;

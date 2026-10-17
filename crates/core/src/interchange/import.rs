@@ -1,20 +1,24 @@
 //! Importing a `.rappel` file: plan (check and compare, no writes), then
 //! apply (back up, then one transaction).
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::format::{CardRecord, DeckRecord, Document, EventRecord};
+use super::format::{CardRecord, DeckRecord, Document, EventRecord, SettingsRecord};
 use super::{
-    Conflict, ImportPlan, ImportProblem, ImportReport, ImportSummary, Limits, archive, validate,
+    Conflict, ImportPlan, ImportProblem, ImportReport, ImportSummary, Limits, SettingsImport,
+    archive, validate,
 };
-use crate::domain::deck_name_key;
+use crate::domain::{deck_name_key, name_key};
 use crate::error::{Error, Result};
-use crate::storage::{Store, create_backup, prune_backups, rebuild_cards, scheduler_in};
+use crate::storage::{
+    Store, StoredSettings, create_backup, prune_backups, rebuild_cards, replace_settings,
+    scheduler_in, stored_settings,
+};
 use crate::time::now_ms;
 
 impl Store {
@@ -27,7 +31,10 @@ impl Store {
     /// would be added, those that would be brought back (deleted here,
     /// live in the file, otherwise the same) and those already present,
     /// and lists every conflict (a row with the same id but different
-    /// content, or a live deck name already used by another live deck).
+    /// content, a live deck name already used by another live deck, or an
+    /// undo of an entry the database has already undone). A tag with the
+    /// name of a database tag is mapped onto it, not a conflict. It also says whether the file's
+    /// settings would be applied: only into a database without decks.
     /// Pass the plan to [`Self::apply_import`].
     ///
     /// # Errors
@@ -71,9 +78,10 @@ impl Store {
         })
     }
 
-    /// Adds the plan's new decks, cards and review events to the database,
-    /// and brings back the deleted decks and cards that are live in the
-    /// file. A deck brought back also brings back the cards deleted with
+    /// Adds the plan's new decks, cards, tags, card tags and log entries
+    /// to the database, brings back the deleted decks and cards that are
+    /// live in the file, and applies the file's settings if the plan says
+    /// so (before the schedules are rebuilt, so they use them). A deck brought back also brings back the cards deleted with
     /// it, as [`Self::undelete_deck`] does, unless the file has them.
     ///
     /// Nothing is written if the plan has conflicts, or if every row is
@@ -103,7 +111,10 @@ impl Store {
             return Ok(ImportReport {
                 decks: 0,
                 cards: 0,
+                tags: 0,
+                card_tags: 0,
                 review_events: 0,
+                settings_applied: false,
                 revived_decks: 0,
                 revived_cards: 0,
                 backup: None,
@@ -133,12 +144,19 @@ impl Store {
         // Decks first, so a new card can go into a revived deck.
         revive_rows(&tx, doc, &rows)?;
         let reviewed = insert_rows(&tx, doc, &rows)?;
+        let settings_applied = summary.settings == SettingsImport::Applied;
+        if settings_applied {
+            replace_settings(&tx, &stored_of(&doc.settings))?;
+        }
         rebuild_cards(&tx, &scheduler_in(&tx)?, reviewed)?;
         tx.commit()?;
         tracing::info!(
             decks = summary.decks.new,
             cards = summary.cards.new,
+            tags = summary.tags.new,
+            card_tags = summary.card_tags.new,
             review_events = summary.review_events.new,
+            settings_applied,
             revived_decks = summary.decks.revived,
             revived_cards = summary.cards.revived,
             "import applied"
@@ -146,7 +164,10 @@ impl Store {
         Ok(ImportReport {
             decks: summary.decks.new,
             cards: summary.cards.new,
+            tags: summary.tags.new,
+            card_tags: summary.card_tags.new,
             review_events: summary.review_events.new,
+            settings_applied,
             revived_decks: summary.decks.revived,
             revived_cards: summary.cards.revived,
             backup: Some(backup),
@@ -191,17 +212,31 @@ fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>> {
 }
 
 /// How a document compares with the database: the summary, the positions
-/// of the rows to add and to bring back, and the ids of the cards that
-/// come back with a revived deck but are not in the file.
+/// of the rows to add and to bring back, the ids of the cards that come
+/// back with a revived deck but are not in the file, and the file's tags
+/// that are mapped onto a database tag of the same name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Classified {
     pub(super) summary: ImportSummary,
     new_decks: Vec<usize>,
     new_cards: Vec<usize>,
+    new_tags: Vec<usize>,
+    new_card_tags: Vec<usize>,
     new_events: Vec<usize>,
     revived_decks: Vec<usize>,
     revived_cards: Vec<usize>,
     batch_cards: Vec<String>,
+    /// File tag id → the database's tag id with the same name key.
+    mapped_tags: BTreeMap<String, String>,
+}
+
+impl Classified {
+    /// The database tag id a file tag id stands for.
+    fn tag_id<'a>(&'a self, file_id: &'a str) -> &'a str {
+        self.mapped_tags
+            .get(file_id)
+            .map_or(file_id, String::as_str)
+    }
 }
 
 /// What to do with a deck or card of the file whose id is in the database.
@@ -242,15 +277,95 @@ pub(super) fn compare(
 /// `deleted_at`, as [`Store::undelete_deck`]) that the file does not have;
 /// those the file has are decided by their own row. Then live deck names
 /// against the database's other live decks, which covers revived decks.
-/// Conflicts come in file order: decks, cards, events, then names.
+/// Conflicts come in file order: decks, cards, tags, events, then deck
+/// names. Last, the settings.
 fn classify(conn: &Connection, doc: &Document) -> Result<Classified> {
     let mut rows = Classified::default();
     let batches = classify_decks(conn, doc, &mut rows)?;
     classify_cards(conn, doc, &mut rows)?;
     add_batch_cards(conn, doc, &batches, &mut rows)?;
+    classify_tags(conn, doc, &mut rows)?;
+    classify_card_tags(conn, doc, &mut rows)?;
     classify_events(conn, doc, &mut rows)?;
     check_deck_names(conn, doc, &mut rows.summary)?;
+    rows.summary.settings = classify_settings(conn, &doc.settings)?;
     Ok(rows)
+}
+
+/// A tag with the same id is present if it has the same name, else a
+/// conflict. A tag whose id is not here but whose name key a database tag
+/// has is that tag (two machines that each created "maths"): it is mapped
+/// onto the database's id, counted as present, and the file's card tags
+/// that name it attach to the database's tag. The database keeps its
+/// own spelling. Else the tag is new.
+fn classify_tags(conn: &Connection, doc: &Document, rows: &mut Classified) -> Result<()> {
+    let mut by_id = conn.prepare("SELECT name FROM tags WHERE id = ?1")?;
+    let mut by_key = conn.prepare("SELECT id FROM tags WHERE name_key = ?1")?;
+    for (i, t) in doc.tags.iter().enumerate() {
+        let stored: Option<String> = by_id.query_row([&t.id], |r| r.get(0)).optional()?;
+        match stored {
+            Some(name) if name == t.name => rows.summary.tags.present += 1,
+            Some(_) => rows
+                .summary
+                .conflicts
+                .push(Conflict::TagDiffers(t.id.clone())),
+            None => {
+                let existing: Option<String> = by_key
+                    .query_row([name_key(&t.name)], |r| r.get(0))
+                    .optional()?;
+                if let Some(existing_id) = existing {
+                    rows.summary.tags.present += 1;
+                    rows.mapped_tags.insert(t.id.clone(), existing_id);
+                } else {
+                    rows.summary.tags.new += 1;
+                    rows.new_tags.push(i);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A card tag is present or new, once its tag is mapped
+/// ([`classify_tags`]); it has no content to differ.
+fn classify_card_tags(conn: &Connection, doc: &Document, rows: &mut Classified) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT 1 FROM card_tags WHERE card_id = ?1 AND tag_id = ?2")?;
+    for (i, ct) in doc.card_tags.iter().enumerate() {
+        if stmt.exists(params![ct.card_id, rows.tag_id(&ct.tag_id)])? {
+            rows.summary.card_tags.present += 1;
+        } else {
+            rows.summary.card_tags.new += 1;
+            rows.new_card_tags.push(i);
+        }
+    }
+    Ok(())
+}
+
+/// The file's settings go in only when the database has no decks at all,
+/// deleted ones included (ADR 0027): moving to a new machine brings them,
+/// a merge never changes them. Applied, they replace the stored ones, so
+/// the database ends with the settings the file's database had, an
+/// empty `settings` (all defaults) included.
+fn classify_settings(conn: &Connection, file: &SettingsRecord) -> Result<SettingsImport> {
+    if stored_of(file) == stored_settings(conn)? {
+        return Ok(SettingsImport::Unchanged);
+    }
+    let has_decks: bool =
+        conn.query_row("SELECT EXISTS (SELECT 1 FROM decks)", [], |r| r.get(0))?;
+    Ok(if has_decks {
+        SettingsImport::Kept
+    } else {
+        SettingsImport::Applied
+    })
+}
+
+fn stored_of(s: &SettingsRecord) -> StoredSettings {
+    StoredSettings {
+        desired_retention: s.desired_retention,
+        max_new_per_day: s.max_new_per_day,
+        max_reviews_per_day: s.max_reviews_per_day,
+        day_start_hour: s.day_start_hour,
+    }
 }
 
 /// Classifies the decks. Returns each revived deck's id with its
@@ -370,26 +485,44 @@ fn add_batch_cards(
     Ok(())
 }
 
+/// An entry with the same id is present if it is the same, else a
+/// conflict. A new undo of an entry that the database has already undone
+/// (with another undo) is a conflict too: an entry is undone once.
 fn classify_events(conn: &Connection, doc: &Document, rows: &mut Classified) -> Result<()> {
     let mut stmt = conn.prepare(
-        "SELECT id, card_id, reviewed_at, grade, duration_ms FROM review_events WHERE id = ?1",
+        "SELECT id, card_id, kind, reviewed_at, grade, duration_ms, undoes
+         FROM review_events WHERE id = ?1",
     )?;
+    let mut undone_by = conn.prepare("SELECT id FROM review_events WHERE undoes = ?1")?;
     for (i, e) in doc.review_events.iter().enumerate() {
         let stored = stmt
             .query_row([&e.id], |r| {
                 Ok(EventRecord {
                     id: r.get(0)?,
                     card_id: r.get(1)?,
-                    reviewed_at: r.get(2)?,
-                    grade: r.get(3)?,
-                    duration_ms: r.get(4)?,
+                    kind: r.get(2)?,
+                    reviewed_at: r.get(3)?,
+                    grade: r.get(4)?,
+                    duration_ms: r.get(5)?,
+                    undoes: r.get(6)?,
                 })
             })
             .optional()?;
         match stored {
             None => {
-                rows.summary.review_events.new += 1;
-                rows.new_events.push(i);
+                let existing: Option<String> = match &e.undoes {
+                    Some(target) => undone_by.query_row([target], |r| r.get(0)).optional()?,
+                    None => None,
+                };
+                if let Some(existing_id) = existing {
+                    rows.summary.conflicts.push(Conflict::AlreadyUndone {
+                        event_id: e.id.clone(),
+                        existing_id,
+                    });
+                } else {
+                    rows.summary.review_events.new += 1;
+                    rows.new_events.push(i);
+                }
             }
             Some(s) if s == *e => rows.summary.review_events.present += 1,
             Some(_) => rows
@@ -472,18 +605,38 @@ fn insert_rows<'d>(
             c.deleted_at
         ])?;
     }
+    let mut tag = conn.prepare("INSERT INTO tags (id, name, name_key) VALUES (?1, ?2, ?3)")?;
+    for t in rows.new_tags.iter().map(|&i| &doc.tags[i]) {
+        tag.execute(params![t.id, t.name, name_key(&t.name)])?;
+    }
+    let mut card_tag = conn.prepare("INSERT INTO card_tags (card_id, tag_id) VALUES (?1, ?2)")?;
+    for ct in rows.new_card_tags.iter().map(|&i| &doc.card_tags[i]) {
+        card_tag.execute(params![ct.card_id, rows.tag_id(&ct.tag_id)])?;
+    }
+    // In file order, which is by id: an undo's target (smaller id, checked
+    // by validation) is inserted before it, or is already here.
     let mut event = conn.prepare(
-        "INSERT INTO review_events (id, card_id, reviewed_at, grade, duration_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO review_events (id, card_id, kind, reviewed_at, grade, duration_ms, undoes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     let mut reviewed = BTreeSet::new();
-    for e in rows.new_events.iter().map(|&i| &doc.review_events[i]) {
+    let mut new_events: Vec<&EventRecord> = rows
+        .new_events
+        .iter()
+        .map(|&i| &doc.review_events[i])
+        .collect();
+    // The file's list should be sorted by id; sorting again costs little
+    // and does not trust that.
+    new_events.sort_by(|a, b| a.id.cmp(&b.id));
+    for e in new_events {
         event.execute(params![
             e.id,
             e.card_id,
+            e.kind,
             e.reviewed_at,
             e.grade,
-            e.duration_ms
+            e.duration_ms,
+            e.undoes
         ])?;
         reviewed.insert(e.card_id.as_str());
     }

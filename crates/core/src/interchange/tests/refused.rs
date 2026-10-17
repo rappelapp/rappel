@@ -259,7 +259,7 @@ fn a_nul_in_a_name_or_card_side_is_refused() {
 
 #[test]
 fn unsupported_format_versions_are_refused() {
-    for version in [json!(0), json!(2), json!(-1), json!(1_000_000)] {
+    for version in [json!(0), json!(3), json!(-1), json!(1_000_000)] {
         let mut doc = sample_doc();
         doc["format_version"] = version.clone();
         assert_eq!(
@@ -272,11 +272,11 @@ fn unsupported_format_versions_are_refused() {
     // Checked before the rest: a newer file with new fields still says
     // "unsupported version".
     let mut doc = sample_doc();
-    doc["format_version"] = json!(2);
-    doc["tags"] = json!([]);
+    doc["format_version"] = json!(3);
+    doc["folders"] = json!([]);
     assert!(matches!(
         plan_doc(&doc),
-        ImportProblem::UnsupportedFormatVersion { found: 2 }
+        ImportProblem::UnsupportedFormatVersion { found: 3 }
     ));
 }
 
@@ -292,7 +292,7 @@ fn json_that_does_not_match_the_format_is_refused() {
     assert!(json_problem(b"not json"));
     assert!(json_problem(b"{}"));
     assert!(json_problem(br#"{"format_version": "1"}"#));
-    assert!(json_problem(br#"{"format_version": 1}"#));
+    assert!(json_problem(br#"{"format_version": 2}"#));
 
     let mutations: [Mutation; 9] = [
         |d| d["unknown"] = json!(1),
@@ -470,8 +470,11 @@ fn values_are_checked() {
             field("cards", 3, "front_md", FieldProblem::Empty),
         ),
         (
-            |d| d["settings"] = json!({"desired_retention": "0.9"}),
-            ImportProblem::UnsupportedSettings,
+            |d| d["settings"] = json!({"desired_retention": 0.99}),
+            ImportProblem::InvalidTopLevel {
+                field: "settings.desired_retention",
+                reason: FieldProblem::OutOfRange,
+            },
         ),
         (
             |d| d["media"] = json!([{"hash": "x"}]),

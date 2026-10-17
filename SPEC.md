@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4; tags still to come), and the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come).
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4; tags still to come), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), and, in `rappel-core` only, undo and reset in the review log (ADR 0028), tags (ADR 0029) and export format version 2 (§4.1); their UI is still to come.
 
 ---
 
@@ -74,14 +74,18 @@ Keep everything from v0 (migration 0001, ADR 0005). Ids are UUIDv7 stored as `TE
 ```sql
 ALTER TABLE cards ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0;
 
-tags(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+tags(id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE);
+-- Flat, unique by name key (trimmed, NFC, lower-cased, as decks), never deleted (ADR 0029).
 card_tags(card_id TEXT REFERENCES cards(id) ON DELETE CASCADE,
           tag_id  TEXT REFERENCES tags(id)  ON DELETE CASCADE,
           PRIMARY KEY(card_id, tag_id));
 
--- Undo without breaking the append-only log:
-ALTER TABLE review_events ADD COLUMN undoes TEXT REFERENCES review_events(id);
--- An event with `undoes` set cancels the referenced event. rebuild_state skips both.
+-- Undo and reset without breaking the append-only log (ADR 0028):
+review_events.kind   TEXT NOT NULL  -- 'review', 'reset' or 'undo'; grade only on a review
+review_events.undoes TEXT REFERENCES review_events(id)  -- only on an undo, unique
+-- A reset makes the card new from there on. An undo cancels the card's latest
+-- review or reset that is not already undone. rebuild_state skips undos and
+-- the entries they cancel, and starts again at a surviving reset.
 
 settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 -- desired_retention (0.80–0.97, default 0.90), max_new_per_day (0–9999, default 20),
@@ -104,11 +108,12 @@ Storage rules:
 ## 4. Features for v0.2 (in priority order)
 
 ### 4.1 Export / import
-- Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 1`, `exported_at`, and all decks, cards and the full review log, deleted rows included with their `deleted_at`. It also has `settings` (empty in version 1; the settings join the format with version 2, together with tags, ADR 0027) and `media` (empty until images exist; image files will go into `media/`). Tags join the format, as version 2, with the tags slice. A reader accepts every version up to its own.
+- Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 2`, `exported_at`, and all decks, cards, tags, card tags and the full review log with its resets and undos, deleted rows included with their `deleted_at`. It also has `settings` (the keys the user changed, ADR 0027) and `media` (empty until images exist; image files will go into `media/`).
+- Versions: version 1 was written only by test versions (0.2.0-alpha, and `.cards` files) and is refused with "made by an early test version of Rappel and cannot be imported" (ADR 0017). **From 1.0 on, every format version a release wrote stays importable by every later release.**
 - Deterministic: the same database exported at the same time gives the same bytes (lists sorted by id, fixed zip metadata). Only `exported_at` differs between exports.
 - Import into an empty or existing DB in two steps: `plan_import` checks the file and returns a summary without writing anything (new / already present / conflicts, e.g. "12 decks, 840 cards, 5,210 reviews"); `apply_import` backs up the database, then writes in one transaction and rebuilds the schedule of the affected cards from the log.
-- Merge rules: an id not in the DB is added; the same id with the same content is skipped. A row that differs only by being deleted is merged: deleted in the DB and live in the file, it is revived (`deleted_at` cleared; a revived deck also revives the cards deleted with it, as `undelete_deck` does, except those the file has, which follow their own row); live in the DB and deleted in the file, it is skipped (an import never deletes); deleted on both sides, at whatever times, it is already present. The same id with any other difference, or a live deck name (revived ones included) already used by another live deck, is a conflict, and any conflict refuses the whole import. The summary also counts revived rows. Importing the same file twice changes nothing.
-- The file is untrusted. A file is refused if any of these fail: size limits; the exact entry names (nothing is extracted, so no zip-slip); a supported format version; every id a lowercase `UUIDv7`; references that resolve; valid grades and timestamps; no NUL character in a deck name or card side.
+- Merge rules: an id not in the DB is added; the same id with the same content is skipped. A tag whose name key a DB tag with another id has is mapped onto that tag (its card tags attach to the DB's id), not added; a tag with the same id and another name is a conflict, and so is an undo of an entry the DB has already undone. The file's settings are applied only into a DB without decks (deleted ones included); otherwise the DB keeps its own. A row that differs only by being deleted is merged: deleted in the DB and live in the file, it is revived (`deleted_at` cleared; a revived deck also revives the cards deleted with it, as `undelete_deck` does, except those the file has, which follow their own row); live in the DB and deleted in the file, it is skipped (an import never deletes); deleted on both sides, at whatever times, it is already present. The same id with any other difference, or a live deck name (revived ones included) already used by another live deck, is a conflict, and any conflict refuses the whole import. The summary also counts revived rows. Importing the same file twice changes nothing.
+- The file is untrusted. A file is refused if any of these fail: size limits; the exact entry names (nothing is extracted, so no zip-slip); a supported format version; every id a lowercase `UUIDv7`; references that resolve; valid kinds, grades and timestamps; undos that cancel an earlier review or reset of the same card, once; tag names without a NUL or a comma; settings within their ranges; no NUL character in a deck name or card side.
 - Round-trip test: export → import into empty DB → export again produces an identical file.
 
 ### 4.2 Math
@@ -126,11 +131,11 @@ Storage rules:
 ### 4.4 Editor
 - `GtkSourceView` 5 with Markdown highlighting, monospace, line wrapping.
 - Live preview below or beside the editor (toggle), using the same renderer as review.
-- Tags field (comma-separated or `AdwEntryRow` chips). *Comes with the tags slice (migration, export), not with the editor slice.*
+- Tags field (comma-separated or `AdwEntryRow` chips). *The core part (migration 0008, store API, export) is done (ADR 0029); the field comes with its UI slice. A tag name has no comma.*
 - Ctrl+Enter saves, Ctrl+Shift+Enter saves and starts a new card in the same deck.
 
 ### 4.5 Review
-- Undo last grade (Ctrl+Z) via an `undoes` event.
+- Undo last grade (Ctrl+Z) via an `undoes` event. *Core done (`Store::undo`, ADR 0028); the key and the Undo toast come with the UI slice.*
 - Daily limits from settings. New cards interleaved with reviews.
 - Card actions during review: Edit (E), Suspend, Delete (with confirmation).
 - Session summary at the end: cards reviewed, pass rate, time spent.

@@ -2,8 +2,8 @@
 //! ADR 0017).
 //!
 //! A `.rappel` file is a zip archive with exactly two entries: `cards.json`
-//! (decks, cards and the review log, deleted rows included) and an empty
-//! `media/` directory. The same database exported at the same time always
+//! (decks, cards, tags, the review log with its resets and undos, deleted
+//! rows included, and the settings) and an empty `media/` directory. The same database exported at the same time always
 //! gives the same bytes.
 //!
 //! Import is two steps. [`Store::plan_import`](crate::storage::Store::plan_import)
@@ -27,10 +27,12 @@ pub(crate) use format::FORMAT_VERSION;
 /// File name extension of an export, without the dot.
 pub const FILE_EXTENSION: &str = "rappel";
 
-/// File name extensions an import accepts, without the dot. `cards` is what
-/// exports were called before the rename to Rappel (ADR 0020): same archive,
-/// same `format_version` 1. Import reads the content, never the extension, so
-/// this only tells the file chooser what to show.
+/// File name extensions an import offers, without the dot. `cards` is what
+/// exports were called before the rename to Rappel (ADR 0020). Those files
+/// have `format_version` 1, which only early test versions wrote, so they
+/// are refused by their version ([`ImportProblem::EarlyTestVersion`]); they
+/// stay in the file chooser so the user gets that message instead of not
+/// seeing the file. Import reads the content, never the extension.
 pub const IMPORT_EXTENSIONS: [&str; 2] = [FILE_EXTENSION, "cards"];
 
 /// What an export wrote.
@@ -40,7 +42,9 @@ pub struct ExportSummary {
     pub decks: usize,
     /// Cards written, deleted ones included.
     pub cards: usize,
-    /// Review events written.
+    /// Tags written.
+    pub tags: usize,
+    /// Log entries written (reviews, resets and undos).
     pub review_events: usize,
 }
 
@@ -56,8 +60,24 @@ pub struct TableCounts {
     /// Deleted rows of the database that are live in the file with
     /// otherwise the same content: they would be brought back. For cards,
     /// this includes the cards deleted with a revived deck that the file
-    /// does not have. Always 0 for review events.
+    /// does not have. Always 0 for tags, card tags and review events.
     pub revived: usize,
+}
+
+/// What an import does with the file's settings (ADR 0027).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SettingsImport {
+    /// The file has the same stored settings as the database.
+    #[default]
+    Unchanged,
+    /// The database has no decks yet (as on a new machine), so the file's
+    /// settings replace its own: keys the file does not have go back to
+    /// their defaults.
+    Applied,
+    /// The database already has decks, so it keeps its own settings: a
+    /// merge never changes the retention, which would reschedule every
+    /// card.
+    Kept,
 }
 
 /// One reason an import cannot be applied. Ids are the file's own, already
@@ -72,6 +92,18 @@ pub enum Conflict {
     CardDiffers(String),
     /// The database has a review event with this id but different content.
     EventDiffers(String),
+    /// The database has a tag with this id but another name. (A tag with
+    /// another id but the same name is not a conflict: it is mapped onto
+    /// the database's tag, ADR 0029.)
+    TagDiffers(String),
+    /// An undo in the file cancels an entry that another undo in the
+    /// database already cancels (ADR 0028).
+    AlreadyUndone {
+        /// The undo in the file.
+        event_id: String,
+        /// The database's undo of the same entry.
+        existing_id: String,
+    },
     /// A live deck in the file has the name (by
     /// [`deck_name_key`](crate::domain::deck_name_key)) of another live
     /// deck in the database.
@@ -98,6 +130,14 @@ impl fmt::Display for Conflict {
                 f,
                 "deck {deck_id} has the same name as deck {existing_id} in the database"
             ),
+            Self::TagDiffers(id) => write!(f, "tag {id} differs from the one in the database"),
+            Self::AlreadyUndone {
+                event_id,
+                existing_id,
+            } => write!(
+                f,
+                "undo {event_id} cancels an entry that undo {existing_id} in the database already cancels"
+            ),
         }
     }
 }
@@ -109,10 +149,17 @@ pub struct ImportSummary {
     pub decks: TableCounts,
     /// Cards, deleted ones included.
     pub cards: TableCounts,
-    /// Review events.
+    /// Tags. A tag of the file with the name of a database tag (another
+    /// id) is mapped onto it and counted as present.
+    pub tags: TableCounts,
+    /// Card tags (a card having a tag).
+    pub card_tags: TableCounts,
+    /// Log entries (reviews, resets and undos).
     pub review_events: TableCounts,
-    /// Every conflict, in file order (decks, cards, events, then names).
-    /// Any conflict refuses the whole import.
+    /// What happens to the file's settings.
+    pub settings: SettingsImport,
+    /// Every conflict, in file order (decks, cards, tags, events, then
+    /// deck names). Any conflict refuses the whole import.
     pub conflicts: Vec<Conflict>,
 }
 
@@ -123,9 +170,12 @@ impl ImportSummary {
     pub fn is_noop(&self) -> bool {
         self.decks.new == 0
             && self.cards.new == 0
+            && self.tags.new == 0
+            && self.card_tags.new == 0
             && self.review_events.new == 0
             && self.decks.revived == 0
             && self.cards.revived == 0
+            && self.settings != SettingsImport::Applied
     }
 }
 
@@ -165,8 +215,14 @@ pub struct ImportReport {
     pub decks: usize,
     /// Cards added.
     pub cards: usize,
-    /// Review events added.
+    /// Tags added.
+    pub tags: usize,
+    /// Card tags added.
+    pub card_tags: usize,
+    /// Log entries added.
     pub review_events: usize,
+    /// Whether the file's settings replaced the database's.
+    pub settings_applied: bool,
     /// Deleted decks brought back.
     pub revived_decks: usize,
     /// Deleted cards brought back.
@@ -217,6 +273,10 @@ pub enum ImportProblem {
     /// (`0` is the parser's message, with line and column).
     #[error("cards.json is malformed: {0}")]
     Json(String),
+    /// The file was made by an early test version of Rappel (format
+    /// version 1, 0.2.0-alpha), whose files are not imported (ADR 0017).
+    #[error("the file was made by an early test version of Rappel and cannot be imported")]
+    EarlyTestVersion,
     /// The file was written by a newer version of Rappel, or has a version
     /// that never existed.
     #[error(
@@ -229,7 +289,7 @@ pub enum ImportProblem {
     /// A field of one row is invalid.
     #[error("{table}[{index}].{field}: {reason}")]
     InvalidField {
-        /// `decks`, `cards` or `review_events`.
+        /// `decks`, `cards`, `tags`, `card_tags` or `review_events`.
         table: &'static str,
         /// The row's position in its list, from 0.
         index: usize,
@@ -238,7 +298,8 @@ pub enum ImportProblem {
         /// What is wrong with it.
         reason: FieldProblem,
     },
-    /// A top-level field is invalid (`exported_at`).
+    /// A top-level field is invalid (`exported_at`, or a setting such as
+    /// `settings.desired_retention`).
     #[error("{field}: {reason}")]
     InvalidTopLevel {
         /// The field.
@@ -246,9 +307,6 @@ pub enum ImportProblem {
         /// What is wrong with it.
         reason: FieldProblem,
     },
-    /// `settings` is not empty; this version knows no settings.
-    #[error("the file has settings, which this version of Rappel does not know")]
-    UnsupportedSettings,
     /// `media` is not empty; this version cannot import media.
     #[error("the file has media, which this version of Rappel cannot import")]
     UnsupportedMedia,
@@ -293,6 +351,38 @@ pub enum FieldProblem {
     /// Another live deck in the file has the same name key.
     #[error("another live deck in the file has the same name")]
     DuplicateDeckName,
+    /// Another tag in the file has the same name key.
+    #[error("another tag in the file has the same name")]
+    DuplicateTagName,
+    /// Has a comma, which separates tags in a list.
+    #[error("contains a comma")]
+    ContainsComma,
+    /// Another row of the same list is the same.
+    #[error("the same row appears twice")]
+    DuplicateRow,
+    /// Before the row above it: `card_tags` are sorted by card id, then
+    /// tag id, as an export writes them.
+    #[error("out of order")]
+    OutOfOrder,
+    /// Not `review`, `reset` or `undo`.
+    #[error("not a kind of log entry")]
+    InvalidKind,
+    /// `null`, but this kind of entry needs it.
+    #[error("missing for this kind of entry")]
+    Missing,
+    /// Set, but this kind of entry cannot have it.
+    #[error("not allowed for this kind of entry")]
+    NotAllowed,
+    /// Does not name an earlier review or reset of the same card in the
+    /// file.
+    #[error("does not cancel an earlier review or reset of the same card")]
+    InvalidUndo,
+    /// Another undo in the file cancels the same entry.
+    #[error("another undo in the file cancels the same entry")]
+    AlreadyUndone,
+    /// Outside the setting's range.
+    #[error("out of range")]
+    OutOfRange,
 }
 
 /// Size limits for reading a file. The defaults are generous; tests lower
@@ -307,6 +397,8 @@ pub(crate) struct Limits {
     pub card_text: usize,
     /// One deck name.
     pub deck_name: usize,
+    /// One tag name.
+    pub tag_name: usize,
 }
 
 impl Limits {
@@ -316,6 +408,7 @@ impl Limits {
         json: 256 << 20,
         card_text: crate::domain::MAX_CARD_SIDE_BYTES,
         deck_name: crate::domain::MAX_DECK_NAME_BYTES,
+        tag_name: crate::domain::MAX_TAG_NAME_BYTES,
     };
 }
 

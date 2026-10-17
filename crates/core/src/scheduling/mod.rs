@@ -26,10 +26,12 @@ pub(crate) mod session;
 
 pub use session::{Due, Session, StudyInput, Summary, capped};
 
+use std::collections::HashSet;
+
 use fsrs::{FSRS, MemoryState};
 
 use crate::domain::{
-    CardState, DEFAULT_DESIRED_RETENTION, Grade, Phase, ReviewEvent, Schedule, Settings,
+    CardState, DEFAULT_DESIRED_RETENTION, EventKind, Grade, Phase, ReviewEvent, Schedule, Settings,
 };
 use crate::error::{Error, Result};
 use fuzz::{floored_fuzzed_days, fuzz_factor};
@@ -163,20 +165,25 @@ impl Scheduler {
         }))
     }
 
-    /// The state of card `card_id` after replaying `events`, its review
-    /// log. Events are applied in `(reviewed_at, id)` order whatever their
-    /// order in the slice. Ids are `UUIDv7`; with a generator that is
-    /// monotonic within a millisecond, equal timestamps keep the order they
-    /// were recorded in.
+    /// The state of card `card_id` after replaying `events`, its log
+    /// (ADR 0028):
+    /// 1. every undo, and every entry an undo cancels, is dropped;
+    /// 2. the rest is ordered by `(reviewed_at, id)`, whatever its order in
+    ///    the slice (ids are `UUIDv7`; with a generator that is monotonic
+    ///    within a millisecond, equal timestamps keep the order they were
+    ///    recorded in);
+    /// 3. starting from [`CardState::New`], a review is one
+    ///    [`Self::schedule`] call and a reset makes the card new again.
     ///
-    /// The result is exactly that of calling [`Self::schedule`] once per
-    /// event in that order, starting from [`CardState::New`]. A log built
-    /// by successful `schedule` calls is already in that order, so its
-    /// rebuild equals the state those calls produced.
+    /// So `reps`, `lapses` and the fuzz seed count only the surviving
+    /// reviews since the last surviving reset (#11). A log built by
+    /// successful `schedule` calls is already in that order, so its rebuild
+    /// equals the state those calls produced.
     ///
     /// # Errors
-    /// [`Error::EventForOtherCard`] if an event belongs to another card;
-    /// errors of [`Self::schedule`].
+    /// [`Error::EventForOtherCard`] if an entry belongs to another card;
+    /// [`Error::InvalidUndo`] if an undo names no review or reset in
+    /// `events`, or an entry is undone twice; errors of [`Self::schedule`].
     pub fn rebuild_state(&self, card_id: &str, events: &[ReviewEvent]) -> Result<CardState> {
         if let Some(e) = events.iter().find(|e| e.card_id != card_id) {
             return Err(Error::EventForOtherCard {
@@ -184,11 +191,14 @@ impl Scheduler {
                 card_id: card_id.to_owned(),
             });
         }
-        let mut ordered: Vec<&ReviewEvent> = events.iter().collect();
-        ordered.sort_by(|a, b| (a.reviewed_at, &a.id).cmp(&(b.reviewed_at, &b.id)));
-        ordered.into_iter().try_fold(CardState::New, |state, e| {
-            self.schedule(card_id, &state, e.grade, e.reviewed_at)
-        })
+        surviving(events)?
+            .into_iter()
+            .try_fold(CardState::New, |state, e| match e.kind {
+                EventKind::Review(grade) => self.schedule(card_id, &state, grade, e.reviewed_at),
+                EventKind::Reset => Ok(CardState::New),
+                // `surviving` drops every undo.
+                EventKind::Undo { .. } => Ok(state),
+            })
     }
 
     /// FSRS's unrounded, unfuzzed interval in days for `stability`.
@@ -197,6 +207,37 @@ impl Scheduler {
         self.fsrs
             .next_interval(Some(stability), self.desired_retention, RATING_GOOD)
     }
+}
+
+/// The reviews and resets of one card's log that no undo cancels, in
+/// replay order `(reviewed_at, id)`; undos themselves are left out.
+///
+/// # Errors
+/// [`Error::InvalidUndo`] if an undo names no review or reset in `events`,
+/// or two undos name the same entry.
+pub(crate) fn surviving(events: &[ReviewEvent]) -> Result<Vec<&ReviewEvent>> {
+    // Linear: a file may hold a card with very many undos (ADR 0025).
+    let targets: HashSet<&str> = events
+        .iter()
+        .filter(|e| !matches!(e.kind, EventKind::Undo { .. }))
+        .map(|e| e.id.as_str())
+        .collect();
+    let mut undone: HashSet<&str> = HashSet::new();
+    for e in events {
+        if let EventKind::Undo { undoes } = &e.kind
+            && (!targets.contains(undoes.as_str()) || !undone.insert(undoes))
+        {
+            return Err(Error::InvalidUndo {
+                event_id: e.id.clone(),
+            });
+        }
+    }
+    let mut kept: Vec<&ReviewEvent> = events
+        .iter()
+        .filter(|e| !matches!(e.kind, EventKind::Undo { .. }) && !undone.contains(e.id.as_str()))
+        .collect();
+    kept.sort_by(|a, b| (a.reviewed_at, &a.id).cmp(&(b.reviewed_at, &b.id)));
+    Ok(kept)
 }
 
 /// The fewest days a Pass from phase `from` may be scheduled to, given the

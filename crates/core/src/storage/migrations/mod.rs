@@ -11,7 +11,8 @@
 //! `cards` would delete `card_schedule` rows, and `review_events` would
 //! refuse. Such a migration needs foreign keys switched off around its
 //! transaction first; add that to the framework when the first one is
-//! written, together with a test.
+//! written, together with a test. A table that no other table references
+//! can be rebuilt with foreign keys on, as 0007 does with `review_events`.
 
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
@@ -87,6 +88,21 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 6,
         name: "settings",
         sql: include_str!("0006_settings.sql"),
+        rebuild_schedule: false,
+        backfill: None,
+    },
+    Migration {
+        version: 7,
+        name: "log entry kinds",
+        sql: include_str!("0007_log_entry_kinds.sql"),
+        // Every existing entry is a review, which replays as before.
+        rebuild_schedule: false,
+        backfill: None,
+    },
+    Migration {
+        version: 8,
+        name: "tags",
+        sql: include_str!("0008_tags.sql"),
         rebuild_schedule: false,
         backfill: None,
     },
@@ -216,6 +232,8 @@ mod tests {
             (4, 274_116_458_028_196_935),
             (5, 16_265_802_780_356_427_840),
             (6, 4_814_555_124_323_229_936),
+            (7, 5_098_997_871_159_998_159),
+            (8, 5_300_822_826_126_250_477),
         ];
         assert_eq!(
             MIGRATIONS.len(),

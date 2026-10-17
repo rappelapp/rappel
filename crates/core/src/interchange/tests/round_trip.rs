@@ -22,18 +22,29 @@ fn export_import_export_gives_identical_bytes_and_schedules() {
                 present: 0,
                 revived: 0
             },
-            review_events: TableCounts {
-                new: 5,
+            tags: TableCounts {
+                new: 3,
                 present: 0,
                 revived: 0
             },
+            card_tags: TableCounts {
+                new: 3,
+                present: 0,
+                revived: 0
+            },
+            review_events: TableCounts {
+                new: 8,
+                present: 0,
+                revived: 0
+            },
+            settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }
     );
     let report = target.store.apply_import_at(&plan, T_EXPORT).unwrap();
     assert_eq!(
         (report.decks, report.cards, report.review_events),
-        (2, 4, 5)
+        (2, 4, 8)
     );
     assert!(report.backup.as_ref().unwrap().exists());
 
@@ -81,11 +92,22 @@ fn importing_the_same_file_twice_is_a_noop() {
                 present: 4,
                 revived: 0
             },
-            review_events: TableCounts {
+            tags: TableCounts {
                 new: 0,
-                present: 5,
+                present: 3,
                 revived: 0
             },
+            card_tags: TableCounts {
+                new: 0,
+                present: 3,
+                revived: 0
+            },
+            review_events: TableCounts {
+                new: 0,
+                present: 8,
+                revived: 0
+            },
+            settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }
     );
@@ -147,7 +169,7 @@ fn a_later_export_adds_only_what_is_new_and_rebuilds_those_schedules() {
         plan.summary().review_events,
         TableCounts {
             new: 2,
-            present: 5,
+            present: 8,
             revived: 0
         }
     );
@@ -178,7 +200,7 @@ fn diverged_copies_merge_with_reviews_interleaved_by_time() {
         plan.summary().review_events,
         TableCounts {
             new: 2,
-            present: 5,
+            present: 8,
             revived: 0
         }
     );
@@ -209,7 +231,7 @@ fn files_from_two_databases_merge() {
     let doc = json_of(&target.export());
     assert_eq!(doc["decks"].as_array().unwrap().len(), 3);
     assert_eq!(doc["cards"].as_array().unwrap().len(), 5);
-    assert_eq!(doc["review_events"].as_array().unwrap().len(), 6);
+    assert_eq!(doc["review_events"].as_array().unwrap().len(), 9);
     let mut expected = schedule_table(&a.store);
     expected.extend(schedule_table(&b.store));
     expected.sort();

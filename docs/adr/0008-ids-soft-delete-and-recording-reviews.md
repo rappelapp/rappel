@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-15
-- Amended by: ADR 0010 (deck names compared by their key), ADR 0012 (undeleting a deck), ADR 0027 (the store no longer owns a scheduler)
+- Amended by: ADR 0010 (deck names compared by their key), ADR 0012 (undeleting a deck), ADR 0027 (the store no longer owns a scheduler), ADR 0028 (resets and undos are dated like reviews)
 
 ## Context
 

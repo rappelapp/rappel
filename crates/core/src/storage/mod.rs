@@ -10,6 +10,7 @@ mod restore;
 mod review;
 mod schedule;
 mod settings;
+mod tags;
 
 use std::fs::{self, OpenOptions, Permissions};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -27,7 +28,7 @@ pub(crate) use backup::{create_backup, prune_backups};
 use migrations::{MIGRATIONS, Migration, latest, migrate};
 pub use restore::{Restored, finish_restore, restore_backup, start_fresh};
 pub(crate) use schedule::rebuild_cards;
-pub(crate) use settings::scheduler_in;
+pub(crate) use settings::{StoredSettings, replace_settings, scheduler_in, stored_settings};
 
 /// File name of the database inside the data directory.
 pub(crate) const DB_FILE_NAME: &str = "rappel.sqlite3";

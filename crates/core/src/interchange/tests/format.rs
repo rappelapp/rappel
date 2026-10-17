@@ -9,13 +9,50 @@ fn the_fixture_round_trips_to_the_same_text() {
         .import(&write_archive(FIXTURE.as_bytes()).unwrap())
         .unwrap();
     assert_eq!(
-        (report.decks, report.cards, report.review_events),
-        (2, 2, 2)
+        (
+            report.decks,
+            report.cards,
+            report.tags,
+            report.card_tags,
+            report.review_events,
+            report.settings_applied
+        ),
+        (2, 2, 2, 2, 4, true)
     );
     let json = read_cards_json(&env.export(), &Limits::DEFAULT).unwrap();
     assert_eq!(String::from_utf8(json).unwrap(), FIXTURE);
-    // The live card got its schedule, the deleted one too.
+    // The live card got its schedule (its reset is undone), the deleted
+    // one too, with the file's retention.
     assert_eq!(schedule_table(&env.store).len(), 2);
+    let card = "01920000-0000-7000-8000-000000000003";
+    let events = env.store.review_events(card).unwrap();
+    assert_eq!(events.len(), 3);
+    assert_eq!(
+        env.store.card_state(card).unwrap(),
+        Scheduler::new(0.85)
+            .unwrap()
+            .rebuild_state(card, &events[..1])
+            .unwrap()
+    );
+    let settings = env.store.settings().unwrap();
+    assert_eq!(
+        (
+            settings.desired_retention,
+            settings.max_new_per_day,
+            settings.max_reviews_per_day,
+            settings.day_start_hour
+        ),
+        (0.85, 10, 200, 5)
+    );
+    let tags: Vec<String> = env
+        .store
+        .tags()
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert_eq!(tags, ["Algebra", "Unused"]);
+    assert_eq!(env.store.card_tags(card).unwrap().len(), 1);
     // Deleted rows stay hidden.
     let decks = env.store.list_decks(T_EXPORT, T_EXPORT).unwrap();
     assert_eq!(decks.len(), 1);
@@ -35,15 +72,30 @@ fn an_export_is_a_zip_with_exactly_cards_json_and_media() {
         CompressionMethod::Deflated
     );
     let doc = json_of(&bytes);
-    assert_eq!(doc["format_version"], 1);
+    assert_eq!(doc["format_version"], 2);
     assert_eq!(doc["exported_at"], T_EXPORT);
     assert_eq!(doc["decks"].as_array().unwrap().len(), 2);
     assert_eq!(doc["cards"].as_array().unwrap().len(), 4);
-    assert_eq!(doc["review_events"].as_array().unwrap().len(), 5);
+    assert_eq!(doc["tags"].as_array().unwrap().len(), 3);
+    assert_eq!(doc["card_tags"].as_array().unwrap().len(), 3);
+    assert_eq!(doc["review_events"].as_array().unwrap().len(), 8);
     assert_eq!(doc["settings"], json!({}));
     assert_eq!(doc["media"], json!([]));
+    // card_tags are sorted by card, then tag.
+    let pairs: Vec<(&str, &str)> = doc["card_tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["card_id"].as_str().unwrap(),
+                r["tag_id"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert!(pairs.is_sorted());
     // Lists are sorted by id.
-    for table in ["decks", "cards", "review_events"] {
+    for table in ["decks", "cards", "tags", "review_events"] {
         let ids: Vec<&str> = doc[table]
             .as_array()
             .unwrap()
@@ -76,7 +128,8 @@ fn export_to_writes_a_private_file_that_plan_import_reads() {
         ExportSummary {
             decks: 2,
             cards: 4,
-            review_events: 5
+            tags: 3,
+            review_events: 8
         }
     );
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
@@ -111,4 +164,45 @@ fn a_failed_export_leaves_the_target_alone() {
     let path = env.tmp.path().join("missing-dir").join("all.rappel");
     assert!(matches!(env.store.export_to(&path), Err(Error::Io { .. })));
     assert!(!path.exists());
+}
+
+/// Format version 1 was written only by early test versions (0.2.0-alpha,
+/// and the `.cards` files from before the rename): it is refused with its
+/// own message, before anything else in the file is looked at, and
+/// nothing is written (ADR 0017).
+#[test]
+fn files_of_early_test_versions_are_refused() {
+    let env = Env::new();
+    let v1 = write_archive(FIXTURE_V1.as_bytes()).unwrap();
+    assert_eq!(refused(env.plan(&v1)), ImportProblem::EarlyTestVersion);
+    // Even when the rest would not be a valid version 2 file either.
+    let mut doc: Value = serde_json::from_str(FIXTURE).unwrap();
+    doc["format_version"] = json!(1);
+    assert_eq!(
+        refused(env.plan(&archive_of(&doc))),
+        ImportProblem::EarlyTestVersion
+    );
+    assert_eq!(
+        ImportProblem::EarlyTestVersion.to_string(),
+        "the file was made by an early test version of Rappel and cannot be imported"
+    );
+    assert_eq!(env.store.decks().unwrap(), []);
+    assert_eq!(env.backups(), 0);
+}
+
+/// The settings are written with the type of each setting: the retention
+/// as the `f32` it is, so 0.85 reads `0.85`, not `0.8500000238418579`.
+#[test]
+fn settings_are_written_as_typed_values() {
+    let mut env = Env::new();
+    env.store.set_desired_retention(0.85).unwrap();
+    env.store.set_max_reviews_per_day(150).unwrap();
+    let text =
+        String::from_utf8(read_cards_json(&env.export(), &Limits::DEFAULT).unwrap()).unwrap();
+    assert!(
+        text.contains(
+            "  \"settings\": {\n    \"desired_retention\": 0.85,\n    \"max_reviews_per_day\": 150\n  },"
+        ),
+        "{text}"
+    );
 }

@@ -286,6 +286,44 @@ pub enum Error {
     #[error("the front of a card cannot be empty")]
     EmptyCardFront,
 
+    /// A tag name that is empty or only whitespace.
+    #[error("a tag name cannot be empty")]
+    EmptyTagName,
+
+    /// A tag name longer than
+    /// [`MAX_TAG_NAME_BYTES`](crate::domain::MAX_TAG_NAME_BYTES) once
+    /// trimmed.
+    #[error("a tag name can be at most {limit} bytes long")]
+    TagNameTooLong {
+        /// The limit, in bytes.
+        limit: usize,
+    },
+
+    /// A tag name with a comma, which separates tags in a list (ADR 0029).
+    #[error("a tag name cannot contain a comma")]
+    TagNameHasComma,
+
+    /// No tag with this id.
+    #[error("tag {0} does not exist")]
+    TagNotFound(String),
+
+    /// No log entry with this id for the card.
+    #[error("entry {0} is not in the card's log")]
+    EventNotFound(String),
+
+    /// The entry is not one an undo may cancel: only the card's latest
+    /// review or reset that is not already undone can be (ADR 0028).
+    #[error("entry {0} is not the card's latest review or reset")]
+    NotLatestEntry(String),
+
+    /// A log whose undo names no review or reset of its card, or an entry
+    /// undone twice; the schema refuses such a log (ADR 0028).
+    #[error("undo {event_id} does not cancel exactly one review or reset of its card")]
+    InvalidUndo {
+        /// The undo's id.
+        event_id: String,
+    },
+
     /// No deck with this id, or it was deleted.
     #[error("deck {0} does not exist")]
     DeckNotFound(String),
