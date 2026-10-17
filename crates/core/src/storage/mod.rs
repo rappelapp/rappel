@@ -22,10 +22,10 @@ use crate::id::IdGen;
 use crate::scheduling::Scheduler;
 use crate::time::now_ms;
 pub use backup::{BackupInfo, list_backups};
-pub(crate) use backup::{KEEP_BACKUPS, create_backup, prune_backups};
 use backup::{check_rows, has_backup_for_day};
+pub(crate) use backup::{create_backup, prune_backups};
 use migrations::{MIGRATIONS, Migration, latest, migrate};
-pub use restore::{Restored, restore_backup, start_fresh};
+pub use restore::{Restored, finish_restore, restore_backup, start_fresh};
 pub(crate) use schedule::rebuild_cards;
 
 /// File name of the database inside the data directory.
@@ -80,8 +80,9 @@ impl Store {
     /// 4. If migrations are pending on an existing database, a backup is
     ///    made first; if it fails, nothing is migrated. Otherwise one is
     ///    made if none exists for today (UTC); that one failing only logs a
-    ///    warning. The 14 newest backups are kept, never deleting the one
-    ///    just made.
+    ///    warning. Old backups are pruned by the rule in ADR 0026, never
+    ///    deleting the one just made (or `protect`, the backup a restore
+    ///    just installed).
     /// 5. Pending migrations run, one transaction each.
     ///
     /// # Errors
@@ -105,6 +106,18 @@ impl Store {
         now_ms: i64,
         migrations: &[Migration],
     ) -> Result<Self> {
+        Self::open_protecting(db_path, backup_dir, now_ms, migrations, None)
+    }
+
+    /// [`Store::open_with`] that also keeps the backup `protect` from being
+    /// pruned: a restore passes the backup it installed (#8).
+    fn open_protecting(
+        db_path: &Path,
+        backup_dir: &Path,
+        now_ms: i64,
+        migrations: &[Migration],
+        protect: Option<&Path>,
+    ) -> Result<Self> {
         refuse_orphaned_sidecars(db_path)?;
         if let Some(parent) = db_path.parent() {
             ensure_data_dir(parent)?;
@@ -123,7 +136,7 @@ impl Store {
         let warnings = if is_new {
             Vec::new()
         } else {
-            back_up(&conn, backup_dir, now_ms, current < supported)?
+            back_up(&conn, backup_dir, now_ms, current < supported, protect)?
         };
 
         migrate(&mut conn, migrations, current)?;
@@ -265,6 +278,7 @@ fn back_up(
     backup_dir: &Path,
     now_ms: i64,
     migrating: bool,
+    protect: Option<&Path>,
 ) -> Result<Vec<OpenWarning>> {
     let mut warnings = Vec::new();
     let fresh_backup = if migrating {
@@ -281,7 +295,8 @@ fn back_up(
             None
         })
     };
-    if let Err(err) = prune_backups(backup_dir, KEEP_BACKUPS, fresh_backup.as_deref()) {
+    let protected: Vec<&Path> = fresh_backup.as_deref().into_iter().chain(protect).collect();
+    if let Err(err) = prune_backups(backup_dir, now_ms, &protected) {
         tracing::warn!("pruning old backups failed: {err}");
         // A failed backup and a failed prune almost always share one
         // cause (the backup directory), so the user hears it once.

@@ -65,6 +65,13 @@ impl AppState {
         storage::restore_backup(data_dir, None, backup)
     }
 
+    /// Installs the checked copy an interrupted restore left waiting in
+    /// `data_dir` (see [`storage::finish_restore`]). Blocking; runs on a
+    /// worker thread.
+    pub fn finish_restore_unopened(data_dir: &Path) -> rappel_core::Result<Restored> {
+        storage::finish_restore(data_dir, None)
+    }
+
     /// Moves the database in `data_dir` aside and starts an empty one, when
     /// none could be opened (see [`storage::start_fresh`]). Blocking; runs
     /// on a worker thread.

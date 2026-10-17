@@ -1,7 +1,8 @@
 //! The page shown when the database must be replaced by a backup: why,
 //! the backups newest first, and a confirmed "Restore" for each. With no
 //! backup to restore, a confirmed "Start Fresh" moves the database aside
-//! and starts an empty one (ADR 0016). Layout in `data/recovery_page.blp`,
+//! and starts an empty one (ADR 0016). While an interrupted restore's
+//! checked copy waits, "Finish Restore" installs it (ADR 0026). Layout in `data/recovery_page.blp`,
 //! `data/restore_dialog.blp` and `data/start_fresh_dialog.blp`; each
 //! backup is a [`BackupRow`].
 
@@ -25,6 +26,8 @@ use crate::widgets::BackupRow;
 pub enum Recovered {
     /// A backup was restored.
     Backup,
+    /// An interrupted restore's waiting copy was installed.
+    Finished,
     /// The old database was moved aside and an empty one started.
     Fresh,
 }
@@ -52,6 +55,8 @@ mod imp {
         #[template_child]
         pub backup_list: TemplateChild<gtk::ListBox>,
         #[template_child]
+        pub finish_restore_button: TemplateChild<gtk::Button>,
+        #[template_child]
         pub start_fresh_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub path_label: TemplateChild<gtk::Label>,
@@ -78,6 +83,15 @@ mod imp {
     impl ObjectImpl for RecoveryPage {
         fn constructed(&self) {
             self.parent_constructed();
+            // No confirmation: nothing is deleted, the old files are moved
+            // aside, and this restore was already chosen.
+            self.finish_restore_button.connect_clicked(glib::clone!(
+                #[weak(rename_to = page)]
+                self.obj(),
+                move |_| {
+                    glib::spawn_future_local(async move { page.finish_restore().await });
+                }
+            ));
             self.start_fresh_button.connect_clicked(glib::clone!(
                 #[weak(rename_to = page)]
                 self.obj(),
@@ -120,6 +134,9 @@ impl RecoveryPage {
         imp.backup_list.set_sensitive(true);
         imp.start_fresh_button.set_visible(false);
         imp.start_fresh_button.set_sensitive(true);
+        imp.finish_restore_button
+            .set_visible(offers_finish_restore(imp.reason.get()));
+        imp.finish_restore_button.set_sensitive(true);
         let Some(dir) = imp.data_dir.borrow().clone() else {
             return;
         };
@@ -142,6 +159,10 @@ impl RecoveryPage {
                         "\n\nNo backups were found, so there is nothing to restore. You can \
                          start with an empty database; the current files are kept in the data \
                          folder, not deleted. Do not copy files there by hand.",
+                    );
+                } else if offers_finish_restore(imp.reason.get()) {
+                    description.push_str(
+                        "\n\nNo backups were found, but the waiting copy can be installed.",
                     );
                 } else {
                     description.push_str(
@@ -215,7 +236,7 @@ impl RecoveryPage {
         let Some(dir) = imp.data_dir.borrow().clone() else {
             return;
         };
-        imp.backup_list.set_sensitive(false);
+        self.set_busy();
         button.set_child(Some(&adw::Spinner::new()));
 
         // The app is held while it runs, so closing the window mid-restore
@@ -258,6 +279,50 @@ impl RecoveryPage {
 }
 
 impl RecoveryPage {
+    /// Turns off every action while a job runs. Restore, Finish Restore and
+    /// Start Fresh work on the same files, so two must never run at once.
+    /// `reload` turns them back on.
+    fn set_busy(&self) {
+        let imp = self.imp();
+        imp.backup_list.set_sensitive(false);
+        imp.finish_restore_button.set_sensitive(false);
+        imp.start_fresh_button.set_sensitive(false);
+    }
+
+    /// Installs the waiting copy on a worker thread, like a restore, and
+    /// logs as `restore` does.
+    async fn finish_restore(&self) {
+        let imp = self.imp();
+        let Some(dir) = imp.data_dir.borrow().clone() else {
+            return;
+        };
+        self.set_busy();
+
+        let worker_dir = dir.clone();
+        let result =
+            worker::run(self, move || AppState::finish_restore_unopened(&worker_dir)).await;
+
+        let message = match result {
+            Ok(Ok(restored)) => {
+                let handler = imp.on_restored.borrow().as_ref().map(Callback::get);
+                if let Some(handler) = handler {
+                    handler(dir, restored, Recovered::Finished);
+                }
+                return;
+            }
+            Ok(Err(err)) => {
+                tracing::error!("finishing the restore failed: {err}");
+                finish_failure_text(&err)
+            }
+            Err(_) => {
+                tracing::error!("finish restore worker panicked");
+                "Finishing the restore stopped unexpectedly".to_owned()
+            }
+        };
+        self.reload();
+        show_toast_from(self, persistent_toast(&message));
+    }
+
     fn confirm_start_fresh(&self) {
         let Some(dialog) = dialog::alert("start_fresh_dialog.ui", "start_fresh_dialog") else {
             return;
@@ -280,7 +345,7 @@ impl RecoveryPage {
         let Some(dir) = imp.data_dir.borrow().clone() else {
             return;
         };
-        imp.start_fresh_button.set_sensitive(false);
+        self.set_busy();
 
         // The app is held while it runs, as for a restore.
         let worker_dir = dir.clone();
@@ -297,7 +362,7 @@ impl RecoveryPage {
             Ok(Err(rappel_core::Error::InterruptedRestore(_))) => {
                 tracing::warn!("start fresh refused: a validated restore copy is waiting");
                 imp.reason.set(Some(RecoveryReason::InterruptedRestore));
-                "A restore did not finish. Its copy is kept; restore a backup to continue."
+                "A restore did not finish. Its copy is kept; use Finish Restore to continue."
                     .to_owned()
             }
             Ok(Err(rappel_core::Error::BackupsAvailable(_))) => {
@@ -317,6 +382,25 @@ impl RecoveryPage {
         };
         self.reload();
         show_toast_from(self, persistent_toast(&message));
+    }
+}
+
+/// Whether "Finish Restore" is offered: exactly while an interrupted
+/// restore's checked copy waits, with or without backups (ADR 0026).
+fn offers_finish_restore(reason: Option<RecoveryReason>) -> bool {
+    reason == Some(RecoveryReason::InterruptedRestore)
+}
+
+/// What the toast says when finishing the restore failed.
+fn finish_failure_text(err: &rappel_core::Error) -> String {
+    match err {
+        rappel_core::Error::NoRestoreWaiting => {
+            "The waiting copy is gone. Restart Rappel to check again.".to_owned()
+        }
+        rappel_core::Error::RestoreRefused { source, .. } => {
+            format!("The waiting copy cannot be used: {source}. It is kept in the data folder.")
+        }
+        err => format!("Finishing the restore failed: {err}"),
     }
 }
 
@@ -348,6 +432,52 @@ mod tests {
         ] {
             assert!(offers_start_fresh(Some(reason)), "{reason:?}");
         }
+    }
+
+    #[test]
+    fn finish_restore_is_offered_only_for_an_interrupted_restore() {
+        assert!(offers_finish_restore(Some(
+            RecoveryReason::InterruptedRestore
+        )));
+        for reason in [
+            RecoveryReason::Damaged,
+            RecoveryReason::NotRappel,
+            RecoveryReason::MissingFile,
+        ] {
+            assert!(!offers_finish_restore(Some(reason)), "{reason:?}");
+        }
+        assert!(!offers_finish_restore(None));
+    }
+
+    #[test]
+    fn finish_and_start_fresh_are_never_offered_together() {
+        for reason in [
+            None,
+            Some(RecoveryReason::Damaged),
+            Some(RecoveryReason::NotRappel),
+            Some(RecoveryReason::MissingFile),
+            Some(RecoveryReason::InterruptedRestore),
+        ] {
+            assert!(
+                !(offers_finish_restore(reason) && offers_start_fresh(reason)),
+                "{reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_finish_says_what_is_true_on_disk() {
+        use rappel_core::Error;
+        assert_eq!(
+            finish_failure_text(&Error::NoRestoreWaiting),
+            "The waiting copy is gone. Restart Rappel to check again."
+        );
+        let refused = Error::RestoreRefused {
+            path: PathBuf::from("/data/rappel.sqlite3.restore.partial"),
+            source: Box::new(Error::NotARappelDatabase),
+        };
+        assert!(finish_failure_text(&refused).ends_with("It is kept in the data folder."));
+        assert!(finish_failure_text(&refused).starts_with("The waiting copy cannot be used:"));
     }
 
     #[test]

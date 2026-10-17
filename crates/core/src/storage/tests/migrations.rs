@@ -242,7 +242,7 @@ fn pre_migration_backup_survives_future_dated_backups() {
     db_at_fake_v1(&e);
     fs::remove_dir_all(&e.backups).ok();
     fs::create_dir(&e.backups).unwrap();
-    for day in 1..=KEEP_BACKUPS {
+    for day in 1..=15 {
         fs::write(
             e.backups
                 .join(format!("rappel-203001{day:02}-120000.sqlite3")),
@@ -259,7 +259,14 @@ fn pre_migration_backup_survives_future_dated_backups() {
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
     assert_eq!(v, 1, "the pre-migration backup is still there");
-    assert_eq!(e.backups().len(), KEEP_BACKUPS);
+    // The fresh backup, and the newest of the future-dated ones.
+    assert_eq!(
+        e.backups(),
+        [
+            "rappel-20261015-123456.sqlite3",
+            "rappel-20300115-120000.sqlite3"
+        ]
+    );
 }
 
 #[test]

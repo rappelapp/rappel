@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-15
 - Amends: ADR 0011 (the recovery page with no backups)
+- Amended by: ADR 0026 (Finish Restore, the follow-up it mentions)
 
 ## Context
 

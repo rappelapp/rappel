@@ -650,4 +650,98 @@ mod tests {
             (message("front"), message("back"))
         );
     }
+
+    /// The longest time the main loop is blocked in one step over the next
+    /// `settle`, which is what a person feels as a frozen window. Stops
+    /// after 200 ms with nothing to do.
+    fn longest_stall(settle: std::time::Duration) -> std::time::Duration {
+        use std::time::{Duration, Instant};
+        let context = glib::MainContext::default();
+        let end = Instant::now() + settle;
+        let mut idle_since = None;
+        let mut longest = Duration::ZERO;
+        while Instant::now() < end {
+            let start = Instant::now();
+            if context.iteration(false) {
+                longest = longest.max(start.elapsed());
+                idle_since = None;
+            } else {
+                let since = *idle_since.get_or_insert_with(Instant::now);
+                if since.elapsed() > Duration::from_millis(200) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        longest
+    }
+
+    /// #37, ADR 0025 row 14: a side of the largest size the store accepts,
+    /// in one paragraph, in the editor's own text field (not the preview,
+    /// which shows 32 KiB). Measured like the review page's labels: the
+    /// view is not shown (no window opens during tests), and GTK is asked
+    /// for its natural width and then its height at a width, as a window
+    /// would (GTK validates the lines later, in idle steps, so the stall
+    /// below is the figure that matters). Also measured: loading the text, the main loop's longest stall
+    /// while the highlighter works through it, and typing one character in
+    /// the middle.
+    #[test]
+    fn a_huge_one_paragraph_side_is_usable_in_the_text_field() {
+        use std::time::{Duration, Instant};
+        let sides = [
+            ("words", "word ".repeat(MAX_CARD_SIDE_BYTES / 5)),
+            ("no spaces", "x".repeat(MAX_CARD_SIDE_BYTES)),
+        ];
+        let results = crate::testing::with_gtk(move || {
+            sides.map(|(what, side)| {
+                let buffer = sourceview5::Buffer::new(None);
+                buffer.set_language(
+                    sourceview5::LanguageManager::default()
+                        .language("markdown")
+                        .as_ref(),
+                );
+                buffer.set_highlight_syntax(true);
+                let view = sourceview5::View::with_buffer(&buffer);
+                view.set_monospace(true);
+                view.set_wrap_mode(gtk::WrapMode::WordChar);
+
+                let start = Instant::now();
+                buffer.set_text(&side);
+                let load = start.elapsed();
+                let start = Instant::now();
+                let _ = view.measure(gtk::Orientation::Horizontal, -1);
+                let _ = view.measure(gtk::Orientation::Vertical, 600);
+                let first = start.elapsed();
+                let stall = longest_stall(Duration::from_secs(20));
+
+                let middle = buffer.iter_at_offset(buffer.char_count() / 2);
+                buffer.place_cursor(&middle);
+                let start = Instant::now();
+                buffer.insert_at_cursor("y");
+                let _ = view.measure(gtk::Orientation::Vertical, 600);
+                let typed = start.elapsed();
+                let stall_after = longest_stall(Duration::from_secs(20));
+                (what, load, first, stall, typed, stall_after)
+            })
+        });
+        for (what, load, first, stall, typed, stall_after) in results {
+            let print =
+                |step: &str, t| crate::testing::print_timing(&format!("1 MiB {what}: {step}"), t);
+            print("load", load);
+            print("first layout", first);
+            print("longest main-loop step while highlighting", stall);
+            print("type one character and lay out", typed);
+            print("longest main-loop step after typing", stall_after);
+            // About 0.16 s and 3 ms here (release and debug alike: the time is
+            // in GTK); the bounds leave ten times that for slow machines.
+            assert!(load < Duration::from_secs(1), "{what}: load {load:?}");
+            assert!(first < Duration::from_secs(2), "{what}: layout {first:?}");
+            assert!(stall < Duration::from_secs(2), "{what}: stall {stall:?}");
+            assert!(typed < Duration::from_secs(1), "{what}: typing {typed:?}");
+            assert!(
+                stall_after < Duration::from_secs(2),
+                "{what}: stall after typing {stall_after:?}"
+            );
+        }
+    }
 }

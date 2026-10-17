@@ -32,14 +32,14 @@ fn reopen_keeps_data_and_backs_up_once_per_utc_day() {
 }
 
 #[test]
-fn backups_are_pruned_to_fourteen() {
+fn one_backup_per_day_is_kept_for_fourteen_days() {
     let e = env();
     drop(e.open(DAY0).unwrap());
     for day in 1..=20 {
         drop(e.open(DAY0 + day * DAY_MS).unwrap());
     }
     let backups = e.backups();
-    assert_eq!(backups.len(), KEEP_BACKUPS);
+    assert_eq!(backups.len(), usize::try_from(backup::KEEP_DAYS).unwrap());
     assert_eq!(backups.last().unwrap(), "rappel-20261104-123456.sqlite3");
 }
 

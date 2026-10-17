@@ -32,6 +32,8 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - **Review `RUSTSEC-2026-0192` in `deny.toml` by 2027-01-16**, earlier when RaTeX, `ab_glyph` or `fontdb` update, and remove it once RaTeX moves off `ttf-parser`. Every `ratex-*` bump: read `FONT_NOTICE.txt` of `ratex-katex-fonts` and recompute its hash in `deny.toml`, and check whether `third_party/ratex-cairo` can go.
 
 ### Documentation
+- Measured, no change needed (#37): the editor's text field with a 1 MiB one-paragraph side loads in 10 ms and its longest main-loop step is 0.15 to 0.18 s (ADR 0025 row 14).
+- ADR 0026: backup retention by day, the restored backup is not pruned, the moved-aside set stays together, Finish Restore (#8, #9, #22, #27). SPEC §3 and the README say how backups are kept now.
 - ADR 0025: a review of every place untrusted input comes in, each finding fixed or accepted, and the time and memory limits measured (issue #42).
 - SPEC §1 principle 6: adaptive from phone (360 px) to desktop, touch-friendly, ready for mobile Linux. SPEC §2 no longer says the app uses `anyhow`.
 - CLAUDE.md: the quality gate needs a display (`xvfb-run -a scripts/check.sh` without one; CI uses Xvfb), the gate command matches `scripts/check.sh`, and the status line points to SPEC.
@@ -43,6 +45,10 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - CLAUDE.md: never discard uncommitted work. `.claude/settings.json` denies the usual discarding commands for Claude Code (`git restore`, `git checkout --` / `.` / `-f`, `git switch -f`, `git stash drop` / `clear`, `git reset --hard`, `git clean`, `--force`, `-f` and `+refspec` pushes, `git branch -D`, `rm -rf`). `--force-with-lease` stays allowed for rebased slice branches. It is a guard rail for the usual spellings, not a sandbox.
 
 ### Fixed
+- Backups are kept by day, not by count (SPEC §3, ADR 0026, #27): every backup of the last 24 hours, the newest of each of the last 14 UTC days, the newest one overall, and the one just made. Before, 14 backups made in one afternoon (an import each) pushed out all the older daily ones. A backup dated in the future (the clock went backwards) no longer takes slots from real days: only the newest one is kept.
+- Restoring the oldest backup no longer lets the prune after it delete that backup (#8).
+- A crash in the middle of moving the old database aside no longer splits its `-wal` from its main file: the name is written to `rappel.sqlite3.moving-aside` first, and a retry (a restore or Start Fresh) fills the same `replaced-…` set (#9).
+- An interrupted restore whose backup has been deleted can be finished: the recovery page offers **Finish Restore**, which checks the waiting copy again and installs it (#22). `rappel_core::storage::finish_restore`, `Error::NoRestoreWaiting`.
 - Importing a named pipe no longer hangs the import (and Import and Export with it) until restart, and a device such as `/dev/zero` is not read: only regular files are imported (ADR 0025).
 - Import refuses a zip whose entries overlap (two records pointing at the same bytes). Rappel never writes such files.
 - Planning an import needs less memory at its peak: the archive and the decompressed JSON are freed as soon as they are no longer needed (extrapolated to the 256 MiB limit: at most about 895 MiB instead of 1,150 MiB).

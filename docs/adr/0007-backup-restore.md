@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-15
-- Amended by: ADR 0020 (backup names)
+- Amended by: ADR 0020 (backup names), ADR 0026 (the restored backup is not pruned, the moved-aside set stays together, Finish Restore)
 
 ## Context
 

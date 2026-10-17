@@ -14,7 +14,7 @@ use super::{
 };
 use crate::domain::deck_name_key;
 use crate::error::{Error, Result};
-use crate::storage::{KEEP_BACKUPS, Store, create_backup, prune_backups, rebuild_cards};
+use crate::storage::{Store, create_backup, prune_backups, rebuild_cards};
 use crate::time::now_ms;
 
 impl Store {
@@ -113,7 +113,7 @@ impl Store {
         let backup_dir = self.backup_dir.clone().ok_or(Error::NoBackupDir)?;
         let backup = create_backup(&self.conn, &backup_dir, now)?;
         tracing::info!(path = %backup.display(), "database backed up before an import");
-        if let Err(err) = prune_backups(&backup_dir, KEEP_BACKUPS, Some(&backup)) {
+        if let Err(err) = prune_backups(&backup_dir, now, &[&backup]) {
             // As at startup: a failed prune only leaves extra backups.
             tracing::warn!("pruning old backups failed: {err}");
         }

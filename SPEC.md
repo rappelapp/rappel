@@ -95,7 +95,7 @@ CREATE VIRTUAL TABLE cards_fts USING fts5(front_md, back_md, content='cards', co
 
 Storage rules:
 - `PRAGMA journal_mode=WAL`, `foreign_keys=ON`, `PRAGMA integrity_check` at startup (log and toast if it fails).
-- **Backups:** before any migration, and once per day at startup, copy the DB with the SQLite online backup API to `<data dir>/backups/rappel-YYYYMMDD-HHMMSS.sqlite3`. Keep the 14 most recent.
+- **Backups:** before any migration, and once per day at startup, copy the DB with the SQLite online backup API to `<data dir>/backups/rappel-YYYYMMDD-HHMMSS.sqlite3`. Keep a backup if it is from the last 24 hours, or the newest of its UTC day for each of the last 14 days, or the newest one overall, or the one just made or just restored (ADR 0026).
 - DB and backup files are created with mode `0600`, directories `0700`.
 
 ---

@@ -13,7 +13,9 @@
 //! 2. The current database and its `-wal`, `-shm` and `-journal` files are
 //!    renamed, main file first, to `rappel.sqlite3.replaced-YYYYMMDD-HHMMSS`
 //!    (plus the same suffixes). SQLite finds `<name>-wal` next to
-//!    `<name>`, so the moved-aside set still opens as one database.
+//!    `<name>`, so the moved-aside set still opens as one database. The
+//!    name is written to `rappel.sqlite3.moving-aside` first, so a retry
+//!    after a crash between two renames fills the same set (ADR 0026).
 //! 3. The copy is renamed to `rappel.sqlite3`, and opened with
 //!    [`Store::open`].
 //!
@@ -25,7 +27,7 @@
 //! finishes the job. See ADR 0007.
 
 use std::fs::{self, File, OpenOptions, Permissions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -107,6 +109,80 @@ pub fn start_fresh(data_dir: &Path, current: Option<Store>) -> Result<Restored> 
     start_fresh_with(data_dir, now_ms(), MIGRATIONS)
 }
 
+/// Installs the validated copy an interrupted restore left waiting, when
+/// the backup it came from is gone (ADR 0026, #22). `current` is the open
+/// store, if any; it is closed first.
+///
+/// The waiting copy was validated before it got its name (ADR 0007), but it
+/// is copied to a scratch name and checked again (and migrated, if this
+/// build is newer), so what is installed is exactly what was checked, and
+/// the waiting file itself is only replaced by that checked copy. The
+/// database and sidecar files still in place are moved aside as
+/// [`restore_backup`] does.
+///
+/// # Errors
+/// - [`Error::NoRestoreWaiting`] if there is no waiting copy (or it is not
+///   a regular file). Nothing was changed.
+/// - [`Error::RestoreRefused`] if the copy is damaged, too new, or not a
+///   Rappel database. The copy stays where it is and nothing was changed.
+/// - IO errors while copying or moving files, and any error from
+///   [`Store::open`] on the installed database.
+pub fn finish_restore(data_dir: &Path, current: Option<Store>) -> Result<Restored> {
+    drop(current);
+    finish_restore_with(data_dir, now_ms(), MIGRATIONS)
+}
+
+/// [`finish_restore`] with every input explicit, for tests.
+fn finish_restore_with(data_dir: &Path, now_ms: i64, migrations: &[Migration]) -> Result<Restored> {
+    let partial = restore_partial_path(data_dir);
+    let waiting = match fs::symlink_metadata(&partial) {
+        Ok(meta) => meta.file_type().is_file(),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => false,
+        Err(source) => {
+            return Err(Error::Io {
+                path: partial,
+                source,
+            });
+        }
+    };
+    if !waiting {
+        return Err(Error::NoRestoreWaiting);
+    }
+    let refused = |source: Error| Error::RestoreRefused {
+        path: partial.clone(),
+        source: Box::new(source),
+    };
+
+    let checking = restore_checking_path(data_dir);
+    copy_private(&partial, &checking).inspect_err(|_| remove_copy(&checking))?;
+    if let Err(err) = check_copy(&checking, migrations) {
+        remove_copy(&checking);
+        tracing::warn!("the waiting restore copy was refused: {err}");
+        return Err(refused(err));
+    }
+    // Replaces the waiting file atomically with the checked (and perhaps
+    // migrated) copy.
+    fs::rename(&checking, &partial).map_err(|source| Error::Io {
+        path: checking.clone(),
+        source,
+    })?;
+    sync_parent(&partial)?;
+    let db_path = data_dir.join(DB_FILE_NAME);
+    let replaced = move_aside(&db_path, now_ms)?;
+    if let Some(path) = &replaced {
+        tracing::info!(path = %path.display(), "previous database moved aside");
+    }
+    install(&partial, &db_path)?;
+    tracing::info!("interrupted restore finished");
+    let store = Store::open_with(
+        &db_path,
+        &data_dir.join(BACKUP_DIR_NAME),
+        now_ms,
+        migrations,
+    )?;
+    Ok(Restored { store, replaced })
+}
+
 /// [`start_fresh`] with every input explicit, for tests.
 fn start_fresh_with(data_dir: &Path, now_ms: i64, migrations: &[Migration]) -> Result<Restored> {
     let partial = restore_partial_path(data_dir);
@@ -184,11 +260,14 @@ fn restore_with(
     install(&partial, &db_path)?;
     tracing::info!(backup = %backup.display(), "backup restored");
 
-    let store = Store::open_with(
+    // The restored backup is protected from the prune this open does: it
+    // may be the oldest one (#8).
+    let store = Store::open_protecting(
         &db_path,
         &data_dir.join(BACKUP_DIR_NAME),
         now_ms,
         migrations,
+        Some(backup),
     )?;
     Ok(Restored { store, replaced })
 }
@@ -413,10 +492,92 @@ fn reference_schema(migrations: &[Migration], version: u32) -> Result<Vec<Schema
     schema_objects(&conn)
 }
 
+/// Marker next to the database naming the `replaced-…` set a move is
+/// filling, written before the first rename and removed after the last (#9).
+const MOVING_ASIDE: &str = ".moving-aside";
+
+fn moving_aside_path(db_path: &Path) -> PathBuf {
+    suffixed(db_path, MOVING_ASIDE)
+}
+
+fn suffixed(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// The set an interrupted [`move_aside`] was filling, from the marker.
+/// `None` without a marker.
+///
+/// # Errors
+/// If the marker cannot be read, or does not name a `<db>.replaced-…` file
+/// next to the database. A name from anywhere else is never followed.
+fn read_moving_aside(db_path: &Path) -> Result<Option<PathBuf>> {
+    let marker = moving_aside_path(db_path);
+    let io_err = |source| Error::Io {
+        path: marker.clone(),
+        source,
+    };
+    let bytes = match fs::read(&marker) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(io_err(err)),
+    };
+    let prefix = format!("{DB_FILE_NAME}.replaced-");
+    let name = String::from_utf8(bytes)
+        .ok()
+        .filter(|n| n.starts_with(&prefix) && !n.contains(['/', '\0']));
+    match name {
+        Some(name) => Ok(Some(db_path.with_file_name(name))),
+        None => Err(io_err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "does not name a moved-aside database",
+        ))),
+    }
+}
+
+/// Records `stem` as the set being filled, durably.
+fn write_moving_aside(db_path: &Path, stem: &Path) -> Result<()> {
+    let marker = moving_aside_path(db_path);
+    let io_err = |source| Error::Io {
+        path: marker.clone(),
+        source,
+    };
+    let name = stem.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+        io_err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "moved-aside name is not UTF-8",
+        ))
+    })?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(FILE_MODE)
+        .open(&marker)
+        .map_err(io_err)?;
+    file.write_all(name.as_bytes()).map_err(io_err)?;
+    file.sync_all().map_err(io_err)?;
+    sync_parent(&marker)
+}
+
 /// Renames the database at `db_path` and its sidecar files, main file
 /// first, to a free `<db>.replaced-YYYYMMDD-HHMMSS[-N]` name with mode
 /// `0600`. Returns that name, or `None` if none of the files exist.
+///
+/// The chosen name is recorded first, so a crash between two renames does
+/// not split the set: a retry moves what is left to the same name (#9).
+/// Nothing is ever overwritten.
 fn move_aside(db_path: &Path, now_ms: i64) -> Result<Option<PathBuf>> {
+    move_aside_with(db_path, now_ms, &|from, to| fs::rename(from, to))
+}
+
+/// `move_aside` with the rename injected, so a test can fail it part-way.
+fn move_aside_with(
+    db_path: &Path,
+    now_ms: i64,
+    rename: &dyn Fn(&Path, &Path) -> io::Result<()>,
+) -> Result<Option<PathBuf>> {
     let mut present = Vec::new();
     for (path, suffix) in std::iter::once((db_path.to_path_buf(), ""))
         .chain(sidecar_paths(db_path).into_iter().zip(SIDECAR_SUFFIXES))
@@ -425,20 +586,39 @@ fn move_aside(db_path: &Path, now_ms: i64) -> Result<Option<PathBuf>> {
             present.push((path, suffix));
         }
     }
+    let recorded = read_moving_aside(db_path)?;
     if present.is_empty() {
-        return Ok(None);
+        // Either nothing to move, or an earlier move finished but for
+        // removing its marker.
+        remove_moving_aside(db_path)?;
+        return Ok(recorded);
     }
 
-    let stem = free_stem(db_path, now_ms)?;
+    // A recorded set is continued unless it cannot be one: a main file is
+    // here again although the recorded set already has one, so the marker is
+    // left over from a finished move and a new database came after it.
+    let main_present = present.iter().any(|(_, suffix)| suffix.is_empty());
+    let stem = match recorded {
+        Some(stem) if !(main_present && exists(&stem)?) => stem,
+        _ => {
+            let stem = free_stem(db_path, now_ms)?;
+            write_moving_aside(db_path, &stem)?;
+            stem
+        }
+    };
     for (path, suffix) in present {
-        let mut target = stem.as_os_str().to_owned();
-        target.push(suffix);
-        let target = PathBuf::from(target);
+        let target = suffixed(&stem, suffix);
         let io_err = |source| Error::Io {
             path: path.clone(),
             source,
         };
-        fs::rename(&path, &target).map_err(io_err)?;
+        if exists(&target)? {
+            return Err(io_err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "the moved-aside name is taken",
+            )));
+        }
+        rename(&path, &target).map_err(io_err)?;
         // Only regular files; never follow a symlink to chmod its target.
         if fs::symlink_metadata(&target)
             .map_err(io_err)?
@@ -449,7 +629,20 @@ fn move_aside(db_path: &Path, now_ms: i64) -> Result<Option<PathBuf>> {
         }
     }
     sync_parent(db_path)?;
+    remove_moving_aside(db_path)?;
     Ok(Some(stem))
+}
+
+fn remove_moving_aside(db_path: &Path) -> Result<()> {
+    let marker = moving_aside_path(db_path);
+    match fs::remove_file(&marker) {
+        Ok(()) => sync_parent(&marker),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(Error::Io {
+            path: marker,
+            source,
+        }),
+    }
 }
 
 /// `<db>.replaced-<stamp>`, or `<db>.replaced-<stamp>-N` with the smallest

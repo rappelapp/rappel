@@ -212,9 +212,15 @@ pub enum Error {
     /// A restore was interrupted after the old database was moved aside and
     /// before the backup was installed (the path is the validated copy
     /// waiting to be installed). Opening would start an empty database in
-    /// its place; restoring a backup again finishes the job.
+    /// its place; restoring a backup again, or [`crate::storage::finish_restore`],
+    /// finishes the job.
     #[error("a restore was interrupted before it finished ({} is waiting to be installed)", .0.display())]
     InterruptedRestore(PathBuf),
+
+    /// Finishing a restore was asked for, but no validated copy is waiting
+    /// to be installed. Nothing was changed.
+    #[error("no interrupted restore is waiting to be finished")]
+    NoRestoreWaiting,
 
     /// The operating system gave no random bytes for a new id. The cause
     /// is boxed so the random-number crate stays out of this API (ADR 0015).

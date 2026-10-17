@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use super::*;
 use crate::domain::CardState;
 use crate::scheduling::Scheduler;
-use crate::storage::backup::{check_rows, create_backup, list_backups};
+use crate::storage::backup::{check_rows, create_backup, list_backups, utc_stamp};
 use crate::storage::latest;
 use crate::storage::tests::{
     CARD, CARD2, DAY_MS, DAY0, DECK, FAILING_V2, FAKE_V1, FAKE_V2, REVIEWS, corrupt_btree, count,
@@ -153,6 +153,32 @@ fn restore_over_a_healthy_database() {
     no_partial_left(&e);
 }
 
+/// #8: restoring the oldest backup must not prune it away when the open that
+/// follows makes the day's first backup.
+#[test]
+fn the_restored_backup_survives_the_prune_after_it() {
+    let e = Env::new();
+    let (store, _) = e.diverged();
+    // One backup a day for 14 days, ending on DAY0; the restore is on the
+    // next day, which has none yet, so the oldest is out of the window.
+    let mut oldest = PathBuf::new();
+    for k in 0..14 {
+        oldest = create_backup(&store.conn, &e.backups(), DAY0 - k * DAY_MS).unwrap();
+    }
+    drop(store);
+
+    let restored = e.restore(&oldest).unwrap();
+
+    assert!(oldest.exists(), "the backup just restored is still there");
+    // The day's first backup was made too.
+    assert!(
+        e.backups()
+            .join(format!("rappel-{RESTORE_STAMP}.sqlite3"))
+            .exists()
+    );
+    assert_eq!(deck_names(&restored.store.conn), ["Maths", "Physics"]);
+}
+
 #[test]
 fn restore_through_the_public_api_closes_the_open_store() {
     let e = Env::new();
@@ -276,6 +302,154 @@ fn orphaned_wal_is_refused_by_open_and_moved_aside_by_restore() {
     assert_eq!(fs::read(with_suffix(&stem, "-wal")).unwrap(), wal_bytes);
 }
 
+/// A crash in `move_aside` after it recorded the set and renamed the main
+/// file, before it renamed the `-wal`. Returns the set's name and the
+/// `-wal`'s bytes.
+fn crash_between_the_renames(e: &Env, store: Store, at: i64) -> (PathBuf, Vec<u8>) {
+    let wal_bytes = crash_with_rows_in_wal(e, store);
+    let stem = e
+        .data
+        .join(format!("{DB_FILE_NAME}.replaced-{}", utc_stamp(at)));
+    write_moving_aside(&e.db(), &stem).unwrap();
+    fs::rename(e.db(), &stem).unwrap();
+    (stem, wal_bytes)
+}
+
+/// #9: a retry moves the stray `-wal` next to its main file, not under a new
+/// name, so the rows that were only in it are readable there.
+#[test]
+fn a_retry_after_a_crash_between_the_renames_keeps_the_set_together() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    let (stem, wal_bytes) = crash_between_the_renames(&e, store, DAY0);
+    assert_ne!(
+        utc_stamp(DAY0),
+        RESTORE_STAMP,
+        "the retry is at another time"
+    );
+
+    match e.open() {
+        Err(Error::OrphanedSidecar(_)) => {}
+        other => panic!("expected OrphanedSidecar, got {other:?}"),
+    }
+    let restored = e.restore(&backup).unwrap();
+
+    assert_eq!(restored.replaced.as_deref(), Some(stem.as_path()));
+    assert_eq!(fs::read(suffixed(&stem, "-wal")).unwrap(), wal_bytes);
+    assert!(!e.replaced().exists(), "no second set was started");
+    assert!(!moving_aside_path(&e.db()).exists(), "the marker is gone");
+    let old = Connection::open(&stem).unwrap();
+    assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+    no_partial_left(&e);
+}
+
+/// #9 at the source: `move_aside` itself records the set before its first
+/// rename, so a failure after the main file leaves a marker (mode 0600) that
+/// a plain retry follows.
+#[test]
+fn move_aside_records_its_set_before_renaming_and_a_retry_finishes_it() {
+    use std::cell::Cell;
+    use std::os::unix::fs::PermissionsExt;
+
+    let e = Env::new();
+    let (store, _) = e.diverged();
+    let wal_bytes = crash_with_rows_in_wal(&e, store);
+    let calls = Cell::new(0);
+
+    let err = move_aside_with(&e.db(), DAY0, &|from, to| {
+        calls.set(calls.get() + 1);
+        if calls.get() == 2 {
+            return Err(io::Error::other("injected failure"));
+        }
+        fs::rename(from, to)
+    })
+    .unwrap_err();
+
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
+    let stem = e
+        .data
+        .join(format!("{DB_FILE_NAME}.replaced-{}", utc_stamp(DAY0)));
+    let marker = moving_aside_path(&e.db());
+    assert_eq!(
+        fs::read_to_string(&marker).unwrap().trim_end(),
+        stem.file_name().unwrap().to_str().unwrap()
+    );
+    assert_eq!(
+        fs::metadata(&marker).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(stem.exists(), "the main file was moved");
+    assert!(suffixed(&e.db(), "-wal").exists(), "the -wal is still here");
+
+    // A retry at another time still uses the recorded name.
+    let moved = move_aside(&e.db(), DAY0 + 10 * 86_400_000).unwrap();
+
+    assert_eq!(moved.as_deref(), Some(stem.as_path()));
+    assert_eq!(fs::read(suffixed(&stem, "-wal")).unwrap(), wal_bytes);
+    assert!(!marker.exists());
+}
+
+/// Start Fresh moves the same set.
+#[test]
+fn start_fresh_after_a_crash_between_the_renames_keeps_the_set_together() {
+    let e = Env::new();
+    let (store, _) = e.diverged();
+    let (stem, _) = crash_between_the_renames(&e, store, DAY0);
+    fs::remove_dir_all(e.backups()).unwrap();
+
+    let fresh = e.start_fresh().unwrap();
+
+    assert_eq!(fresh.replaced.as_deref(), Some(stem.as_path()));
+    let old = Connection::open(&stem).unwrap();
+    assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+}
+
+/// A marker left by a finished move must not capture a later database.
+#[test]
+fn a_marker_left_after_a_finished_move_is_not_reused() {
+    let e = Env::new();
+    let (store, backup) = e.diverged();
+    drop(store);
+    let old_stem = e
+        .data
+        .join(format!("{DB_FILE_NAME}.replaced-20200101-000000"));
+    fs::write(&old_stem, b"an older set").unwrap();
+    write_moving_aside(&e.db(), &old_stem).unwrap();
+
+    let restored = e.restore(&backup).unwrap();
+
+    assert_eq!(restored.replaced.as_deref(), Some(e.replaced().as_path()));
+    assert_eq!(fs::read(&old_stem).unwrap(), b"an older set");
+    assert!(!moving_aside_path(&e.db()).exists());
+}
+
+#[test]
+fn a_marker_naming_another_file_is_refused_and_nothing_changes() {
+    for content in [
+        "../elsewhere",
+        "rappel.sqlite3",
+        "rappel.sqlite3.replaced-1/../x",
+        "",
+    ] {
+        let e = Env::new();
+        let (store, backup) = e.diverged();
+        drop(store);
+        fs::write(moving_aside_path(&e.db()), content).unwrap();
+        let before = snapshot(&e.data);
+
+        let err = e.restore(&backup).unwrap_err();
+
+        assert!(matches!(err, Error::Io { .. }), "{content:?}: {err:?}");
+        // The validated copy waits, as after any failure past that point;
+        // the database and the marker are as they were.
+        let mut after = snapshot(&e.data);
+        after.remove(&restore_partial_path(&e.data));
+        let mut before = before;
+        before.remove(&restore_partial_path(&e.data));
+        assert_eq!(after, before, "{content:?}");
+    }
+}
+
 /// Runs the first half of a restore by hand: copy and validate, then move
 /// the current database aside. Returns the validated copy.
 fn copy_validate_and_move_aside(e: &Env, backup: &Path) -> PathBuf {
@@ -382,6 +556,130 @@ fn failed_install_keeps_the_copy_and_never_starts_an_empty_database() {
     assert_eq!(fs::read(with_suffix(&stem, "-wal")).unwrap(), b"intruder");
     let old = Connection::open(e.replaced()).unwrap();
     assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+}
+
+// --- Finishing an interrupted restore (#22) -------------------------------
+
+/// The state of #22: a restore moved the database aside and was interrupted,
+/// and the backup it came from is gone. Returns the waiting copy.
+fn interrupted_without_its_backup(e: &Env) -> PathBuf {
+    let (store, backup) = e.diverged();
+    drop(store);
+    let partial = copy_validate_and_move_aside(e, &backup);
+    fs::remove_dir_all(e.backups()).unwrap();
+    partial
+}
+
+#[test]
+fn finishing_installs_exactly_the_waiting_copy() {
+    let e = Env::new();
+    let partial = interrupted_without_its_backup(&e);
+    assert!(matches!(e.open(), Err(Error::InterruptedRestore(_))));
+    // Something strayed into the place meanwhile.
+    fs::write(with_suffix(&e.db(), "-wal"), b"intruder").unwrap();
+
+    let finished = finish_restore_with(&e.data, DAY0 + DAY_MS, MIGRATIONS).unwrap();
+
+    assert_eq!(deck_names(&finished.store.conn), ["Maths"]);
+    assert_eq!(count(&finished.store.conn, "review_events"), 1);
+    assert!(!partial.exists());
+    assert_eq!(mode(&e.db()), 0o600);
+    // The stray file is moved aside, next to the set the interruption made.
+    let stem = finished.replaced.clone().unwrap();
+    assert_eq!(stem, with_suffix(&e.replaced(), "-2"));
+    assert_eq!(fs::read(with_suffix(&stem, "-wal")).unwrap(), b"intruder");
+    let old = Connection::open(e.replaced()).unwrap();
+    assert_eq!(deck_names(&old), ["Maths", "Physics"]);
+    // What was installed was the waiting copy: same rows as the backup it
+    // came from, which was a valid database of the current version.
+    drop(finished);
+    let installed = Connection::open(e.db()).unwrap();
+    assert_eq!(deck_names(&installed), ["Maths"]);
+    no_partial_left(&e);
+}
+
+#[test]
+fn finishing_through_the_public_api_works_without_any_backup() {
+    let e = Env::new();
+    interrupted_without_its_backup(&e);
+
+    let finished = finish_restore(&e.data, None).unwrap();
+
+    assert_eq!(deck_names(&finished.store.conn), ["Maths"]);
+    assert_eq!(finished.replaced, None, "the database was already aside");
+}
+
+#[test]
+fn finishing_without_a_waiting_copy_is_refused_and_changes_nothing() {
+    let e = Env::new();
+    let (store, _) = e.diverged();
+    drop(store);
+    let before = snapshot(&e.data);
+
+    assert!(matches!(
+        finish_restore_with(&e.data, DAY0 + DAY_MS, MIGRATIONS),
+        Err(Error::NoRestoreWaiting)
+    ));
+
+    assert_eq!(snapshot(&e.data), before);
+}
+
+#[test]
+fn finishing_refuses_a_waiting_symlink_and_changes_nothing() {
+    let e = Env::new();
+    let partial = interrupted_without_its_backup(&e);
+    let real = e.data.join("elsewhere");
+    fs::rename(&partial, &real).unwrap();
+    std::os::unix::fs::symlink(&real, &partial).unwrap();
+    let before = snapshot(&e.data);
+
+    assert!(matches!(
+        finish_restore_with(&e.data, DAY0 + DAY_MS, MIGRATIONS),
+        Err(Error::NoRestoreWaiting)
+    ));
+
+    assert_eq!(snapshot(&e.data), before);
+}
+
+#[test]
+fn finishing_refuses_a_damaged_copy_and_keeps_it() {
+    let e = Env::new();
+    let partial = interrupted_without_its_backup(&e);
+    fs::write(&partial, vec![0x42; 8192]).unwrap();
+    fs::write(with_suffix(&e.db(), "-wal"), b"stray").unwrap();
+    let before = snapshot(&e.data);
+
+    let err = finish_restore_with(&e.data, DAY0 + DAY_MS, MIGRATIONS).unwrap_err();
+
+    assert!(matches!(err, Error::RestoreRefused { .. }), "{err:?}");
+    assert_eq!(snapshot(&e.data), before, "nothing changed, copy kept");
+    assert!(matches!(e.open(), Err(Error::OrphanedSidecar(_))));
+}
+
+#[test]
+fn finishing_migrates_a_copy_from_an_older_build() {
+    let e = Env::new();
+    let store = Store::open_with(&e.db(), &e.backups(), DAY0, &[FAKE_V1]).unwrap();
+    store
+        .conn
+        .execute_batch("INSERT INTO t VALUES (1);")
+        .unwrap();
+    let backup = create_backup(&store.conn, &e.backups(), DAY0).unwrap();
+    drop(store);
+    let partial = restore_partial_path(&e.data);
+    copy_private(&backup, &partial).unwrap();
+    move_aside(&e.db(), DAY0 + DAY_MS).unwrap();
+    fs::remove_dir_all(e.backups()).unwrap();
+
+    let finished = finish_restore_with(&e.data, DAY0 + DAY_MS, &[FAKE_V1, FAKE_V2]).unwrap();
+
+    assert_eq!(finished.store.schema_version().unwrap(), 2);
+    let y: i64 = finished
+        .store
+        .conn
+        .query_row("SELECT y FROM t", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(y, 7);
 }
 
 #[test]

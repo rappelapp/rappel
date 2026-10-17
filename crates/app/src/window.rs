@@ -333,6 +333,7 @@ impl RappelWindow {
 fn recovered_message(how: Recovered, replaced: Option<&Path>) -> String {
     let done = match how {
         Recovered::Backup => "Backup restored",
+        Recovered::Finished => "Restore finished",
         Recovered::Fresh => "Started with an empty database",
     };
     match replaced {
@@ -359,6 +360,10 @@ mod tests {
         assert_eq!(
             recovered_message(Recovered::Backup, None),
             "Backup restored"
+        );
+        assert_eq!(
+            recovered_message(Recovered::Finished, None),
+            "Restore finished"
         );
         assert_eq!(
             recovered_message(Recovered::Fresh, Some(kept)),

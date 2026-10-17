@@ -49,8 +49,9 @@ impl RecoveryReason {
                  the data folder, not deleted."
             }
             Self::InterruptedRestore => {
-                "A restore was interrupted before it finished. Restore a backup again to \
-                 continue. The previous database is kept in the data folder, not deleted."
+                "A restore was interrupted before it finished. Its checked copy is waiting in \
+                 the data folder: Finish Restore installs it, or you can restore a backup \
+                 instead. The previous database is kept in the data folder, not deleted."
             }
         }
     }
@@ -188,6 +189,15 @@ mod tests {
 
     fn dir() -> PathBuf {
         PathBuf::from("/data/rappel-dev")
+    }
+
+    #[test]
+    fn an_interrupted_restore_points_to_finish_restore() {
+        assert!(
+            RecoveryReason::InterruptedRestore
+                .description()
+                .contains("Finish Restore")
+        );
     }
 
     fn recovery(reason: RecoveryReason) -> Problem {

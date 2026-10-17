@@ -12,6 +12,20 @@ template $RappelRecoveryPage: Adw.Bin {
         orientation: vertical;
         spacing: 18;
 
+        // Only while an interrupted restore's checked copy waits
+        // (pages/recovery_page.rs).
+        Gtk.Button finish_restore_button {
+          label: _("_Finish Restore");
+          use-underline: true;
+          halign: center;
+          visible: false;
+
+          styles [
+            "pill",
+            "suggested-action",
+          ]
+        }
+
         Gtk.ListBox backup_list {
           selection-mode: none;
           accessibility {

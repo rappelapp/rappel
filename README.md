@@ -37,11 +37,11 @@ Add `--markdown` for a deck with one card per Markdown construct, and `--math` f
 
 ## Recovering your data
 
-Rappel backs up its database automatically: before every schema upgrade, before an import that adds or brings back anything, and once a day, into `backups/` inside the data directory (`~/.local/share/rappel/backups/`, keeping the 14 newest).
+Rappel backs up its database automatically: before every schema upgrade, before an import that adds or brings back anything, and once a day, into `backups/` inside the data directory (`~/.local/share/rappel/backups/`, keeping every backup of the last 24 hours and the newest of each of the last 14 days).
 
 If the database is damaged or you want to go back to an earlier state, **restore a backup through Rappel. Do not copy files by hand.** A copied-in file can be silently mixed with a leftover `rappel.sqlite3-wal` file from the old database, which corrupts it or brings back data you meant to drop. Restoring checks the backup first and refuses a damaged one. It never deletes your current database: it is kept next to the new one as `rappel.sqlite3.replaced-YYYYMMDD-HHMMSS` (with its `-wal`/`-shm`/`-journal` files, if any).
 
-When Rappel finds its database damaged, it shows a recovery screen that lists the backups, newest first, and restores the one you pick. Restoring a backup while the database is healthy (to go back to an earlier state) is not in the app yet. If a database was made by a newer version of Rappel, update Rappel; do not restore an older backup over it.
+When Rappel finds its database damaged, it shows a recovery screen that lists the backups, newest first, and restores the one you pick. If a restore was interrupted and its backup has since gone, the screen offers **Finish Restore**, which installs the checked copy that was waiting. Restoring a backup while the database is healthy (to go back to an earlier state) is not in the app yet. If a database was made by a newer version of Rappel, update Rappel; do not restore an older backup over it.
 
 ## Exporting and importing
 

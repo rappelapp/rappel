@@ -5,6 +5,7 @@
 //! with `PRAGMA quick_check`, synced and only then renamed, so a file with
 //! the final name is always a complete, checked backup.
 
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
@@ -20,8 +21,11 @@ use crate::time::{UtcParts, utc_ms, utc_parts};
 
 use super::BACKUP_DIR_NAME;
 
-/// How many backups [`prune_backups`] keeps (SPEC §3).
-pub(crate) const KEEP_BACKUPS: usize = 14;
+/// How many UTC days, today included, keep their newest backup (SPEC §3,
+/// ADR 0026).
+pub(crate) const KEEP_DAYS: i64 = 14;
+
+const DAY_MS: i64 = 86_400_000;
 
 const PREFIX: &str = "rappel-";
 const EXTENSION: &str = ".sqlite3";
@@ -341,25 +345,70 @@ pub(crate) fn check_rows(conn: &Connection, pragma: &str) -> rusqlite::Result<Ve
     rows.collect()
 }
 
-/// Deletes all but `keep` backups in `dir`, and any leftover `.partial`
-/// files. Other files are never touched.
-///
-/// `protect` (the backup just made) is always kept and counts towards
-/// `keep`; the rest of the slots go to the newest by name. Without this, a
-/// clock that was ahead earlier could make the fresh backup sort oldest and
-/// be deleted right after it was made.
-pub(crate) fn prune_backups(dir: &Path, keep: usize, protect: Option<&Path>) -> Result<()> {
-    let protected_name = protect.and_then(Path::file_name).and_then(|n| n.to_str());
-    let mut backups = backup_names(dir)?;
-    let mut keep = keep;
-    if let Some(name) = protected_name
-        && let Some(i) = backups.iter().position(|b| b == name)
-    {
-        backups.remove(i);
-        keep = keep.saturating_sub(1);
+/// Which of `names` (backup file names, oldest first) [`prune_backups`]
+/// keeps (SPEC §3, ADR 0026). A backup is kept if any of these holds:
+/// 1. it was made in the last 24 hours (every import and migration backup
+///    of today stays);
+/// 2. it is the newest of its UTC day, for each of the last [`KEEP_DAYS`]
+///    days (today included) that has one;
+/// 3. it is in `protect` (the backup just made, the backup just restored);
+/// 4. it is dated after `now_ms` (the clock went backwards), and is the
+///    newest of those: one such backup is kept, so a clock that was far
+///    ahead cannot crowd out real days;
+/// 5. it is the newest backup that is not dated in the future, whatever its
+///    age: after a long pause the last copy before it is never pruned;
+/// 6. its name holds no real date, so it is not understood and not ours to
+///    delete.
+fn backups_to_keep(names: &[String], now_ms: i64, protect: &[&str]) -> HashSet<String> {
+    let today = now_ms.div_euclid(DAY_MS);
+    let mut keep: HashSet<String> = protect.iter().map(|&n| n.to_owned()).collect();
+    let mut newest_of_day: BTreeMap<i64, &String> = BTreeMap::new();
+    let mut newest_future: Option<&String> = None;
+    // Oldest first, so a later name replaces an earlier one of its day.
+    for name in names {
+        let Some(t) = parse_backup_name(name).and_then(|(stamp, _)| stamp_ms(stamp)) else {
+            keep.insert(name.clone());
+            continue;
+        };
+        if t > now_ms {
+            newest_future = Some(name);
+        } else {
+            if now_ms - t < DAY_MS {
+                keep.insert(name.clone());
+            }
+            newest_of_day.insert(t.div_euclid(DAY_MS), name);
+        }
     }
-    let excess = backups.len().saturating_sub(keep);
-    let mut doomed: Vec<PathBuf> = backups[..excess].iter().map(|n| dir.join(n)).collect();
+    keep.extend(newest_future.cloned());
+    keep.extend(newest_of_day.values().next_back().map(|&n| n.clone()));
+    keep.extend(
+        newest_of_day
+            .into_iter()
+            .filter(|&(day, _)| today - day < KEEP_DAYS)
+            .map(|(_, name)| name.clone()),
+    );
+    keep
+}
+
+/// Deletes the backups in `dir` that [`backups_to_keep`] does not keep, and
+/// any leftover `.partial` files. Other files are never touched.
+///
+/// `protect` lists backups that stay whatever their age: the one just made
+/// (without this, a clock that was ahead earlier could make it look old and
+/// have it deleted right after it was made) and, after a restore, the one
+/// restored.
+pub(crate) fn prune_backups(dir: &Path, now_ms: i64, protect: &[&Path]) -> Result<()> {
+    let protected: Vec<&str> = protect
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+        .collect();
+    let names = backup_names(dir)?;
+    let keep = backups_to_keep(&names, now_ms, &protected);
+    let mut doomed: Vec<PathBuf> = names
+        .iter()
+        .filter(|n| !keep.contains(*n))
+        .map(|n| dir.join(n))
+        .collect();
 
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -445,21 +494,40 @@ mod tests {
         );
     }
 
+    /// The file name of a backup made at `ms`.
+    fn name_at(ms: i64) -> String {
+        format!("{}{EXTENSION}", backup_stem(ms))
+    }
+
+    /// 2026-10-<day>T<hour>:00:00Z.
+    fn oct(day: i64, hour: i64) -> i64 {
+        utc_ms(UtcParts {
+            year: 2026,
+            month: 10,
+            day,
+            hour,
+            minute: 0,
+            second: 0,
+        })
+        .unwrap()
+    }
+
     #[test]
-    fn prune_keeps_newest_and_ignores_other_files() {
+    fn prune_keeps_the_newest_of_each_of_the_last_fourteen_days() {
         let tmp = tempfile::tempdir().unwrap();
-        for day in 1..=16 {
-            touch(tmp.path(), &format!("rappel-202610{day:02}-120000.sqlite3"));
+        // Today is Oct 15, so the window is Oct 2 to Oct 15.
+        for day in 1..=15 {
+            touch(tmp.path(), &name_at(oct(day, 12)));
         }
+        // Earlier the same day as another: not the newest of its day.
+        touch(tmp.path(), &name_at(oct(10, 8)));
         touch(tmp.path(), "notes.txt");
         touch(tmp.path(), "rappel-bad.sqlite3");
         touch(tmp.path(), "rappel-20261017-120000.sqlite3.partial");
 
-        prune_backups(tmp.path(), KEEP_BACKUPS, None).unwrap();
+        prune_backups(tmp.path(), NOW, &[]).unwrap();
 
-        let mut expected: Vec<String> = (3..=16)
-            .map(|day| format!("rappel-202610{day:02}-120000.sqlite3"))
-            .collect();
+        let mut expected: Vec<String> = (2..=15).map(|day| name_at(oct(day, 12))).collect();
         expected.push("rappel-bad.sqlite3".into());
         expected.push("notes.txt".into());
         expected.sort();
@@ -467,7 +535,42 @@ mod tests {
     }
 
     #[test]
-    fn prune_never_deletes_the_protected_backup() {
+    fn prune_keeps_every_backup_of_the_last_24_hours() {
+        let tmp = tempfile::tempdir().unwrap();
+        // NOW is Oct 15 12:34. An import-heavy afternoon, and the evening
+        // before, all inside 24 h.
+        let recent = [oct(14, 13), oct(14, 14), oct(15, 1), oct(15, 2), oct(15, 3)];
+        for t in recent {
+            touch(tmp.path(), &name_at(t));
+        }
+        // 25 h ago, not the newest of its day: pruned.
+        touch(tmp.path(), &name_at(oct(14, 11)));
+        touch(tmp.path(), &name_at(oct(14, 11) + 60_000));
+
+        prune_backups(tmp.path(), NOW, &[]).unwrap();
+
+        let mut expected: Vec<String> = recent.iter().map(|&t| name_at(t)).collect();
+        // The newest of Oct 14 is among `recent`; of the two older ones none
+        // is, and neither is within 24 h.
+        expected.sort();
+        assert_eq!(names(tmp.path()), expected);
+    }
+
+    #[test]
+    fn prune_counts_days_in_utc() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Today is Oct 15: Oct 2 23:59:59 is in the window, Oct 1 23:59:59
+        // is not, though both are about two weeks old.
+        touch(tmp.path(), "rappel-20261002-235959.sqlite3");
+        touch(tmp.path(), "rappel-20261001-235959.sqlite3");
+
+        prune_backups(tmp.path(), NOW, &[]).unwrap();
+
+        assert_eq!(names(tmp.path()), ["rappel-20261002-235959.sqlite3"]);
+    }
+
+    #[test]
+    fn prune_keeps_one_future_backup_and_the_protected_one() {
         let tmp = tempfile::tempdir().unwrap();
         // 15 backups from a clock that was years ahead.
         for day in 1..=15 {
@@ -476,20 +579,133 @@ mod tests {
         let fresh = tmp.path().join("rappel-20261015-123456.sqlite3");
         touch(tmp.path(), "rappel-20261015-123456.sqlite3");
 
-        prune_backups(tmp.path(), KEEP_BACKUPS, Some(&fresh)).unwrap();
+        prune_backups(tmp.path(), NOW, &[&fresh]).unwrap();
 
-        let left = names(tmp.path());
-        assert_eq!(left.len(), KEEP_BACKUPS);
-        assert!(left.contains(&"rappel-20261015-123456.sqlite3".to_owned()));
-        // The other 13 slots go to the newest names.
-        assert_eq!(left[0], "rappel-20261015-123456.sqlite3");
-        assert_eq!(left[1], "rappel-20300103-120000.sqlite3");
+        assert_eq!(
+            names(tmp.path()),
+            [
+                "rappel-20261015-123456.sqlite3",
+                "rappel-20300115-120000.sqlite3"
+            ]
+        );
+    }
+
+    #[test]
+    fn prune_never_deletes_a_protected_backup_however_old() {
+        let tmp = tempfile::tempdir().unwrap();
+        // The oldest backup, restored just now (#8).
+        let restored = tmp.path().join("rappel-20260101-120000.sqlite3");
+        touch(tmp.path(), "rappel-20260101-120000.sqlite3");
+        touch(tmp.path(), "rappel-20260102-120000.sqlite3");
+        touch(tmp.path(), "rappel-20260103-120000.sqlite3");
+
+        prune_backups(tmp.path(), NOW, &[&restored]).unwrap();
+
+        // Not the middle one; the newest is always kept.
+        assert_eq!(
+            names(tmp.path()),
+            [
+                "rappel-20260101-120000.sqlite3",
+                "rappel-20260103-120000.sqlite3"
+            ]
+        );
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_backup_after_a_long_pause() {
+        let tmp = tempfile::tempdir().unwrap();
+        touch(tmp.path(), "rappel-20260801-120000.sqlite3");
+        touch(tmp.path(), "rappel-20260802-120000.sqlite3");
+
+        prune_backups(tmp.path(), NOW, &[]).unwrap();
+
+        assert_eq!(names(tmp.path()), ["rappel-20260802-120000.sqlite3"]);
+    }
+
+    #[test]
+    fn prune_leaves_a_name_with_no_real_date_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        touch(tmp.path(), "rappel-20261340-250000.sqlite3");
+
+        prune_backups(tmp.path(), NOW, &[]).unwrap();
+
+        assert_eq!(names(tmp.path()), ["rappel-20261340-250000.sqlite3"]);
     }
 
     #[test]
     fn prune_on_missing_dir_is_ok() {
         let tmp = tempfile::tempdir().unwrap();
-        prune_backups(&tmp.path().join("none"), KEEP_BACKUPS, None).unwrap();
+        prune_backups(&tmp.path().join("none"), NOW, &[]).unwrap();
+    }
+
+    mod property {
+        use super::*;
+        use proptest::prelude::*;
+        use std::collections::BTreeSet;
+
+        /// Backup times from 40 days before `NOW` to 5 days after it, a few
+        /// of them within seconds of each other.
+        fn times() -> impl Strategy<Value = Vec<i64>> {
+            prop::collection::vec(NOW - 40 * DAY_MS..NOW + 5 * DAY_MS, 0..60)
+        }
+
+        fn sorted_names(times: &[i64]) -> Vec<String> {
+            let set: BTreeSet<String> = times.iter().map(|&t| name_at(t)).collect();
+            let mut names: Vec<String> = set.into_iter().collect();
+            names.sort_by(|a, b| parse_backup_name(a).cmp(&parse_backup_name(b)));
+            names
+        }
+
+        proptest! {
+            #[test]
+            fn the_rule_is_safe_bounded_and_stable(times in times(), pick in any::<prop::sample::Index>()) {
+                let names = sorted_names(&times);
+                let protect: Vec<&str> = if names.is_empty() {
+                    vec![]
+                } else {
+                    vec![names[pick.index(names.len())].as_str()]
+                };
+                let keep = backups_to_keep(&names, NOW, &protect);
+
+                // Never removes the newest, nor a protected one.
+                if let Some(newest) = names.last() {
+                    prop_assert!(keep.contains(newest));
+                }
+                for p in &protect {
+                    prop_assert!(keep.contains(*p));
+                }
+
+                // Never more than 14 days + the last 24 h + protected + the
+                // newest past one + one future backup.
+                let recent = names
+                    .iter()
+                    .filter(|n| {
+                        let t = stamp_ms(parse_backup_name(n).unwrap().0).unwrap();
+                        t <= NOW && NOW - t < DAY_MS
+                    })
+                    .count();
+                prop_assert!(keep.len() <= usize::try_from(KEEP_DAYS).unwrap() + recent + 3);
+
+                // Each of the last 14 days with a backup keeps one.
+                for day in 0..KEEP_DAYS {
+                    let d = NOW.div_euclid(DAY_MS) - day;
+                    let has = names.iter().any(|n| {
+                        let t = stamp_ms(parse_backup_name(n).unwrap().0).unwrap();
+                        t <= NOW && t.div_euclid(DAY_MS) == d
+                    });
+                    let kept = keep.iter().any(|n| {
+                        let t = stamp_ms(parse_backup_name(n).unwrap().0).unwrap();
+                        t <= NOW && t.div_euclid(DAY_MS) == d
+                    });
+                    prop_assert_eq!(has, kept);
+                }
+
+                // Pruning twice changes nothing more.
+                let left: Vec<String> =
+                    names.iter().filter(|n| keep.contains(*n)).cloned().collect();
+                prop_assert_eq!(backups_to_keep(&left, NOW, &protect).len(), left.len());
+            }
+        }
     }
 
     #[test]
