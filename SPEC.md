@@ -166,8 +166,8 @@ The work is done in three phases, each ending in a release (ADR 0038, amending t
 
 ### 4.4 Editor
 - `GtkSourceView` 5 with Markdown highlighting, monospace, line wrapping.
-- Live preview below or beside the editor (toggle), using the same renderer as review.
-- Tags field, comma-separated, with suggestions from the existing tags while typing (ignoring case and accents). *Done (ADR 0029, 0031). A tag name has no comma. Ctrl+Shift+Enter keeps the tags for the next card.*
+- Live preview beside the editor when the window is wide; on a narrow one an Edit / Preview toggle shows one or the other (ADR 0043). It uses the same renderer as review.
+- Tags field: the tags as removable pills with an entry after them for adding; a comma or Enter turns the typed name into a pill. Suggestions from the existing tags while typing (ignoring case and accents). *Done (ADR 0029, 0031, 0043). A tag name has no comma. Ctrl+Shift+Enter keeps the tags for the next card.*
 - Ctrl+Enter saves, Ctrl+Shift+Enter saves and starts a new card in the same deck.
 
 ### 4.5 Review

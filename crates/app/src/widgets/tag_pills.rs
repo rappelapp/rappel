@@ -8,17 +8,42 @@
 //! - single line, for list rows: at most `max-shown` pills, then one "+N"
 //!   pill for the rest, whose tooltip names them.
 //!
+//! In the wrapping form the pills can be `removable` (the tag entry, ADR
+//! 0043): each then has a small remove button, focusable, with "Remove Tag"
+//! as its tooltip and "Remove tag NAME" as its accessible label, and an
+//! `end-child` (the entry's text) can follow the pills in the same lines.
+//!
 //! Built to be bound often: a recycled list row calls [`TagPills::set_tags`]
 //! on every bind, so the pill labels are kept and relabelled, never made
 //! again, and nothing is done when the tags are the ones already shown.
 //! Pills are plain labels, never focusable; a list row says its tags in its
-//! own accessible label (`text::spoken`).
+//! own accessible label (`text::spoken`). Only a removable pill's button
+//! takes the focus.
 
 pub mod text;
 
+use std::rc::Rc;
+
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::glib;
+use gtk::{gdk, glib};
+
+use crate::ui::callback::Callback;
+
+/// Called with the index of a pill whose remove button was used, and
+/// whether by Backspace (which walks back) rather than a click, Enter,
+/// Space or Delete.
+type OnRemove = dyn Fn(usize, bool);
+
+/// One pill: its label and, when removable, the box it shares with its
+/// remove button.
+#[derive(Debug, Clone)]
+pub struct Pill {
+    /// The widget in the box: the label, or the removable pill's box.
+    root: gtk::Widget,
+    label: gtk::Label,
+    remove: Option<gtk::Button>,
+}
 
 mod imp {
     use std::cell::{Cell, RefCell};
@@ -26,6 +51,9 @@ mod imp {
     use adw::prelude::*;
     use adw::subclass::prelude::*;
     use gtk::glib;
+
+    use super::{OnRemove, Pill};
+    use crate::ui::callback::Callback;
 
     #[derive(Debug, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::TagPills)]
@@ -41,10 +69,16 @@ mod imp {
         /// The most pills on a single line before the "+N" pill.
         #[property(get, set = Self::set_max_shown, explicit_notify)]
         pub max_shown: Cell<u32>,
+        /// Each pill has a remove button (wrapping form only).
+        #[property(get, set = Self::set_removable, explicit_notify)]
+        pub removable: Cell<bool>,
         /// The tag names shown, each already one line.
         pub names: RefCell<Vec<String>>,
-        /// The pill labels of the box in use, kept for the next tags.
-        pub pills: RefCell<Vec<gtk::Label>>,
+        /// The pills of the box in use, kept for the next tags.
+        pub pills: RefCell<Vec<Pill>>,
+        /// A widget after the pills in the wrap box, kept last.
+        pub end_child: RefCell<Option<gtk::Widget>>,
+        pub on_remove: RefCell<Option<Callback<OnRemove>>>,
         /// The "+N" pill, made the first time it is needed.
         pub overflow: RefCell<Option<gtk::Label>>,
     }
@@ -56,8 +90,11 @@ mod imp {
                 line_box: TemplateChild::default(),
                 single_line: Cell::new(false),
                 max_shown: Cell::new(super::text::ROW_PILLS),
+                removable: Cell::new(false),
                 names: RefCell::default(),
                 pills: RefCell::default(),
+                end_child: RefCell::default(),
+                on_remove: RefCell::default(),
                 overflow: RefCell::default(),
             }
         }
@@ -74,6 +111,16 @@ mod imp {
             self.line_box.set_visible(single_line);
             self.obj().refresh();
             self.obj().notify_single_line();
+        }
+
+        fn set_removable(&self, removable: bool) {
+            if self.removable.replace(removable) == removable {
+                return;
+            }
+            // Pills of the other kind: make them again.
+            self.obj().clear_pills(self.single_line.get());
+            self.obj().refresh();
+            self.obj().notify_removable();
         }
 
         fn set_max_shown(&self, max_shown: u32) {
@@ -137,25 +184,65 @@ impl TagPills {
         self.imp().names.borrow().clone()
     }
 
+    /// Calls `f` with the index of a pill whose remove button was used,
+    /// and whether by Backspace. There is one such callback: setting
+    /// another replaces it.
+    pub fn set_on_remove(&self, f: impl Fn(usize, bool) + 'static) {
+        let f: Rc<OnRemove> = Rc::new(f);
+        self.imp().on_remove.replace(Some(Callback::new(f)));
+    }
+
+    /// Puts `child` after the pills, in the same wrapping lines (wrapping
+    /// form only), or takes it away.
+    pub fn set_end_child(&self, child: Option<&gtk::Widget>) {
+        let imp = self.imp();
+        if let Some(old) = imp.end_child.take() {
+            imp.wrap_box.remove(&old);
+        }
+        if let Some(child) = child {
+            imp.wrap_box.append(child);
+            imp.end_child.replace(Some(child.clone()));
+        }
+    }
+
+    /// The remove buttons of the pills on screen, in order.
+    pub fn remove_buttons(&self) -> Vec<gtk::Button> {
+        self.imp()
+            .pills
+            .borrow()
+            .iter()
+            .filter(|p| p.root.is_visible())
+            .filter_map(|p| p.remove.clone())
+            .collect()
+    }
+
+    /// Moves the focus to pill `index`'s remove button. Whether there is
+    /// one to focus.
+    pub fn focus_remove_button(&self, index: usize) -> bool {
+        self.remove_buttons()
+            .get(index)
+            .is_some_and(gtk::prelude::WidgetExt::grab_focus)
+    }
+
     /// Every pill label made so far, the "+N" pill last, shown or not.
     #[cfg(test)]
     pub fn pill_widgets(&self) -> Vec<gtk::Label> {
         let imp = self.imp();
-        let mut all = imp.pills.borrow().clone();
+        let mut all: Vec<gtk::Label> = imp.pills.borrow().iter().map(|p| p.label.clone()).collect();
         all.extend(imp.overflow.borrow().clone());
         all
     }
 
     /// The labels of the pills on screen, in order, the "+N" pill last.
     #[cfg(test)]
-    fn shown_texts(&self) -> Vec<String> {
+    pub fn shown_texts(&self) -> Vec<String> {
         let imp = self.imp();
         let mut texts: Vec<String> = imp
             .pills
             .borrow()
             .iter()
-            .filter(|p| p.is_visible())
-            .map(|p| p.label().to_string())
+            .filter(|p| p.root.is_visible())
+            .map(|p| p.label.label().to_string())
             .collect();
         if let Some(overflow) = imp.overflow.borrow().as_ref()
             && overflow.is_visible()
@@ -165,35 +252,44 @@ impl TagPills {
         texts
     }
 
-    /// Lays the pills out for the current names, reusing the labels made
+    /// Lays the pills out for the current names, reusing the ones made
     /// before; the ones not needed are hidden, not destroyed.
     fn refresh(&self) {
         let imp = self.imp();
         let single_line = imp.single_line.get();
+        let removable = imp.removable.get() && !single_line;
         let names = imp.names.borrow();
         let (shown, hidden) = text::split(names.len(), single_line.then(|| imp.max_shown.get()));
         let mut pills = imp.pills.borrow_mut();
         while pills.len() < shown {
-            let pill = pill_label();
-            match self.overflow_label() {
-                // Before the "+N" pill, which stays last.
-                Some(overflow) if single_line => {
-                    imp.line_box
-                        .insert_child_after(&pill, overflow.prev_sibling().as_ref());
+            let pill = if removable {
+                self.removable_pill()
+            } else {
+                let label = pill_label();
+                Pill {
+                    root: label.clone().upcast(),
+                    label,
+                    remove: None,
                 }
-                _ => self.container_append(&pill),
-            }
+            };
+            self.container_append(&pill.root);
             pills.push(pill);
         }
         for (i, pill) in pills.iter().enumerate() {
             match names.get(i).filter(|_| i < shown) {
                 Some(name) => {
-                    pill.set_label(name);
+                    pill.label.set_label(name);
                     // `set_tooltip_text` is plain text, like the label.
-                    pill.set_tooltip_text(text::is_cut(name).then_some(name.as_str()));
-                    pill.set_visible(true);
+                    pill.label
+                        .set_tooltip_text(text::is_cut(name).then_some(name.as_str()));
+                    if let Some(remove) = &pill.remove {
+                        remove.update_property(&[gtk::accessible::Property::Label(
+                            &super::tag_entry::keys::remove_label(name),
+                        )]);
+                    }
+                    pill.root.set_visible(true);
                 }
-                None => pill.set_visible(false),
+                None => pill.root.set_visible(false),
             }
         }
         drop(pills);
@@ -202,7 +298,7 @@ impl TagPills {
                 let overflow = pill_label();
                 overflow.add_css_class("numeric");
                 overflow.set_ellipsize(gtk::pango::EllipsizeMode::None);
-                self.container_append(&overflow);
+                self.container_append(overflow.upcast_ref());
                 imp.overflow.replace(Some(overflow.clone()));
                 overflow
             });
@@ -214,30 +310,113 @@ impl TagPills {
         }
     }
 
+    /// A pill with a remove button, which tells [`Self::set_on_remove`]'s
+    /// callback which pill it belongs to when used.
+    fn removable_pill(&self) -> Pill {
+        let label = pill_label();
+        let remove = gtk::Button::builder()
+            .icon_name("window-close-symbolic")
+            .tooltip_text("Remove Tag")
+            .valign(gtk::Align::Center)
+            .css_classes(["flat", "circular"])
+            .build();
+        let root = gtk::Box::builder()
+            .valign(gtk::Align::Center)
+            .css_classes(["tag-pill", "removable"])
+            .build();
+        // The box has the pill's look, around the label and the button.
+        label.remove_css_class("tag-pill");
+        root.append(&label);
+        root.append(&remove);
+        remove.connect_clicked(glib::clone!(
+            #[weak(rename_to = pills)]
+            self,
+            move |button| pills.removed(button, false)
+        ));
+        // Backspace and Delete on the focused button remove the pill too,
+        // as they would a selected word. The button has no use for them.
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = pills)]
+            self,
+            #[weak]
+            remove,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, state| {
+                let plain = !state.intersects(
+                    gdk::ModifierType::CONTROL_MASK
+                        | gdk::ModifierType::ALT_MASK
+                        | gdk::ModifierType::SHIFT_MASK,
+                );
+                match key {
+                    gdk::Key::BackSpace if plain => pills.removed(&remove, true),
+                    gdk::Key::Delete | gdk::Key::KP_Delete if plain => {
+                        pills.removed(&remove, false);
+                    }
+                    _ => return glib::Propagation::Proceed,
+                }
+                glib::Propagation::Stop
+            }
+        ));
+        remove.add_controller(keys);
+        Pill {
+            root: root.upcast(),
+            label,
+            remove: Some(remove),
+        }
+    }
+
+    /// Tells the callback that the pill of `button` is to be removed.
+    fn removed(&self, button: &gtk::Button, backspace: bool) {
+        let index = self.remove_buttons().iter().position(|b| b == button);
+        let callback = self.imp().on_remove.borrow().as_ref().map(Callback::get);
+        if let (Some(index), Some(callback)) = (index, callback) {
+            callback(index, backspace);
+        }
+    }
+
     fn overflow_label(&self) -> Option<gtk::Label> {
         self.imp().overflow.borrow().clone()
     }
 
-    fn container_append(&self, pill: &gtk::Label) {
+    /// Adds `pill` at the end of the box in use: before the "+N" pill on a
+    /// single line, before the end child when wrapping.
+    fn container_append(&self, pill: &gtk::Widget) {
         let imp = self.imp();
         if imp.single_line.get() {
-            imp.line_box.append(pill);
+            match self.overflow_label() {
+                Some(overflow) => {
+                    imp.line_box
+                        .insert_child_after(pill, overflow.prev_sibling().as_ref());
+                }
+                None => imp.line_box.append(pill),
+            }
         } else {
-            imp.wrap_box.append(pill);
+            match imp.end_child.borrow().as_ref() {
+                Some(end) => imp
+                    .wrap_box
+                    .insert_child_after(pill, end.prev_sibling().as_ref()),
+                None => imp.wrap_box.append(pill),
+            }
         }
     }
 
     /// Removes every pill, from the single line if `in_line`, else from
-    /// the wrap box.
+    /// the wrap box. The end child stays.
     fn clear_pills(&self, in_line: bool) {
         let imp = self.imp();
         let pills = imp.pills.take();
         let overflow = imp.overflow.take();
-        for pill in pills.iter().chain(overflow.as_ref()) {
+        let widgets = pills
+            .iter()
+            .map(|p| p.root.clone())
+            .chain(overflow.map(Cast::upcast));
+        for widget in widgets {
             if in_line {
-                imp.line_box.remove(pill);
+                imp.line_box.remove(&widget);
             } else {
-                imp.wrap_box.remove(pill);
+                imp.wrap_box.remove(&widget);
             }
         }
     }
@@ -271,11 +450,11 @@ mod tests {
             pills.set_max_shown(2);
             pills.set_tags(&names(&["a", "b", "c", "d"]));
             assert_eq!(pills.shown_texts(), ["a", "b", "+2"]);
-            let first = pills.imp().pills.borrow()[0].clone();
+            let first = pills.imp().pills.borrow()[0].label.clone();
             pills.set_tags(&names(&["x"]));
             assert_eq!(pills.shown_texts(), ["x"]);
             // The same label, relabelled: nothing is made again on a bind.
-            assert_eq!(pills.imp().pills.borrow()[0], first);
+            assert_eq!(pills.imp().pills.borrow()[0].label, first);
             pills.set_max_shown(3);
             pills.set_tags(&names(&["a", "b", "c", "d", "e"]));
             assert_eq!(pills.shown_texts(), ["a", "b", "c", "+2"]);
@@ -317,6 +496,42 @@ mod tests {
                 .last_child()
                 .and_downcast::<gtk::Label>();
             assert_eq!(last.map(|l| l.label().to_string()).as_deref(), Some("+7"));
+        });
+    }
+
+    #[test]
+    fn removable_pills_have_a_labelled_button_and_the_end_child_stays_last() {
+        crate::testing::with_widgets(|| {
+            let pills = TagPills::default();
+            pills.set_removable(true);
+            let end = gtk::Text::new();
+            pills.set_end_child(Some(end.upcast_ref()));
+            pills.set_tags(&names(&["a", "b"]));
+            pills.set_tags(&names(&["a", "b", "c"]));
+            assert_eq!(pills.shown_texts(), ["a", "b", "c"]);
+            assert_eq!(
+                pills.imp().wrap_box.last_child().as_ref(),
+                Some(end.upcast_ref::<gtk::Widget>())
+            );
+            let buttons = pills.remove_buttons();
+            assert_eq!(buttons.len(), 3);
+            for button in &buttons {
+                assert!(button.is_focusable());
+                assert_eq!(button.tooltip_text().as_deref(), Some("Remove Tag"));
+            }
+            // The callback is told which pill.
+            let removed = std::rc::Rc::new(std::cell::Cell::new(None));
+            let sink = std::rc::Rc::clone(&removed);
+            pills.set_on_remove(move |index, backspace| sink.set(Some((index, backspace))));
+            buttons[1].emit_clicked();
+            assert_eq!(removed.get(), Some((1, false)));
+            // Fewer tags: the buttons of hidden pills are not stops.
+            pills.set_tags(&names(&["a"]));
+            assert_eq!(pills.remove_buttons().len(), 1);
+            // Not removable again: plain labels, no buttons.
+            pills.set_removable(false);
+            assert_eq!(pills.shown_texts(), ["a"]);
+            assert_eq!(pills.remove_buttons(), Vec::<gtk::Button>::new());
         });
     }
 }

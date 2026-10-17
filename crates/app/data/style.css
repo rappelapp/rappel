@@ -85,3 +85,31 @@ row > box.header.card-row label.subtitle {
     box-shadow: inset 0 0 0 1px var(--border-color);
   }
 }
+
+/* A removable tag pill (the tag entry, widgets/tag_entry.rs): the label
+ * and a small round remove button share the pill. The pill is as tall as
+ * the button, which keeps libadwaita's flat, circular look and its focus
+ * ring; only its size is set here. */
+.tag-pill.removable {
+  min-height: 24px;
+  padding: 0 0 0 6px;
+}
+
+.tag-pill.removable > button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
+/* The tag entry's frame (data/tag_entry.blp) has the background of a text
+ * view, like the card editor's text fields above it, so the three read as
+ * fields of one form. Its text is a bare GtkText, whose placeholder
+ * libadwaita dims only inside an entry: dim it the same way here. */
+.tag-entry > frame {
+  background-color: var(--view-bg-color);
+  color: var(--view-fg-color);
+}
+
+.tag-entry text > placeholder {
+  opacity: var(--dim-opacity);
+}

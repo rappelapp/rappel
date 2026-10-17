@@ -96,6 +96,24 @@ pub fn with_widgets<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -
     })
 }
 
+/// Runs the default main context until `done` holds or `timeout` has
+/// passed, and says whether `done` held. For waiting on GTK (a widget being
+/// mapped), not for timing: the timeout only stops a test that would hang.
+pub fn settle_until(done: impl Fn() -> bool, timeout: Duration) -> bool {
+    let context = glib::MainContext::default();
+    let end = Instant::now() + timeout;
+    loop {
+        while context.iteration(false) {}
+        if done() {
+            return true;
+        }
+        if Instant::now() >= end {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// The CPU time the calling thread has used so far (user and system), from
 /// `/proc/thread-self/stat`, or `None` where that cannot be read. Unlike a
 /// wall clock it does not grow while the thread waits for a CPU, so a bound

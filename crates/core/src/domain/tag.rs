@@ -85,9 +85,10 @@ pub fn parse_tag_field(text: &str) -> std::result::Result<Vec<String>, TagFieldE
 }
 
 /// `name` trimmed, if it can be a tag name: not empty, at most
-/// [`MAX_TAG_NAME_BYTES`], no NUL and no comma. The card editor's tags
-/// field is a comma-separated list (SPEC §4.4), so a comma inside a name
-/// could not be typed back.
+/// [`MAX_TAG_NAME_BYTES`], no NUL and no comma. In the card editor's tags
+/// field a comma ends a name and makes it a pill (SPEC §4.4, ADR 0043), and
+/// [`parse_tag_field`] reads a comma-separated list, so a comma inside a
+/// name could not be typed.
 ///
 /// # Errors
 /// [`Error::EmptyTagName`], [`Error::TagNameTooLong`],
