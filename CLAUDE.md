@@ -51,10 +51,10 @@ A slice is not done until `scripts/check.sh` passes. It also runs as the git pre
 
 ## Batch mode
 Active while the brief `docs/briefs/phase-1-finish.md` is being worked through. Where it conflicts with the rules above, batch mode wins.
-- In batch mode, slice branches start from `phase-1` and PRs target `phase-1` (`gh pr create --base phase-1`). You may merge your own PR into `phase-1` (squash) only when `scripts/check.sh` passes, CI is green, and the reviewer agent has no blocking findings. Never merge into, push to, or target `main`.
+- In batch mode, slice branches start from `phase-1` and PRs target `phase-1` (`gh pr create --base phase-1`). You may merge your own PR into `phase-1` (squash) only when `scripts/check.sh` passes, CI is green (wait for `gh pr checks` to pass; a ruleset on `phase-1` requires the `check` status), and the reviewer agent has no blocking findings. Never merge into, push to, or target `main`.
 - Never stop to ask. Take the most sensible, robust, HIG-compliant default, and record it in the PR description under "Decisions".
 - Stop conditions instead: a new migration, an export-format change, a new dependency with a licence not already allowed, or anything that deletes user data. Write the question in `docs/briefs/QUESTIONS.md`, skip to the next independent slice, and continue.
-- You may run the app under Xvfb to screenshot your own screens (light, dark, 360 px wide). This overrides the "quick start check only" rule. Keep each run under 2 minutes, and save screenshots in `docs/briefs/screenshots/` (git-ignored).
+- You may run the app under Xvfb to screenshot your own screens (light, dark, 360 px wide). This overrides the "quick start check only" rule. Keep each run under 2 minutes, and save screenshots in `docs/briefs/screenshots/` (git-ignored). Never commit or upload them; the final report lists their file paths.
 - Guard: `.claude/hooks/guard-main.py` (a PreToolUse hook in `.claude/settings.json`) blocks `gh pr merge` when the PR's base is `main` and any `git push` that would update `main`. Do not work around it.
 
 ## UI work
