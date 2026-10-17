@@ -92,6 +92,13 @@ template $RappelDecksPage: Adw.NavigationPage {
 menu primary_menu {
   section {
     item {
+      label: _("_Statistics");
+      action: "decks.statistics";
+    }
+  }
+
+  section {
+    item {
       label: _("_Export…");
       action: "win.export";
     }

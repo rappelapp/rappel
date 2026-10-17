@@ -21,6 +21,17 @@ template $RappelDeckPage: Adw.NavigationPage {
         }
       }
 
+      [end]
+      Gtk.MenuButton {
+        icon-name: "view-more-symbolic";
+        menu-model: deck_menu;
+        tooltip-text: _("Deck Menu");
+
+        accessibility {
+          label: _("Deck Menu");
+        }
+      }
+
       // Disabled when nothing is due and no new card is left for today.
       [end]
       Gtk.Button {
@@ -91,4 +102,13 @@ template $RappelDeckPage: Adw.NavigationPage {
       }
     };
   };
+}
+
+menu deck_menu {
+  section {
+    item {
+      label: _("_Statistics");
+      action: "deck.statistics";
+    }
+  }
 }

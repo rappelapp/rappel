@@ -1,0 +1,14 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One entry of a card's history: an answer or a reset. The icon, title and
+// subtitle are set in widgets/history_row.rs; markup is off.
+template $RappelHistoryRow: Adw.ActionRow {
+  use-markup: false;
+  activatable: false;
+
+  [prefix]
+  Gtk.Image icon {
+    valign: center;
+  }
+}

@@ -1,0 +1,243 @@
+//! Card Information (SPEC §4.7, #39): a dialog with a card's dates, counts,
+//! memory figures, next due time and history, resets marked. Layout in
+//! `data/card_info_dialog.blp`; every text is decided in the pure [`text`]
+//! module. Read-only: opening it changes nothing, also during a study
+//! session.
+
+mod text;
+
+use adw::prelude::*;
+use rappel_core::content::plain_summary;
+
+use self::text::{History, Memory};
+use crate::state::AppState;
+use crate::ui::dialog;
+use crate::ui::time::date_time;
+use crate::ui::toast::show_error;
+use crate::widgets::HistoryRow;
+
+const FILE: &str = "card_info_dialog.ui";
+
+/// The dialog and the widgets tests look into.
+struct Built {
+    dialog: adw::Dialog,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the tests look into the history list")
+    )]
+    history: gtk::ListBox,
+}
+
+/// Why the dialog could not be built.
+enum Failure {
+    /// The card or its log could not be read.
+    Read(rappel_core::Error),
+    /// The layout lacks an object: a bug, already logged.
+    Layout,
+}
+
+/// Shows the information of card `card_id` over `parent`, then calls
+/// `on_closed`. If it cannot be read, a toast says so instead (a card
+/// deleted meanwhile is ignored) and `on_closed` is not called.
+pub fn open(
+    parent: &impl IsA<gtk::Widget>,
+    state: &AppState,
+    card_id: &str,
+    on_closed: impl Fn() + 'static,
+) {
+    match build(state, card_id, rappel_core::time::now_ms()) {
+        Ok(built) => {
+            built.dialog.connect_closed(move |_| on_closed());
+            built.dialog.present(Some(parent));
+        }
+        Err(Failure::Layout) => {}
+        Err(Failure::Read(rappel_core::Error::CardNotFound(_))) => {
+            tracing::debug!("the card was deleted before its information opened");
+        }
+        Err(Failure::Read(err)) => show_error(
+            parent,
+            "reading a card's information",
+            &format!("The card's information could not be read: {err}"),
+        ),
+    }
+}
+
+/// The dialog for card `card_id` as of `now`, filled in.
+fn build(state: &AppState, card_id: &str, now: i64) -> Result<Built, Failure> {
+    let card = state.card(card_id).map_err(Failure::Read)?;
+    let info = state.card_info(card_id, now).map_err(Failure::Read)?;
+    let builder = dialog::builder(FILE);
+    let get = |id: &str| dialog::object::<adw::ActionRow>(&builder, FILE, id);
+    let (
+        Some(card_dialog),
+        Some(created),
+        Some(edited),
+        Some(status),
+        Some(reviews),
+        Some(pass_rate),
+        Some(lapses),
+        Some(stability),
+        Some(difficulty),
+        Some(recall),
+        Some(next_due),
+    ) = (
+        dialog::object::<adw::Dialog>(&builder, FILE, "card_info_dialog"),
+        get("created_row"),
+        get("edited_row"),
+        get("status_row"),
+        get("reviews_row"),
+        get("pass_rate_row"),
+        get("lapses_row"),
+        get("stability_row"),
+        get("difficulty_row"),
+        get("recall_row"),
+        get("next_due_row"),
+    )
+    else {
+        return Err(Failure::Layout);
+    };
+    let (Some(front), Some(list), Some(note)) = (
+        dialog::object::<gtk::Label>(&builder, FILE, "front_label"),
+        dialog::object::<gtk::ListBox>(&builder, FILE, "history_list"),
+        dialog::object::<gtk::Label>(&builder, FILE, "history_note"),
+    ) else {
+        return Err(Failure::Layout);
+    };
+
+    // Card text is untrusted: plain text in labels with markup off.
+    front.set_label(&plain_summary(&card.front_md));
+    created.set_subtitle(&date_time(info.created_at));
+    edited.set_subtitle(&date_time(info.updated_at));
+
+    let Memory {
+        status: new_status,
+        reviews: reviews_text,
+        pass_rate: pass_rate_text,
+        lapses: lapses_text,
+        scheduled,
+    } = text::memory(&info, now, &date_time);
+    status.set_visible(new_status.is_some());
+    status.set_subtitle(new_status.unwrap_or(""));
+    reviews.set_subtitle(&reviews_text);
+    pass_rate.set_subtitle(&pass_rate_text);
+    lapses.set_subtitle(&lapses_text);
+    for row in [&stability, &difficulty, &recall, &next_due] {
+        row.set_visible(scheduled.is_some());
+    }
+    if let Some(scheduled) = scheduled {
+        stability.set_subtitle(&scheduled.stability);
+        difficulty.set_subtitle(&scheduled.difficulty);
+        recall.set_subtitle(&scheduled.recall);
+        next_due.set_subtitle(&scheduled.next_due);
+    }
+
+    fill_history(&list, &note, &text::history(&info, &date_time));
+    Ok(Built {
+        dialog: card_dialog,
+        history: list,
+    })
+}
+
+fn fill_history(list: &gtk::ListBox, note: &gtk::Label, history: &History) {
+    for line in &history.lines {
+        list.append(&HistoryRow::new(
+            line.mark.icon(),
+            line.mark.css_class(),
+            line.title,
+            &line.subtitle,
+        ));
+    }
+    if let Some(empty) = history.empty {
+        list.append(&HistoryRow::new("", "", empty, ""));
+    }
+    note.set_label(history.note.as_deref().unwrap_or(""));
+    note.set_visible(history.note.is_some());
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use rappel_core::domain::Grade;
+
+    use super::*;
+
+    /// The titles of the history rows, newest first.
+    fn history_titles(list: &gtk::ListBox) -> Vec<String> {
+        let mut titles = Vec::new();
+        let mut child = list.first_child();
+        while let Some(row) = child {
+            if let Some(row) = row.downcast_ref::<HistoryRow>() {
+                titles.push(row.title().to_string());
+            }
+            child = row.next_sibling();
+        }
+        titles
+    }
+
+    fn state() -> (tempfile::TempDir, AppState) {
+        adw::init().unwrap();
+        gtk::gio::resources_register_include!("rappel.gresource").unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let state = AppState::open(tmp.path().join("data")).unwrap();
+        (tmp, state)
+    }
+
+    #[test]
+    fn the_history_shows_resets_as_markers_newest_first() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state) = state();
+            let deck = state.create_deck("Deck").unwrap();
+            let id = state
+                .add_card_with_tags(&deck.id, "front", "back", &[])
+                .unwrap()
+                .card
+                .id;
+            let now = rappel_core::time::now_ms();
+            let day = 86_400_000;
+            state
+                .record_review(&id, Grade::Pass, Duration::from_secs(3), now - 3 * day)
+                .unwrap();
+            state.reset_card(&id, now - 2 * day).unwrap();
+            state
+                .record_review(&id, Grade::Fail, Duration::from_secs(5), now - day)
+                .unwrap();
+            let Ok(built) = build(&state, &id, now) else {
+                panic!("the dialog is built");
+            };
+            assert_eq!(
+                history_titles(&built.history),
+                ["Failed", "Progress Reset", "Passed"]
+            );
+        });
+    }
+
+    #[test]
+    fn a_card_never_studied_says_so() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state) = state();
+            let deck = state.create_deck("Deck").unwrap();
+            let id = state
+                .add_card_with_tags(&deck.id, "front", "back", &[])
+                .unwrap()
+                .card
+                .id;
+            let Ok(built) = build(&state, &id, rappel_core::time::now_ms()) else {
+                panic!("the dialog is built");
+            };
+            assert_eq!(history_titles(&built.history), ["Not studied yet"]);
+            assert_eq!(built.dialog.title(), "Card Information");
+        });
+    }
+
+    #[test]
+    fn a_missing_card_is_not_built() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state) = state();
+            assert!(matches!(
+                build(&state, "no-such-card", rappel_core::time::now_ms()),
+                Err(Failure::Read(rappel_core::Error::CardNotFound(_)))
+            ));
+        });
+    }
+}

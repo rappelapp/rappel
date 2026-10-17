@@ -1,0 +1,126 @@
+using Gtk 4.0;
+
+// One chart of the statistics page with its title, scale, day labels, the
+// caption of the selected day and an optional legend. The texts are set in
+// widgets/chart_card.rs.
+template $RappelChartCard: Gtk.Box {
+  orientation: vertical;
+  spacing: 6;
+
+  Gtk.Box {
+    spacing: 12;
+
+    Gtk.Label title_label {
+      xalign: 0;
+      hexpand: true;
+      wrap: true;
+
+      styles [
+        "heading",
+      ]
+    }
+
+    Gtk.Label scale_label {
+      xalign: 1;
+
+      styles [
+        "dim-label",
+        "caption",
+      ]
+    }
+  }
+
+  Gtk.Label empty_label {
+    visible: false;
+    xalign: 0;
+    wrap: true;
+    margin-top: 6;
+    margin-bottom: 6;
+
+    styles [
+      "dim-label",
+    ]
+  }
+
+  Gtk.Box chart_box {
+    orientation: vertical;
+    spacing: 4;
+
+    $RappelBarChart chart {}
+
+    Gtk.Box {
+      Gtk.Label first_day_label {
+        xalign: 0;
+        hexpand: true;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
+
+      Gtk.Label last_day_label {
+        xalign: 1;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
+    }
+
+    // Always taking its room, so the chart does not move when a day is
+    // selected.
+    Gtk.Label caption_label {
+      xalign: 0;
+      wrap: true;
+      margin-top: 4;
+    }
+
+    Gtk.Box legend_box {
+      visible: false;
+      spacing: 6;
+      margin-top: 4;
+
+      Gtk.DrawingArea passed_swatch {
+        content-width: 14;
+        content-height: 14;
+        valign: center;
+      }
+
+      Gtk.Label {
+        label: _("Passed");
+        margin-end: 12;
+
+        styles [
+          "caption",
+        ]
+      }
+
+      Gtk.DrawingArea failed_swatch {
+        content-width: 14;
+        content-height: 14;
+        valign: center;
+      }
+
+      Gtk.Label {
+        label: _("Failed");
+
+        styles [
+          "caption",
+        ]
+      }
+    }
+  }
+
+  Gtk.Label note_label {
+    visible: false;
+    xalign: 0;
+    wrap: true;
+
+    styles [
+      "dim-label",
+      "caption",
+    ]
+  }
+}

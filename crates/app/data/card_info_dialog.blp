@@ -1,0 +1,172 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Card Information (SPEC §4.7, #39): dates, counts, memory figures and the
+// history of one card. Values and history rows are set in
+// dialogs/card_info.rs; card text is untrusted, so markup is off.
+Adw.Dialog card_info_dialog {
+  title: _("Card Information");
+  content-width: 480;
+  content-height: 640;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Gtk.ScrolledWindow {
+      hscrollbar-policy: never;
+
+      child: Adw.Clamp {
+        maximum-size: 600;
+        margin-top: 12;
+        margin-bottom: 24;
+        margin-start: 12;
+        margin-end: 12;
+
+        child: Gtk.Box {
+          orientation: vertical;
+          spacing: 24;
+
+          Gtk.Label front_label {
+            use-markup: false;
+            wrap: true;
+            xalign: 0;
+
+            styles [
+              "title-4",
+            ]
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Card");
+
+            Adw.ActionRow created_row {
+              title: _("Created");
+              use-markup: false;
+              subtitle-selectable: true;
+
+              styles [
+                "property",
+              ]
+            }
+
+            Adw.ActionRow edited_row {
+              title: _("Edited");
+              use-markup: false;
+              subtitle-selectable: true;
+
+              styles [
+                "property",
+              ]
+            }
+          }
+
+          Adw.PreferencesGroup memory_group {
+            title: _("Memory");
+            description: _("Counted since the card was last reset");
+
+            Adw.ActionRow status_row {
+              title: _("Status");
+              use-markup: false;
+              visible: false;
+
+              styles [
+                "property",
+              ]
+            }
+
+            Adw.ActionRow reviews_row {
+              title: _("Reviews");
+              use-markup: false;
+
+              styles [
+                "property",
+              ]
+            }
+
+            Adw.ActionRow pass_rate_row {
+              title: _("Pass Rate");
+              use-markup: false;
+
+              styles [
+                "property",
+              ]
+            }
+
+            Adw.ActionRow lapses_row {
+              title: _("Lapses");
+              use-markup: false;
+
+              styles [
+                "property",
+              ]
+            }
+
+            Adw.ActionRow stability_row {
+              title: _("Stability");
+              use-markup: false;
+
+              styles [
+                "property",
+              ]
+            }
+
+            Adw.ActionRow difficulty_row {
+              title: _("Difficulty");
+              use-markup: false;
+
+              styles [
+                "property",
+              ]
+            }
+
+            Adw.ActionRow recall_row {
+              title: _("Recall Now");
+              use-markup: false;
+
+              styles [
+                "property",
+              ]
+            }
+
+            Adw.ActionRow next_due_row {
+              title: _("Next Due");
+              use-markup: false;
+
+              styles [
+                "property",
+              ]
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("History");
+
+            Gtk.ListBox history_list {
+              selection-mode: none;
+
+              accessibility {
+                label: _("History");
+              }
+
+              styles [
+                "boxed-list",
+              ]
+            }
+          }
+
+          Gtk.Label history_note {
+            visible: false;
+            xalign: 0;
+            wrap: true;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        };
+      };
+    };
+  };
+}

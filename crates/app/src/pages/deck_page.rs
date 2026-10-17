@@ -20,7 +20,8 @@ use rappel_core::domain::{Card, Deck, TaggedCard};
 use rappel_core::scheduling::StudyInput;
 
 use crate::dialogs::card_editor::{CardEditor, Saved};
-use crate::pages::ReviewPage;
+use crate::dialogs::card_info;
+use crate::pages::{ReviewPage, StatsPage};
 use crate::state::AppState;
 use crate::ui::focus::index_after_removal;
 use crate::ui::toast::{info_toast, log_failure, show_error, show_toast_from, undo_toast};
@@ -79,10 +80,14 @@ mod imp {
             klass.install_action("deck.study", None, |page, _, _| {
                 page.study();
             });
+            klass.install_action("deck.statistics", None, |page, _, _| {
+                page.show_statistics();
+            });
             // Activated by the card rows' menus with the card id.
             rows::install_id_action(klass, "deck.edit-card", super::DeckPage::edit);
             rows::install_id_action(klass, "deck.delete-card", super::DeckPage::delete);
             rows::install_id_action(klass, "deck.reset-card", super::DeckPage::reset);
+            rows::install_id_action(klass, "deck.card-info", super::DeckPage::card_info);
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -224,6 +229,35 @@ impl DeckPage {
                 view.push(&page);
             }
             Err(err) => self.error_toast(&format!("The session could not start: {err}")),
+        }
+    }
+
+    /// Pushes this deck's statistics.
+    fn show_statistics(&self) {
+        let imp = self.imp();
+        let (Some(state), Some(deck)) = (imp.state.get(), imp.deck.get()) else {
+            return;
+        };
+        let Some(view) = nav::navigation_view(self) else {
+            return;
+        };
+        // Key repeat must not stack a second page.
+        if view.visible_page().is_some_and(|p| p.is::<StatsPage>()) {
+            return;
+        }
+        match StatsPage::new(state, Some(deck)) {
+            Ok(page) => view.push(&page),
+            Err(err) => self.error_toast(&format!("The statistics could not be read: {err}")),
+        }
+    }
+
+    /// Shows the information of card `id`.
+    fn card_info(&self, id: &str) {
+        if let Some(state) = self.imp().state.get() {
+            // AdwDialog gives the focus back to the widget that had it (the
+            // card's row, or its menu button), so there is nothing to do
+            // when it closes.
+            card_info::open(self, state, id, || {});
         }
     }
 

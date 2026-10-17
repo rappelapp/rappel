@@ -27,9 +27,11 @@ use rappel_core::domain::{CardState, Deck, Grade};
 use rappel_core::scheduling::{Session, Summary, capped};
 
 use crate::dialogs::card_editor::{CardEditor, Saved};
+use crate::dialogs::card_info;
 use crate::render::{back_shown, clear, fill, shown_part};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
+use crate::ui::text::duration_text;
 use crate::ui::toast::{info_toast, show_toast_from};
 use crate::ui::undo::{self, UndoFailure};
 use crate::ui::{init_once, nav};
@@ -60,6 +62,8 @@ mod imp {
         pub window_title: TemplateChild<adw::WindowTitle>,
         #[template_child]
         pub edit_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub card_menu_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
         pub stack: TemplateChild<gtk::Stack>,
         #[template_child]
@@ -120,6 +124,7 @@ mod imp {
             });
             klass.install_action("review.done", None, |page, _, _| page.done());
             klass.install_action("review.edit", None, |page, _, _| page.edit());
+            klass.install_action("review.card-info", None, |page, _, _| page.card_info());
             klass.install_action("review.undo", None, |page, _, _| page.undo());
         }
 
@@ -175,6 +180,8 @@ enum Key {
     Pass,
     /// E: edit the card.
     Edit,
+    /// I: show the card's information.
+    Info,
     /// Ctrl+Z: take back the last answer.
     Undo,
 }
@@ -185,6 +192,7 @@ enum Act {
     Reveal,
     Grade(Grade),
     Edit,
+    Info,
     Undo,
 }
 
@@ -192,10 +200,11 @@ enum Act {
 /// whether [`KEY_SETTLE`] has passed since the reveal. Holding Space a
 /// moment too long repeats it: a reveal must not become a Pass by itself,
 /// even though a grade can be undone. E and Ctrl+Z are never delayed: they
-/// grade nothing.
+/// grade nothing; neither does I.
 fn key_action(key: Key, revealed: bool, settled: bool) -> Option<Act> {
     match (key, revealed) {
         (Key::Edit, _) => Some(Act::Edit),
+        (Key::Info, _) => Some(Act::Info),
         (Key::Undo, _) => Some(Act::Undo),
         (Key::Space | Key::Enter, false) => Some(Act::Reveal),
         (Key::Space | Key::Pass | Key::Fail, true) if !settled => None,
@@ -245,6 +254,8 @@ impl ReviewPage {
             ("KP_2", Key::Pass),
             ("e", Key::Edit),
             ("<Shift>e", Key::Edit),
+            ("i", Key::Info),
+            ("<Shift>i", Key::Info),
             ("<Control>z", Key::Undo),
         ] {
             let action = gtk::CallbackAction::new(move |widget, _| {
@@ -291,6 +302,7 @@ impl ReviewPage {
             Some(Act::Reveal) => self.reveal(),
             Some(Act::Grade(grade)) => self.grade(grade),
             Some(Act::Edit) => self.edit(),
+            Some(Act::Info) => self.card_info(),
             Some(Act::Undo) => self.undo(),
             None => {}
         }
@@ -458,6 +470,30 @@ impl ReviewPage {
         );
     }
 
+    /// Shows the information of the card on screen. The session carries on
+    /// as it was: nothing is graded, and the timer keeps running (the time
+    /// of an answer is capped, ADR 0014).
+    fn card_info(&self) {
+        let imp = self.imp();
+        let (Some(state), Some(id)) = (imp.state.get(), imp.current.borrow().clone()) else {
+            return;
+        };
+        if imp.editing.get() {
+            return;
+        }
+        card_info::open(
+            self,
+            state,
+            &id,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                // The card area needs the focus for the keys to work.
+                move || page.park_focus()
+            ),
+        );
+    }
+
     /// A save made from the editor: shows the card on screen again if it
     /// is the one saved, then tells the owner of this page.
     fn saved(&self, saved: Saved) {
@@ -494,7 +530,9 @@ impl ReviewPage {
         // Hidden with the summary, where there is no card to edit.
         let editable = !matches!(controls, Controls::Hidden);
         self.action_set_enabled("review.edit", editable);
+        self.action_set_enabled("review.card-info", editable);
         self.imp().edit_button.set_visible(editable);
+        self.imp().card_menu_button.set_visible(editable);
         self.imp().buttons.set_visible_child_name(name);
         self.action_set_enabled("review.reveal", reveal);
         self.action_set_enabled("review.fail", grade);
@@ -663,17 +701,6 @@ fn summary_text(summary: &Summary) -> String {
     parts.join(" · ")
 }
 
-/// "45 s", "4 min 10 s", "1 h 2 min" (seconds rounded down).
-fn duration_text(time: Duration) -> String {
-    let secs = time.as_secs();
-    let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
-    match (h, m) {
-        (0, 0) => format!("{s} s"),
-        (0, m) => format!("{m} min {s} s"),
-        (h, m) => format!("{h} h {m} min"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rappel_core::domain::EventKind;
@@ -723,9 +750,10 @@ mod tests {
         for key in [Space, Pass, Fail] {
             assert_eq!(key_action(key, true, false), None);
         }
-        // E edits at any time, settled or not.
+        // E edits at any time, settled or not. So does I, to look.
         for (revealed, settled) in [(false, false), (true, false), (true, true)] {
             assert_eq!(key_action(Edit, revealed, settled), Some(Act::Edit));
+            assert_eq!(key_action(Key::Info, revealed, settled), Some(Act::Info));
         }
         // Ctrl+Z too, and it grades nothing, so key repeat does no harm.
         for (revealed, settled) in [(false, false), (true, false), (true, true)] {
@@ -888,14 +916,6 @@ mod tests {
             assert_eq!(current(&page).as_deref(), Some(ids[1].as_str()));
             assert!(!can_undo(&page));
         });
-    }
-
-    #[test]
-    fn durations_read_naturally() {
-        assert_eq!(duration_text(Duration::ZERO), "0 s");
-        assert_eq!(duration_text(Duration::from_millis(45_900)), "45 s");
-        assert_eq!(duration_text(Duration::from_secs(250)), "4 min 10 s");
-        assert_eq!(duration_text(Duration::from_secs(3_600 + 125)), "1 h 2 min");
     }
 
     #[test]

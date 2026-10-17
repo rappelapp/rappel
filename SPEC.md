@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1) and the statistics and card information in core (§4.7, ADR 0032; no UI yet).
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header).
 
 ---
 
@@ -150,7 +150,7 @@ Storage rules:
 - Card information (#39): created / edited, reviews, lapses, pass rate, stability, difficulty, retrievability now, next due, and the history (surviving reviews with grade and interval, resets as markers).
 - Activity (reviews, time, pass rate) counts every review that is not undone, whatever resets came later; a reset restarts only the memory side (retention, forecast, a card's reps, lapses, stability, difficulty). Undo removes a review everywhere (ADR 0028, 0032). Days follow the stored day start hour.
 - Drawn with `GtkDrawingArea` + Cairo, theme colors only. No chart library.
-- All computations are pure functions in `core::stats`, tested. *Core part done (ADR 0032); the pages are still to come.*
+- All computations are pure functions in `core::stats`, tested. *Done (ADR 0032, 0033). Each chart can be focused and stepped through a day at a time, and has a summary in words for screen readers.*
 
 ### 4.8 Polish
 - `AdwPreferencesDialog` (done, ADR 0027): daily limits for new cards and reviews, the hour a study day starts, desired retention (asked about first, because it recalculates every due date), and an "Open Backup Folder" button.

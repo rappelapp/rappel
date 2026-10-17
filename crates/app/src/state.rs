@@ -12,9 +12,28 @@ use rappel_core::domain::{
 };
 use rappel_core::interchange::{ExportSummary, ImportPlan, ImportReport};
 use rappel_core::scheduling::StudyInput;
-use rappel_core::storage::{self, BackupInfo, OpenWarning, Restored, Store};
+use rappel_core::stats::{CardInfo, DayGrid, Stats};
+use rappel_core::storage::{self, BackupInfo, OpenWarning, Restored, Scope, Store};
 
-use crate::clock::{local_day_start_ms, local_next_day_start_ms};
+use crate::clock::{local_day_bounds_ms, local_day_start_ms, local_next_day_start_ms};
+
+/// How many past days the statistics cover, today last (ADR 0032).
+pub const STATS_PAST_DAYS: usize = 30;
+/// How many days ahead the due forecast covers, today first.
+pub const STATS_AHEAD_DAYS: usize = 14;
+
+/// The statistics of a deck or of everything, with the study days they
+/// are bucketed by.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatsData {
+    pub stats: Stats,
+    /// Where each of the past days begins, UTC milliseconds
+    /// (`STATS_PAST_DAYS` of them, oldest first).
+    pub past_starts: Vec<i64>,
+    /// Where each of the days ahead begins, today first
+    /// (`STATS_AHEAD_DAYS` of them).
+    pub ahead_starts: Vec<i64>,
+}
 
 /// A cheap-to-clone handle on the open database, shared by the window and
 /// its widgets.
@@ -302,6 +321,41 @@ impl AppState {
         self.0.store.borrow().review_events(card_id)
     }
 
+    /// The statistics of `deck_id`, or of every deck for `None`, at `now`.
+    /// The days follow the settings' day start hour in local time: the last
+    /// `STATS_PAST_DAYS` ending with today, and `STATS_AHEAD_DAYS` starting
+    /// with today (see [`Store::stats`]).
+    ///
+    /// # Errors
+    /// A missing or deleted deck, or a failed read; a day grid that cannot
+    /// be built (it always can, but core checks it).
+    pub fn stats(&self, deck_id: Option<&str>, now: i64) -> rappel_core::Result<StatsData> {
+        let store = self.0.store.borrow();
+        let hour = store.settings()?.day_start_hour;
+        let first_past = 1 - i32::try_from(STATS_PAST_DAYS).unwrap_or(30);
+        let mut past_bounds = local_day_bounds_ms(now, hour, first_past, STATS_PAST_DAYS + 1);
+        let mut ahead_bounds = local_day_bounds_ms(now, hour, 0, STATS_AHEAD_DAYS + 1);
+        let scope = deck_id.map_or(Scope::All, Scope::Deck);
+        let stats = store.stats(
+            scope,
+            now,
+            &DayGrid::new(past_bounds.clone())?,
+            &DayGrid::new(ahead_bounds.clone())?,
+        )?;
+        past_bounds.pop();
+        ahead_bounds.pop();
+        Ok(StatsData {
+            stats,
+            past_starts: past_bounds,
+            ahead_starts: ahead_bounds,
+        })
+    }
+
+    /// A card's properties and history at `now` (see [`Store::card_info`]).
+    pub fn card_info(&self, card_id: &str, now: i64) -> rappel_core::Result<CardInfo> {
+        self.0.store.borrow().card_info(card_id, now)
+    }
+
     /// A card's scheduling state (see [`Store::card_state`]).
     pub fn card_state(&self, card_id: &str) -> rappel_core::Result<CardState> {
         self.0.store.borrow().card_state(card_id)
@@ -321,5 +375,27 @@ impl AppState {
     /// the first call.
     pub fn take_open_warnings(&self) -> Vec<OpenWarning> {
         self.0.store.borrow_mut().take_open_warnings()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_statistics_cover_thirty_past_days_ending_today_and_fourteen_ahead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = AppState::open(tmp.path().join("data")).unwrap();
+        let now = rappel_core::time::now_ms();
+        let data = state.stats(None, now).unwrap();
+        assert_eq!(data.past_starts.len(), STATS_PAST_DAYS);
+        assert_eq!(data.ahead_starts.len(), STATS_AHEAD_DAYS);
+        assert_eq!(data.stats.days.len(), STATS_PAST_DAYS);
+        assert_eq!(data.stats.forecast.len(), STATS_AHEAD_DAYS);
+        // Today is the last past day and the first day ahead.
+        let today = data.past_starts[STATS_PAST_DAYS - 1];
+        assert_eq!(data.ahead_starts[0], today);
+        assert!(today <= now && now < data.ahead_starts[1]);
+        assert!(data.past_starts.windows(2).all(|w| w[0] < w[1]));
     }
 }

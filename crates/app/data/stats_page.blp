@@ -1,0 +1,166 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The statistics of every deck or of one: three headline numbers and three
+// charts. The texts are set in pages/stats_page.rs; the subtitle is a deck
+// name (untrusted), which AdwWindowTitle shows as plain text.
+template $RappelStatsPage: Adw.NavigationPage {
+  title: _("Statistics");
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Adw.WindowTitle window_title {
+        title: _("Statistics");
+      };
+    }
+
+    content: Gtk.Stack content_stack {
+      Gtk.StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          icon-name: "view-continuous-symbolic";
+          title: _("No Statistics Yet");
+          description: _("Study some cards to see your progress here");
+        };
+      }
+
+      Gtk.StackPage {
+        name: "stats";
+
+        child: Adw.BreakpointBin {
+          width-request: 300;
+          height-request: 200;
+
+          Adw.Breakpoint {
+            condition ("max-width: 500sp")
+
+            setters {
+              tiles_box.orientation: vertical;
+              tiles_box.homogeneous: false;
+            }
+          }
+
+          child: Gtk.ScrolledWindow {
+            hscrollbar-policy: never;
+
+            child: Adw.Clamp {
+              maximum-size: 600;
+              margin-top: 24;
+              margin-bottom: 24;
+              margin-start: 12;
+              margin-end: 12;
+
+              child: Gtk.Box {
+                orientation: vertical;
+                spacing: 24;
+
+                Gtk.Box tiles_box {
+                  spacing: 12;
+                  homogeneous: true;
+
+                  Gtk.Box {
+                    orientation: vertical;
+                    spacing: 2;
+
+                    styles [
+                      "card",
+                    ]
+
+                    Gtk.Label retention_value {
+                      margin-top: 12;
+
+                      styles [
+                        "title-1",
+                      ]
+                    }
+
+                    Gtk.Label retention_caption {
+                      margin-bottom: 12;
+                      margin-start: 6;
+                      margin-end: 6;
+                      wrap: true;
+                      justify: center;
+
+                      styles [
+                        "caption",
+                        "dim-label",
+                      ]
+                    }
+                  }
+
+                  Gtk.Box {
+                    orientation: vertical;
+                    spacing: 2;
+
+                    styles [
+                      "card",
+                    ]
+
+                    Gtk.Label pass_rate_value {
+                      margin-top: 12;
+
+                      styles [
+                        "title-1",
+                      ]
+                    }
+
+                    Gtk.Label pass_rate_caption {
+                      margin-bottom: 12;
+                      margin-start: 6;
+                      margin-end: 6;
+                      wrap: true;
+                      justify: center;
+
+                      styles [
+                        "caption",
+                        "dim-label",
+                      ]
+                    }
+                  }
+
+                  Gtk.Box {
+                    orientation: vertical;
+                    spacing: 2;
+
+                    styles [
+                      "card",
+                    ]
+
+                    Gtk.Label time_value {
+                      margin-top: 12;
+
+                      styles [
+                        "title-1",
+                      ]
+                    }
+
+                    Gtk.Label time_caption {
+                      margin-bottom: 12;
+                      margin-start: 6;
+                      margin-end: 6;
+                      wrap: true;
+                      justify: center;
+
+                      styles [
+                        "caption",
+                        "dim-label",
+                      ]
+                    }
+                  }
+                }
+
+                $RappelChartCard reviews_chart {}
+
+                $RappelChartCard time_chart {}
+
+                $RappelChartCard forecast_chart {}
+              };
+            };
+          };
+        };
+      }
+    };
+  };
+}

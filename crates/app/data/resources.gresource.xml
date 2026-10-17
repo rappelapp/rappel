@@ -19,6 +19,10 @@
     <file preprocess="xml-stripblanks">import_dialog.ui</file>
     <file preprocess="xml-stripblanks">preferences_dialog.ui</file>
     <file preprocess="xml-stripblanks">retention_dialog.ui</file>
+    <file preprocess="xml-stripblanks">chart_card.ui</file>
+    <file preprocess="xml-stripblanks">stats_page.ui</file>
+    <file preprocess="xml-stripblanks">card_info_dialog.ui</file>
+    <file preprocess="xml-stripblanks">history_row.ui</file>
       <!-- Not compiled: plain CSS, loaded by AdwApplication. -->
     <file>style.css</file>
   </gresource>

@@ -8,7 +8,7 @@ use gtk::glib;
 use rappel_core::domain::Deck;
 
 use crate::dialogs::deck_name_dialog::{self, Purpose};
-use crate::pages::DeckPage;
+use crate::pages::{DeckPage, StatsPage};
 use crate::state::AppState;
 use crate::ui::focus::index_after_removal;
 use crate::ui::nav;
@@ -56,6 +56,9 @@ mod imp {
                 page.rename(id.to_owned());
             });
             rows::install_id_action(klass, "decks.delete", super::DecksPage::delete);
+            klass.install_action("decks.statistics", None, |page, _, _| {
+                page.show_statistics();
+            });
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -157,6 +160,24 @@ impl DecksPage {
                 view.push(&page);
             }
             Err(err) => self.error_toast(&format!("The cards could not be read: {err}")),
+        }
+    }
+
+    /// Pushes the statistics of every deck.
+    fn show_statistics(&self) {
+        let Some(state) = self.imp().state() else {
+            return;
+        };
+        let Some(view) = nav::navigation_view(self) else {
+            return;
+        };
+        // Key repeat must not stack a second page (see `open`).
+        if view.visible_page().is_some_and(|p| p.is::<StatsPage>()) {
+            return;
+        }
+        match StatsPage::new(state, None) {
+            Ok(page) => view.push(&page),
+            Err(err) => self.error_toast(&format!("The statistics could not be read: {err}")),
         }
     }
 

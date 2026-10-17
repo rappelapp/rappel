@@ -104,6 +104,57 @@ pub fn local_next_day_start_ms(now_ms: i64, hour: u8) -> i64 {
     })
 }
 
+/// The starts of `count` consecutive study days in `tz`, UTC milliseconds:
+/// the study day containing `now_ms` shifted by `first` calendar days (a
+/// negative `first` is in the past), then each following day. These are
+/// the bounds of a statistics `DayGrid` (ADR 0032): `count - 1` days. Each
+/// start is `hour`:00 of its calendar date, so a day across a
+/// daylight-saving change is 23 or 25 hours long and nothing else is
+/// special. The result is strictly increasing even where `GLib` rounds a
+/// skipped hour into the next date.
+///
+/// # Errors
+/// If `GLib` cannot represent a date (far outside any real clock).
+pub fn day_bounds_ms(
+    now_ms: i64,
+    tz: &glib::TimeZone,
+    hour: u8,
+    first: i32,
+    count: usize,
+) -> Result<Vec<i64>, glib::BoolError> {
+    // The calendar date the current study day began on, at noon, so that
+    // `add_days` moves exactly one date.
+    let today = local_noon(day_start_ms(now_ms, tz, hour)?, tz)?;
+    let mut bounds: Vec<i64> = Vec::with_capacity(count);
+    for i in 0..count {
+        let offset = i32::try_from(i)
+            .ok()
+            .and_then(|i| first.checked_add(i))
+            .ok_or_else(|| glib::bool_error!("day offset out of range"))?;
+        let start = at_hour(&today.add_days(offset)?, tz, hour)?
+            .to_unix()
+            .saturating_mul(1000);
+        bounds.push(bounds.last().map_or(start, |&prev| start.max(prev + 1)));
+    }
+    Ok(bounds)
+}
+
+/// [`day_bounds_ms`] in the local time zone. If `GLib` fails, which needs a
+/// clock far outside any real date, 24-hour steps from [`local_day_start_ms`]
+/// are used instead.
+pub fn local_day_bounds_ms(now_ms: i64, hour: u8, first: i32, count: usize) -> Vec<i64> {
+    day_bounds_ms(now_ms, &glib::TimeZone::local(), hour, first, count).unwrap_or_else(|err| {
+        tracing::warn!("cannot compute the local day bounds, using 24-hour days: {err}");
+        let today = local_day_start_ms(now_ms, hour);
+        (0..count)
+            .map(|i| {
+                let days = i64::from(first) + i64::try_from(i).unwrap_or(0);
+                today.saturating_add(days.saturating_mul(86_400_000))
+            })
+            .collect()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use rappel_core::time::{UtcParts, utc_ms};
@@ -375,5 +426,71 @@ mod tests {
             day_start_ms(utc(2026, 3, 29, 12, 0), &tz, 0).unwrap(),
             utc(2026, 3, 28, 22, 0)
         );
+    }
+
+    #[test]
+    fn day_bounds_count_calendar_days_from_the_current_study_day() {
+        let tz = glib::TimeZone::utc();
+        // 2026-10-15 03:00 is still the 14th's study day.
+        let now = utc(2026, 10, 15, 3, 0);
+        let bounds = day_bounds_ms(now, &tz, FOUR, -2, 4).unwrap();
+        assert_eq!(
+            bounds,
+            vec![
+                utc(2026, 10, 12, 4, 0),
+                utc(2026, 10, 13, 4, 0),
+                utc(2026, 10, 14, 4, 0),
+                utc(2026, 10, 15, 4, 0),
+            ]
+        );
+        // The statistics grids: 30 past days with today last, 14 ahead.
+        let past = day_bounds_ms(now, &tz, FOUR, -29, 31).unwrap();
+        assert_eq!(past.len(), 31);
+        assert_eq!(past[29], utc(2026, 10, 14, 4, 0));
+        assert_eq!(past[30], utc(2026, 10, 15, 4, 0));
+        let ahead = day_bounds_ms(now, &tz, FOUR, 0, 15).unwrap();
+        assert_eq!((ahead.len(), ahead[0]), (15, utc(2026, 10, 14, 4, 0)));
+    }
+
+    #[test]
+    fn day_bounds_follow_daylight_saving_changes() {
+        let tz = paris();
+        // Around 2026-10-25 (clocks back): the day before is 25 hours long.
+        let now = utc(2026, 10, 25, 12, 0);
+        let bounds = day_bounds_ms(now, &tz, FOUR, -1, 3).unwrap();
+        assert_eq!(
+            bounds,
+            vec![
+                utc(2026, 10, 24, 2, 0),
+                utc(2026, 10, 25, 3, 0),
+                utc(2026, 10, 26, 3, 0),
+            ]
+        );
+        // And 2026-03-29 (clocks forward): a 23-hour day.
+        let now = utc(2026, 3, 29, 12, 0);
+        let bounds = day_bounds_ms(now, &tz, FOUR, -1, 3).unwrap();
+        assert_eq!(bounds[1] - bounds[0], 23 * 3_600_000);
+        assert_eq!(bounds[2] - bounds[1], 24 * 3_600_000);
+    }
+
+    #[test]
+    fn day_bounds_increase_for_every_start_hour_across_changes() {
+        for tz in [paris(), glib::TimeZone::utc()] {
+            for hour in 0..24 {
+                for now in [utc(2026, 3, 29, 12, 0), utc(2026, 10, 25, 12, 0)] {
+                    let bounds = day_bounds_ms(now, &tz, hour, -29, 60).unwrap();
+                    assert_eq!(bounds.len(), 60);
+                    assert!(bounds.windows(2).all(|w| w[0] < w[1]), "hour {hour}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn local_day_bounds_surround_now() {
+        let now = rappel_core::time::now_ms();
+        let bounds = local_day_bounds_ms(now, FOUR, -29, 31);
+        assert_eq!(bounds.len(), 31);
+        assert!(bounds[29] <= now && now < bounds[30]);
     }
 }

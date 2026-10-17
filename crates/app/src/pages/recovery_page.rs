@@ -191,7 +191,7 @@ impl RecoveryPage {
     }
 
     fn backup_row(&self, backup: BackupInfo) -> BackupRow {
-        let when = format_backup_time(backup.created_ms());
+        let when = crate::ui::time::date_time_seconds(backup.created_ms());
         let row = BackupRow::new(&when, backup.size_bytes());
         row.restore_button().connect_clicked(glib::clone!(
             #[weak(rename_to = page)]
@@ -410,13 +410,6 @@ fn finish_failure_text(err: &rappel_core::Error) -> String {
 /// refuses it too.
 fn offers_start_fresh(reason: Option<RecoveryReason>) -> bool {
     reason.is_some_and(|r| r != RecoveryReason::InterruptedRestore)
-}
-
-/// Local date and time of a backup, in the user's locale format.
-fn format_backup_time(created_ms: i64) -> String {
-    glib::DateTime::from_unix_local(created_ms.div_euclid(1000))
-        .and_then(|time| time.format("%x %X"))
-        .map_or_else(|_| "Unknown date".to_owned(), String::from)
 }
 
 #[cfg(test)]

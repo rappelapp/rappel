@@ -24,6 +24,18 @@ template $RappelReviewPage: Adw.NavigationPage {
       }
 
       [end]
+      Gtk.MenuButton card_menu_button {
+        visible: false;
+        icon-name: "view-more-symbolic";
+        menu-model: card_menu;
+        tooltip-text: _("Card Menu");
+
+        accessibility {
+          label: _("Card Menu");
+        }
+      }
+
+      [end]
       Gtk.Button edit_button {
         visible: false;
         icon-name: "document-edit-symbolic";
@@ -180,4 +192,13 @@ template $RappelReviewPage: Adw.NavigationPage {
       }
     }
   };
+}
+
+menu card_menu {
+  section {
+    item {
+      label: _("Card _Information");
+      action: "review.card-info";
+    }
+  }
 }

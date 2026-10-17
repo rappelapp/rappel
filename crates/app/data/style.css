@@ -37,3 +37,11 @@
 .math-scroller > undershoot.right {
   background-image: linear-gradient(to left, alpha(currentColor, 0.25), alpha(currentColor, 0) 20px);
 }
+
+/* A chart is focusable (widgets/bar_chart.rs) and a drawing area has no
+ * focus ring of its own in the stylesheet: draw one in the text colour. */
+.bar-chart:focus-visible {
+  outline: 2px solid alpha(currentColor, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
