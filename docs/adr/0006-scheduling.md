@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-15
-- Amended by: ADR 0009 (the Pass row for review cards)
+- Amended by: ADR 0009 (the Pass row for review cards), ADR 0027 (the stored desired retention is used)
 
 ## Context
 

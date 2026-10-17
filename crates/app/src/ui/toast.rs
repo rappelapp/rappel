@@ -71,6 +71,17 @@ impl ErrorSlot {
         }
         show_toast_from(widget, toast);
     }
+
+    /// Like [`Self::show`], in a preferences dialog's own toast overlay,
+    /// which covers the window's (`adw_preferences_dialog_add_toast`).
+    pub fn show_in_preferences(&self, dialog: &adw::PreferencesDialog, what: &str, message: &str) {
+        log_failure(what, message);
+        let toast = persistent_toast(message);
+        if let Some(old) = self.0.replace(Some(toast.clone())) {
+            old.dismiss();
+        }
+        dialog.add_toast(toast);
+    }
 }
 
 /// A toast offering Undo after something was deleted at once.

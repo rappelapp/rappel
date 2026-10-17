@@ -9,6 +9,7 @@ mod migrations;
 mod restore;
 mod review;
 mod schedule;
+mod settings;
 
 use std::fs::{self, OpenOptions, Permissions};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -19,7 +20,6 @@ use rusqlite::{Connection, ErrorCode, OpenFlags};
 use crate::data_dir::ensure_data_dir;
 use crate::error::{Error, Result};
 use crate::id::IdGen;
-use crate::scheduling::Scheduler;
 use crate::time::now_ms;
 pub use backup::{BackupInfo, list_backups};
 use backup::{check_rows, has_backup_for_day};
@@ -27,12 +27,19 @@ pub(crate) use backup::{create_backup, prune_backups};
 use migrations::{MIGRATIONS, Migration, latest, migrate};
 pub use restore::{Restored, finish_restore, restore_backup, start_fresh};
 pub(crate) use schedule::rebuild_cards;
+pub(crate) use settings::scheduler_in;
 
 /// File name of the database inside the data directory.
 pub(crate) const DB_FILE_NAME: &str = "rappel.sqlite3";
 
 /// Directory name for backups inside the data directory.
 pub(crate) const BACKUP_DIR_NAME: &str = "backups";
+
+/// The directory backups are kept in, inside `data_dir`.
+#[must_use]
+pub fn backup_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join(BACKUP_DIR_NAME)
+}
 
 const FILE_MODE: u32 = 0o600;
 
@@ -42,9 +49,6 @@ pub struct Store {
     pub(crate) conn: Connection,
     /// Issues the ids of new decks, cards and review events.
     ids: IdGen,
-    /// Schedules recorded reviews. Default retention until settings exist;
-    /// then the stored desired retention must be used here (ADR 0006).
-    pub(crate) scheduler: Scheduler,
     /// Where backups go; `None` only for in-memory test stores, which
     /// cannot be backed up (an import then refuses to run).
     pub(crate) backup_dir: Option<PathBuf>,
@@ -198,7 +202,6 @@ impl Store {
         Self {
             conn,
             ids: IdGen::new(),
-            scheduler: Scheduler::default(),
             backup_dir: None,
             open_warnings: Vec::new(),
         }

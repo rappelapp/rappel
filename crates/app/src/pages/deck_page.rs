@@ -19,7 +19,6 @@ use gtk::{gio, glib};
 use rappel_core::domain::{Card, Deck};
 use rappel_core::scheduling::StudyInput;
 
-use crate::clock::local_next_day_start_ms;
 use crate::dialogs::card_editor::{CardEditor, Saved};
 use crate::pages::ReviewPage;
 use crate::state::AppState;
@@ -163,15 +162,16 @@ impl DeckPage {
             Ok(input) => {
                 imp.window_title.set_subtitle(&study_subtitle(&input));
                 self.action_set_enabled("deck.study", !input.is_empty());
-                match state.next_study_change(&deck.id, now) {
-                    Ok(next) => self.arm_study_timer(timer_delay_ms(
-                        now,
-                        next,
-                        local_next_day_start_ms(now),
-                    )),
+                match (
+                    state.next_study_change(&deck.id, now),
+                    state.next_day_start(now),
+                ) {
+                    (Ok(next), Ok(day)) => self.arm_study_timer(timer_delay_ms(now, next, day)),
                     // The subtitle is right now; it only will not update by
                     // itself until the next change on this page.
-                    Err(err) => tracing::warn!("cannot read the next due time: {err}"),
+                    (Err(err), _) | (_, Err(err)) => {
+                        tracing::warn!("cannot read the next due time: {err}");
+                    }
                 }
             }
             Err(err) => {

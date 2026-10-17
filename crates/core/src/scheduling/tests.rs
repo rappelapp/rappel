@@ -183,7 +183,7 @@ fn desired_retention_is_validated() {
     assert_eq!(Scheduler::new(0.90).unwrap().desired_retention(), 0.90);
     for bad in [0.79, 0.98, 0.0, 1.0, f32::NAN] {
         assert!(
-            matches!(Scheduler::new(bad), Err(Error::InvalidRetention(_))),
+            matches!(Scheduler::new(bad), Err(Error::InvalidSetting { .. })),
             "{bad}"
         );
     }

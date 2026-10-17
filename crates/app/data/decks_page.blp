@@ -87,8 +87,8 @@ template $RappelDecksPage: Adw.NavigationPage {
   };
 }
 
-// The primary menu (F10). Preferences, Keyboard Shortcuts and About will
-// go in a last section of their own, as the GNOME HIG orders them.
+// The primary menu (F10). Keyboard Shortcuts and About will join Preferences
+// in the last section, as the GNOME HIG orders them.
 menu primary_menu {
   section {
     item {
@@ -99,6 +99,13 @@ menu primary_menu {
     item {
       label: _("_Import…");
       action: "win.import";
+    }
+  }
+
+  section {
+    item {
+      label: _("_Preferences");
+      action: "win.preferences";
     }
   }
 }

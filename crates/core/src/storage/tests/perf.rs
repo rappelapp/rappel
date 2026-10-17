@@ -37,6 +37,8 @@ fn fastest<T>(what: &str, runs: usize, mut f: impl FnMut() -> T) -> (Duration, T
 fn scratch_store() -> (Store, String) {
     let mut store = Store::in_memory();
     let deck = store.create_deck_at("Scratch", T0).unwrap().id;
+    // The default daily limit (200) would hide most of the 2,000 due cards.
+    store.set_max_reviews_per_day(9_999).unwrap();
     for i in 0..CARDS {
         let card = store
             .add_card_at(&deck, &format!("Card {i}"), "back", T0)

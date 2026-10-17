@@ -23,6 +23,7 @@ unicode-segmentation.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile.workspace = true
 
 [build-dependencies]
 glib-build-tools.workspace = true

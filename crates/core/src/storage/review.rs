@@ -7,10 +7,11 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use super::cards::live_card;
 use super::decks::ensure_live_deck;
 use super::schedule::{read_card_state, write_card_state};
+use super::settings::{scheduler_in, settings_in};
 use super::{Store, observe_max_id};
 use crate::domain::{Grade, Phase, ReviewEvent};
 use crate::error::Result;
-use crate::scheduling::session::{Due, EARLY_MS, StudyInput, new_allowance};
+use crate::scheduling::session::{Due, EARLY_MS, StudyInput, allowance};
 
 impl Store {
     /// Records that card `card_id` was answered with `grade` after
@@ -51,9 +52,9 @@ impl Store {
         // run may have issued `x + 1` for another card, so observing only
         // this card's `x` is not enough. The largest id covers both.
         observe_max_id(&tx, &mut self.ids, "review_events.id")?;
-        let next = self
-            .scheduler
-            .schedule(card_id, &state, grade, reviewed_at)?;
+        // Read inside the transaction, so a retention changed on another
+        // connection is used as soon as it is committed (ADR 0027).
+        let next = scheduler_in(&tx)?.schedule(card_id, &state, grade, reviewed_at)?;
         let event = ReviewEvent {
             id: self.ids.next(now)?,
             card_id: card_id.to_owned(),
@@ -79,14 +80,23 @@ impl Store {
 
     /// What deck `deck_id` has to study at `now`, for a
     /// [`Session`](crate::scheduling::session::Session). `day_start` is
-    /// when "today" began (UTC milliseconds; the app computes 4 a.m. local
-    /// time). Read in one transaction, so the parts agree (ADR 0014):
-    /// - due cards in review, most overdue first;
+    /// when "today" began (UTC milliseconds; the app computes the day start
+    /// hour of the settings in local time). Read in one transaction, so the
+    /// parts agree (ADR 0014):
+    /// - due cards in review, most overdue first, at most
+    ///   `max_reviews_per_day` less the older cards already reviewed today;
     /// - cards in the 10-minute step due within
     ///   `EARLY_MS`, earliest first;
     /// - how many cards of the deck had their first review today, deleted
     ///   ones included (they used today's budget);
-    /// - the new cards still allowed today, oldest first.
+    /// - how many older cards of the deck were reviewed today
+    ///   (`reviews_today`), deleted ones included; a card failed before the
+    ///   day start whose step falls after it counts too, though step cards
+    ///   themselves are never held back;
+    /// - the new cards still allowed today (`max_new_per_day`), oldest first.
+    ///
+    /// The limits are per deck and read from the settings in the same
+    /// transaction (ADR 0027).
     ///
     /// # Errors
     /// [`Error::DeckNotFound`](crate::Error::DeckNotFound), SQLite errors.
@@ -139,14 +149,16 @@ pub(super) fn study_input_in(
     day_start: i64,
 ) -> Result<StudyInput> {
     ensure_live_deck(conn, deck_id)?;
-    let due = |phases: &str, until: i64| -> Result<Vec<Due>> {
+    let limits = settings_in(conn)?;
+    // `limit` -1 is no limit in SQLite.
+    let due = |phases: &str, until: i64, limit: i64| -> Result<Vec<Due>> {
         let mut stmt = conn.prepare(&format!(
             "SELECT c.id, s.due_at FROM cards c JOIN card_schedule s ON s.card_id = c.id
              WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.phase IN ({phases})
                AND s.due_at <= ?2
-             ORDER BY s.due_at, c.seq"
+             ORDER BY s.due_at, c.seq LIMIT ?3"
         ))?;
-        let rows = stmt.query_map(params![deck_id, until], |r| {
+        let rows = stmt.query_map(params![deck_id, until, limit], |r| {
             Ok(Due {
                 card_id: r.get(0)?,
                 due_at: r.get(1)?,
@@ -156,10 +168,27 @@ pub(super) fn study_input_in(
     };
     // Phases are our own constant strings, never user input.
     let quote = |p: Phase| format!("'{}'", p.as_str());
-    let reviews = due(&quote(Phase::Review), now)?;
+    // Cards that had a review before today and one today: not new today,
+    // and not counted by `new_today`.
+    let reviews_today: u32 = conn.query_row(
+        "SELECT count(*) FROM (
+             SELECT e.card_id FROM review_events e JOIN cards c ON c.id = e.card_id
+             WHERE c.deck_id = ?1
+             GROUP BY e.card_id
+             HAVING min(e.reviewed_at) < ?2 AND max(e.reviewed_at) >= ?2)",
+        params![deck_id, day_start],
+        |r| r.get(0),
+    )?;
+    let reviews = due(
+        &quote(Phase::Review),
+        now,
+        i64::from(allowance(limits.max_reviews_per_day, reviews_today)),
+    )?;
+    // Step cards are never limited: a failed card always comes back.
     let steps = due(
         &format!("{}, {}", quote(Phase::Learning), quote(Phase::Relearning)),
         now.saturating_add(EARLY_MS),
+        -1,
     )?;
     let new_today: u32 = conn.query_row(
         "SELECT count(*) FROM (
@@ -175,7 +204,10 @@ pub(super) fn study_input_in(
          ORDER BY c.seq LIMIT ?2",
     )?;
     let new = stmt
-        .query_map(params![deck_id, new_allowance(new_today)], |r| r.get(0))?
+        .query_map(
+            params![deck_id, allowance(limits.max_new_per_day, new_today)],
+            |r| r.get(0),
+        )?
         .collect::<rusqlite::Result<_>>()?;
     drop(stmt);
     Ok(StudyInput {
@@ -183,6 +215,7 @@ pub(super) fn study_input_in(
         steps,
         new,
         new_today,
+        reviews_today,
     })
 }
 

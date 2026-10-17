@@ -420,7 +420,10 @@ mod study {
     use super::{DAY_MS, T0, rebuilt, store_with_cards};
     use crate::domain::{Grade, Phase};
     use crate::scheduling::STEP_MS;
-    use crate::scheduling::session::{Due, EARLY_MS, NEW_PER_DAY, Session};
+    use crate::scheduling::session::{Due, EARLY_MS, Session};
+
+    /// The default `max_new_per_day`.
+    const NEW_PER_DAY: u32 = 20;
     use crate::test_support::answer;
 
     /// "Today" began two hours before `T0`.
@@ -743,5 +746,202 @@ mod next_change {
             store.next_study_change("01920000-0000-7000-8000-00000000dead", T0),
             Err(Error::DeckNotFound(_))
         ));
+    }
+}
+
+/// The daily limits from the settings (ADR 0027).
+mod limits {
+    use super::{DAY_MS, T0, store_with_cards};
+    use crate::domain::Grade;
+    use crate::scheduling::STEP_MS;
+    use crate::scheduling::session::Due;
+    use crate::storage::Store;
+    use crate::test_support::answer;
+
+    /// Study time, 40 days after the cards were learned: all are due.
+    const NOW: i64 = T0 + 40 * DAY_MS;
+    /// "Today" began an hour before `NOW`.
+    const DAY_START: i64 = NOW - 3_600_000;
+
+    /// A deck of `n` cards learned one day apart (the first is the most
+    /// overdue at `NOW`), all in review.
+    fn overdue(n: usize) -> (Store, String, Vec<String>) {
+        let (mut store, deck, cards) = store_with_cards(n);
+        for (i, card) in cards.iter().enumerate() {
+            let at = T0 + i64::try_from(i).unwrap() * DAY_MS;
+            answer(&mut store, card, Grade::Pass, at);
+            answer(&mut store, card, Grade::Pass, at + STEP_MS);
+        }
+        (store, deck, cards)
+    }
+
+    fn reviews(store: &Store, deck: &str) -> Vec<String> {
+        let input = store.study_input(deck, NOW, DAY_START).unwrap();
+        input.reviews.into_iter().map(|d| d.card_id).collect()
+    }
+
+    #[test]
+    fn the_new_card_limit_applies() {
+        let (mut store, deck, cards) = store_with_cards(30);
+        for (limit, shown) in [(0, 0), (1, 1), (20, 20), (30, 30), (9_999, 30)] {
+            store.set_max_new_per_day(limit).unwrap();
+            let input = store.study_input(&deck, T0, T0 - 1).unwrap();
+            assert_eq!(input.new, cards[..shown], "limit {limit}");
+        }
+    }
+
+    #[test]
+    fn new_cards_already_started_today_use_the_limit() {
+        let (mut store, deck, cards) = store_with_cards(10);
+        store.set_max_new_per_day(3).unwrap();
+        answer(&mut store, &cards[0], Grade::Pass, T0);
+        let input = store.study_input(&deck, T0, T0 - 1).unwrap();
+        assert_eq!((input.new_today, input.new.len()), (1, 2));
+        // Raising the limit gives more at once; lowering it below what was
+        // done gives none, not an underflow.
+        store.set_max_new_per_day(6).unwrap();
+        assert_eq!(store.study_input(&deck, T0, T0 - 1).unwrap().new.len(), 5);
+        store.set_max_new_per_day(0).unwrap();
+        assert_eq!(
+            store.study_input(&deck, T0, T0 - 1).unwrap().new,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn the_review_limit_keeps_the_most_overdue() {
+        let (mut store, deck, cards) = overdue(10);
+        assert_eq!(reviews(&store, &deck), cards, "default limit shows all");
+        for limit in [0, 1, 4, 10, 11] {
+            store.set_max_reviews_per_day(limit).unwrap();
+            let shown = reviews(&store, &deck);
+            assert_eq!(shown, cards[..limit.min(10) as usize], "limit {limit}");
+        }
+    }
+
+    #[test]
+    fn reviews_done_today_use_the_review_limit() {
+        let (mut store, deck, cards) = overdue(10);
+        store.set_max_reviews_per_day(4).unwrap();
+        answer(&mut store, &cards[0], Grade::Pass, NOW);
+        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        assert_eq!(input.reviews_today, 1);
+        let shown: Vec<_> = input.reviews.into_iter().map(|d| d.card_id).collect();
+        assert_eq!(shown, cards[1..4], "3 left of 4");
+
+        for card in &cards[1..4] {
+            answer(&mut store, card, Grade::Pass, NOW);
+        }
+        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        assert_eq!((input.reviews_today, input.reviews.len()), (4, 0));
+        // Lowering the limit below what was done is not an underflow.
+        store.set_max_reviews_per_day(2).unwrap();
+        assert_eq!(reviews(&store, &deck), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_new_card_does_not_use_the_review_limit_and_a_review_not_the_new_one() {
+        let (mut store, deck, cards) = overdue(3);
+        let fresh = store.add_card_at(&deck, "fresh", "a", T0).unwrap().id;
+        store.set_max_reviews_per_day(1).unwrap();
+        store.set_max_new_per_day(1).unwrap();
+        answer(&mut store, &fresh, Grade::Pass, NOW);
+        answer(&mut store, &cards[0], Grade::Pass, NOW);
+        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        assert_eq!((input.new_today, input.reviews_today), (1, 1));
+        assert!(input.reviews.is_empty() && input.new.is_empty());
+    }
+
+    #[test]
+    fn step_cards_are_not_limited() {
+        let (mut store, deck, cards) = overdue(3);
+        store.set_max_reviews_per_day(0).unwrap();
+        store.set_max_new_per_day(0).unwrap();
+        // Failed, so in the 10-minute step and due again within it.
+        answer(&mut store, &cards[0], Grade::Fail, NOW);
+        let input = store.study_input(&deck, NOW + STEP_MS, DAY_START).unwrap();
+        assert_eq!(
+            input.steps.iter().map(|d| &d.card_id).collect::<Vec<_>>(),
+            [&cards[0]]
+        );
+        assert_eq!(input.reviews, Vec::<Due>::new());
+    }
+
+    #[test]
+    fn deleted_cards_and_steps_that_cross_the_day_start_use_the_review_limit() {
+        let (mut store, deck, cards) = overdue(4);
+        store.set_max_reviews_per_day(2).unwrap();
+        // Reviewed today, then deleted: still used today's budget.
+        answer(&mut store, &cards[0], Grade::Pass, NOW);
+        store.delete_card_at(&cards[0], NOW).unwrap();
+        // Failed before the day start, its step answered after it: an older
+        // card reviewed today, though step cards themselves are not held back.
+        answer(&mut store, &cards[1], Grade::Fail, DAY_START - 60_000);
+        answer(&mut store, &cards[1], Grade::Pass, NOW);
+        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        assert_eq!(input.reviews_today, 2);
+        assert_eq!(input.reviews, Vec::<Due>::new());
+    }
+
+    #[test]
+    fn limits_are_per_deck() {
+        let (mut store, deck, cards) = overdue(4);
+        let other = store.create_deck_at("Other", T0).unwrap().id;
+        let other_card = store.add_card_at(&other, "q", "a", T0).unwrap().id;
+        store.set_max_reviews_per_day(2).unwrap();
+        store.set_max_new_per_day(1).unwrap();
+        for card in &cards[..2] {
+            answer(&mut store, card, Grade::Pass, NOW);
+        }
+        assert_eq!(reviews(&store, &deck), Vec::<String>::new());
+        let input = store.study_input(&other, NOW, DAY_START).unwrap();
+        assert_eq!(input.new, [other_card]);
+    }
+
+    #[test]
+    fn the_deck_list_counts_with_the_same_limits() {
+        let (mut store, deck, _) = overdue(10);
+        store.add_card_at(&deck, "fresh", "a", T0).unwrap();
+        for (new, rev) in [(0, 0), (1, 3), (5, 10), (20, 200)] {
+            store.set_max_new_per_day(new).unwrap();
+            store.set_max_reviews_per_day(rev).unwrap();
+            let summary = &store.list_decks(NOW, DAY_START).unwrap()[0];
+            let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+            assert_eq!(
+                (summary.new_count, summary.due_count),
+                (new.min(1), rev.min(10)),
+                "limits {new}/{rev}"
+            );
+            assert_eq!(
+                (summary.new_count as usize, summary.due_count as usize),
+                (input.new.len(), input.reviews.len() + input.steps.len())
+            );
+        }
+    }
+
+    #[test]
+    fn the_day_start_decides_what_counts_as_today() {
+        let (mut store, deck, cards) = overdue(3);
+        // `cards[0]` was first reviewed at T0 and again at T0 + STEP_MS;
+        // answer it once more at NOW, and a new card once at NOW.
+        let fresh = store.add_card_at(&deck, "fresh", "a", T0).unwrap().id;
+        answer(&mut store, &cards[0], Grade::Pass, NOW);
+        answer(&mut store, &fresh, Grade::Pass, NOW);
+        let counts = |day_start| {
+            let input = store.study_input(&deck, NOW, day_start).unwrap();
+            (input.new_today, input.reviews_today)
+        };
+        // The day began at the last review: both reviews count.
+        assert_eq!(counts(NOW), (1, 1));
+        // One millisecond later it has not begun yet: nothing counts.
+        assert_eq!(counts(NOW + 1), (0, 0));
+        // Began before NOW but after the older reviews.
+        assert_eq!(counts(NOW - 1), (1, 1));
+        // Began before every first review: all four cards were new that day.
+        assert_eq!(counts(T0), (4, 0));
+        // Began after the first card's first two reviews: it is a review
+        // now, and the other two (learned a day or two later) and the
+        // fresh card are new.
+        assert_eq!(counts(T0 + STEP_MS + 1), (3, 1));
     }
 }

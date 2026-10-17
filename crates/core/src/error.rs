@@ -133,11 +133,14 @@ pub enum Error {
         messages: Vec<String>,
     },
 
-    /// A desired retention outside the allowed range (0.80–0.97). Only
-    /// `Scheduler::new` returns it, and only tests use that until settings
-    /// exist.
-    #[error("desired retention must be between 0.80 and 0.97, got {0}")]
-    InvalidRetention(f32),
+    /// A setting outside its allowed range (ADR 0027).
+    #[error("setting {key} cannot be {value}")]
+    InvalidSetting {
+        /// The setting's key (`desired_retention`, `max_new_per_day`, ...).
+        key: &'static str,
+        /// The refused value.
+        value: String,
+    },
 
     /// FSRS could not compute a memory state (non-finite input state).
     #[error("scheduler error: {0}")]

@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use rappel_core::domain::{Card, CardState, Deck, DeckSummary, Grade, ReviewEvent};
+use rappel_core::domain::{Card, CardState, Deck, DeckSummary, Grade, ReviewEvent, Settings};
 use rappel_core::interchange::{ExportSummary, ImportPlan, ImportReport};
 use rappel_core::scheduling::StudyInput;
 use rappel_core::storage::{self, BackupInfo, OpenWarning, Restored, Store};
 
-use crate::clock::local_day_start_ms;
+use crate::clock::{local_day_start_ms, local_next_day_start_ms};
 
 /// A cheap-to-clone handle on the open database, shared by the window and
 /// its widgets.
@@ -105,6 +105,15 @@ impl AppState {
         Store::open_concurrent(data_dir)?.apply_import(plan)
     }
 
+    /// Sets the desired retention in the database in `data_dir` and rebuilds
+    /// every card's schedule from the review log (see
+    /// [`Store::set_desired_retention`]). Blocking, as long as the log is
+    /// big; runs on a worker thread, on its own connection like
+    /// [`Self::export_on_worker`].
+    pub fn set_desired_retention_on_worker(data_dir: &Path, value: f32) -> rappel_core::Result<()> {
+        Store::open_concurrent(data_dir)?.set_desired_retention(value)
+    }
+
     /// The data directory the database lives in.
     pub fn data_dir(&self) -> &Path {
         &self.0.data_dir
@@ -114,10 +123,9 @@ impl AppState {
     /// deck page (see [`Store::list_decks`]).
     pub fn list_decks(&self) -> rappel_core::Result<Vec<DeckSummary>> {
         let now = rappel_core::time::now_ms();
-        self.0
-            .store
-            .borrow()
-            .list_decks(now, local_day_start_ms(now))
+        let store = self.0.store.borrow();
+        let hour = store.settings()?.day_start_hour;
+        store.list_decks(now, local_day_start_ms(now, hour))
     }
 
     /// The live decks, without counting their cards (see [`Store::decks`]).
@@ -173,12 +181,46 @@ impl AppState {
     }
 
     /// What a deck has to study at `now`, with the study day starting at
-    /// 04:00 local (`local_day_start_ms`; see [`Store::study_input`]).
+    /// the settings' day start hour, local time (`local_day_start_ms`; see
+    /// [`Store::study_input`]).
     pub fn study_input(&self, deck_id: &str, now: i64) -> rappel_core::Result<StudyInput> {
-        self.0
-            .store
-            .borrow()
-            .study_input(deck_id, now, local_day_start_ms(now))
+        let store = self.0.store.borrow();
+        let hour = store.settings()?.day_start_hour;
+        store.study_input(deck_id, now, local_day_start_ms(now, hour))
+    }
+
+    /// When the next study day begins after `now`, UTC milliseconds (the
+    /// day start hour of the settings, local time).
+    pub fn next_day_start(&self, now: i64) -> rappel_core::Result<i64> {
+        let hour = self.0.store.borrow().settings()?.day_start_hour;
+        Ok(local_next_day_start_ms(now, hour))
+    }
+
+    /// The settings (see [`Store::settings`]).
+    pub fn settings(&self) -> rappel_core::Result<Settings> {
+        self.0.store.borrow().settings()
+    }
+
+    /// Sets the new cards per deck and day (see
+    /// [`Store::set_max_new_per_day`]).
+    pub fn set_max_new_per_day(&self, value: u32) -> rappel_core::Result<()> {
+        self.0.store.borrow_mut().set_max_new_per_day(value)
+    }
+
+    /// Sets the reviews per deck and day (see
+    /// [`Store::set_max_reviews_per_day`]).
+    pub fn set_max_reviews_per_day(&self, value: u32) -> rappel_core::Result<()> {
+        self.0.store.borrow_mut().set_max_reviews_per_day(value)
+    }
+
+    /// Sets the hour a study day begins (see [`Store::set_day_start_hour`]).
+    pub fn set_day_start_hour(&self, value: u8) -> rappel_core::Result<()> {
+        self.0.store.borrow_mut().set_day_start_hour(value)
+    }
+
+    /// The folder backups are kept in.
+    pub fn backup_dir(&self) -> PathBuf {
+        storage::backup_dir(&self.0.data_dir)
     }
 
     /// When what a deck has to study next changes (see

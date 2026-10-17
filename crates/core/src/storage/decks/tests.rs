@@ -534,7 +534,8 @@ fn undelete_of_an_unknown_deck_is_not_found() {
 mod study_counts {
     use super::{DAY_MS, T0};
     use crate::domain::Grade;
-    use crate::scheduling::session::NEW_PER_DAY;
+    /// The default `max_new_per_day`.
+    const NEW_PER_DAY: u32 = 20;
     use crate::storage::Store;
     use crate::test_support::answer;
 

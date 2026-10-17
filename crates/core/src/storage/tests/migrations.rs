@@ -305,3 +305,74 @@ fn negative_user_version_is_refused() {
         Err(Error::UnsupportedVersion { found: -1, .. })
     ));
 }
+
+/// Migration 0006 only adds the empty `settings` table: data and the
+/// schedule cache stay as they were, and every setting has its default.
+#[test]
+fn migration_0006_adds_settings_and_keeps_everything_else() {
+    use crate::domain::Settings;
+    use crate::test_support::schedule_table;
+
+    let e = env();
+    let before = {
+        let v5 = e.open_with(DAY0, &MIGRATIONS[..5]).unwrap();
+        insert_sample(&v5.conn);
+        assert!(!tables(&v5.conn).contains(&"settings".to_owned()));
+        (
+            schedule_table(&v5),
+            v5.review_events(CARD).unwrap(),
+            v5.list_cards(DECK).unwrap(),
+        )
+    };
+    let store = e.open_with(DAY0, &MIGRATIONS[..6]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 6);
+    assert_eq!(count(&store.conn, "settings"), 0);
+    assert_eq!(store.settings().unwrap(), Settings::default());
+    assert_eq!(
+        (
+            schedule_table(&store),
+            store.review_events(CARD).unwrap(),
+            store.list_cards(DECK).unwrap()
+        ),
+        before
+    );
+    // The pre-migration backup is the version-5 database.
+    assert_eq!(e.backups().len(), 1);
+}
+
+/// A later migration that rebuilds the schedule cache uses the stored
+/// desired retention, not the default (ADR 0006, 0027).
+#[test]
+fn a_rebuilding_migration_uses_the_stored_retention() {
+    let e = env();
+    {
+        let mut v6 = e.open_with(DAY0, &MIGRATIONS[..6]).unwrap();
+        insert_sample(&v6.conn);
+        insert_events(
+            &v6.conn,
+            CARD,
+            10,
+            &[(DAY_MS, "pass"), (9 * DAY_MS, "pass")],
+        );
+        v6.set_desired_retention(0.80).unwrap();
+    }
+    let rebuild = Migration {
+        version: 7,
+        name: "fake rebuild",
+        sql: "SELECT 1;",
+        rebuild_schedule: true,
+        backfill: None,
+    };
+    let mut migrations = MIGRATIONS.to_vec();
+    migrations.push(rebuild);
+    let store = e.open_with(DAY0, &migrations).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 7);
+    let events = store.review_events(CARD).unwrap();
+    let at_80 = Scheduler::new(0.80)
+        .unwrap()
+        .rebuild_state(CARD, &events)
+        .unwrap();
+    let at_90 = Scheduler::default().rebuild_state(CARD, &events).unwrap();
+    assert_ne!(at_80, at_90, "the test needs the retentions to differ");
+    assert_eq!(store.card_state(CARD).unwrap(), at_80);
+}

@@ -1,0 +1,36 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Asked before the desired retention changes: the change recalculates every
+// card's due date (ADR 0027). The spin row's value is set in
+// dialogs/preferences.rs.
+Adw.AlertDialog retention_dialog {
+  heading: _("Change Desired Retention?");
+  body: _("Every card’s due date will be recalculated from your review history, so cards may come due sooner or later than now. A higher value means more reviews. Your history itself is not changed.");
+  close-response: "cancel";
+  default-response: "change";
+
+  responses [
+    cancel: _("_Cancel"),
+    change: _("C_hange") suggested,
+  ]
+
+  extra-child: Gtk.ListBox {
+    selection-mode: none;
+
+    styles [
+      "boxed-list",
+    ]
+
+    Adw.SpinRow retention_spin {
+      title: _("Desired Retention");
+      subtitle: _("Percent of cards you expect to remember when they come due");
+      adjustment: Gtk.Adjustment {
+        lower: 80;
+        upper: 97;
+        step-increment: 1;
+        page-increment: 5;
+      };
+    }
+  };
+}

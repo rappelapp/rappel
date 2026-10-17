@@ -99,6 +99,12 @@ mod imp {
             klass.install_action("win.import", None, |window, _, _| {
                 window.start_transfer(super::Transfer::Import);
             });
+            // Ctrl+, (set in main.rs); enabled once the deck list is shown.
+            klass.install_action("win.preferences", None, |window, _, _| {
+                if let Some(state) = window.imp().state.get() {
+                    crate::dialogs::preferences::show(window, state);
+                }
+            });
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -112,6 +118,7 @@ mod imp {
             let window = self.obj();
             window.action_set_enabled("win.new-deck", false);
             window.action_set_enabled("win.new", false);
+            window.action_set_enabled("win.preferences", false);
             for action in super::TRANSFER_ACTIONS {
                 window.action_set_enabled(action, false);
             }
@@ -202,6 +209,7 @@ impl RappelWindow {
         imp.stack.set_visible_child_name("main");
         self.action_set_enabled("win.new-deck", true);
         self.action_set_enabled("win.new", true);
+        self.action_set_enabled("win.preferences", true);
         for action in TRANSFER_ACTIONS {
             self.action_set_enabled(action, true);
         }

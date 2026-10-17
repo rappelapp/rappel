@@ -17,8 +17,8 @@ use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 use crate::domain::deck_name_key;
 use crate::error::{Error, Result};
-use crate::scheduling::Scheduler;
 use crate::storage::schedule::write_schedule_cache;
+use crate::storage::settings::scheduler_in;
 
 /// One schema migration.
 #[derive(Debug, Clone, Copy)]
@@ -83,6 +83,13 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         rebuild_schedule: true,
         backfill: None,
     },
+    Migration {
+        version: 6,
+        name: "settings",
+        sql: include_str!("0006_settings.sql"),
+        rebuild_schedule: false,
+        backfill: None,
+    },
 ];
 
 /// Migration 0004: `decks.name_key` for every deck, deleted ones included.
@@ -136,15 +143,18 @@ pub(crate) fn migrate(conn: &mut Connection, migrations: &[Migration], current: 
             })?;
         }
         if m.rebuild_schedule {
-            // Default retention: there is no settings table yet. When there
-            // is, the stored desired retention must be used here (ADR 0006).
-            // An error drops `tx`, which rolls the migration back.
-            let cards = write_schedule_cache(&tx, &Scheduler::default()).map_err(|e| {
-                Error::MigrationRebuild {
+            // The stored desired retention, or the default before the
+            // settings table exists (ADR 0027). An error drops `tx`, which
+            // rolls the migration back.
+            let scheduler = scheduler_in(&tx).map_err(|e| Error::MigrationRebuild {
+                version: m.version,
+                source: Box::new(e),
+            })?;
+            let cards =
+                write_schedule_cache(&tx, &scheduler).map_err(|e| Error::MigrationRebuild {
                     version: m.version,
                     source: Box::new(e),
-                }
-            })?;
+                })?;
             tracing::info!(cards, "schedule cache rebuilt");
         }
         tx.pragma_update(None, "user_version", m.version)
@@ -205,6 +215,7 @@ mod tests {
             (3, 12_700_174_011_840_410_413),
             (4, 274_116_458_028_196_935),
             (5, 16_265_802_780_356_427_840),
+            (6, 4_814_555_124_323_229_936),
         ];
         assert_eq!(
             MIGRATIONS.len(),

@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), and the Markdown editor with live preview (§4.4; tags still to come).
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4; tags still to come), and the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come).
 
 ---
 
@@ -84,8 +84,9 @@ ALTER TABLE review_events ADD COLUMN undoes TEXT REFERENCES review_events(id);
 -- An event with `undoes` set cancels the referenced event. rebuild_state skips both.
 
 settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- desired_retention (0.80–0.97, default 0.90), max_new_per_day (default 20),
--- max_reviews_per_day (default 200)
+-- desired_retention (0.80–0.97, default 0.90), max_new_per_day (0–9999, default 20),
+-- max_reviews_per_day (0–9999, default 200), day_start_hour (0–23, default 4).
+-- A key never written has its default. Limits are per deck (ADR 0027).
 
 media(hash TEXT PRIMARY KEY, mime TEXT NOT NULL, bytes INTEGER NOT NULL, created_at INTEGER NOT NULL);
 
@@ -103,7 +104,7 @@ Storage rules:
 ## 4. Features for v0.2 (in priority order)
 
 ### 4.1 Export / import
-- Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 1`, `exported_at`, and all decks, cards and the full review log, deleted rows included with their `deleted_at`. It also has `settings` (empty until settings exist) and `media` (empty until images exist; image files will go into `media/`). Tags join the format, as version 2, with the tags slice. A reader accepts every version up to its own.
+- Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 1`, `exported_at`, and all decks, cards and the full review log, deleted rows included with their `deleted_at`. It also has `settings` (empty in version 1; the settings join the format with version 2, together with tags, ADR 0027) and `media` (empty until images exist; image files will go into `media/`). Tags join the format, as version 2, with the tags slice. A reader accepts every version up to its own.
 - Deterministic: the same database exported at the same time gives the same bytes (lists sorted by id, fixed zip metadata). Only `exported_at` differs between exports.
 - Import into an empty or existing DB in two steps: `plan_import` checks the file and returns a summary without writing anything (new / already present / conflicts, e.g. "12 decks, 840 cards, 5,210 reviews"); `apply_import` backs up the database, then writes in one transaction and rebuilds the schedule of the affected cards from the log.
 - Merge rules: an id not in the DB is added; the same id with the same content is skipped. A row that differs only by being deleted is merged: deleted in the DB and live in the file, it is revived (`deleted_at` cleared; a revived deck also revives the cards deleted with it, as `undelete_deck` does, except those the file has, which follow their own row); live in the DB and deleted in the file, it is skipped (an import never deletes); deleted on both sides, at whatever times, it is already present. The same id with any other difference, or a live deck name (revived ones included) already used by another live deck, is a conflict, and any conflict refuses the whole import. The summary also counts revived rows. Importing the same file twice changes nothing.
@@ -144,7 +145,7 @@ Storage rules:
 - All computations are pure functions in `core::stats`, tested.
 
 ### 4.8 Polish
-- `AdwPreferencesDialog`: desired retention, daily limits, backup folder "Open" button.
+- `AdwPreferencesDialog` (done, ADR 0027): daily limits for new cards and reviews, the hour a study day starts, desired retention (asked about first, because it recalculates every due date), and an "Open Backup Folder" button.
 - `AdwAboutDialog`, keyboard shortcuts dialog, primary menu.
 - Remember window size and the last selected deck.
 - Every icon-only button has a tooltip and an accessible label. Full keyboard navigation.

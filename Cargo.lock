@@ -1208,6 +1208,7 @@ dependencies = [
  "ratex-parser",
  "ratex-types",
  "sourceview5",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",

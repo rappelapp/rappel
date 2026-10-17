@@ -5,6 +5,13 @@ use std::str::FromStr;
 
 use unicode_normalization::UnicodeNormalization;
 
+mod settings;
+
+pub use settings::{
+    DEFAULT_DESIRED_RETENTION, DESIRED_RETENTION_RANGE, MAX_DAILY_LIMIT, MAX_DAY_START_HOUR,
+    Settings,
+};
+
 /// The answer to a review. Rappel has exactly two grades (SPEC §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Grade {

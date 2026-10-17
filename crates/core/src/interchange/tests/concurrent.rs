@@ -4,7 +4,7 @@ use super::*;
 
 impl Env {
     /// A second store on the same database, as a worker thread opens it.
-    fn concurrent(&self) -> Store {
+    pub(super) fn concurrent(&self) -> Store {
         Store::open_concurrent(&self.tmp.path().join("data")).unwrap()
     }
 }

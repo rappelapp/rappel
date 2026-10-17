@@ -30,7 +30,7 @@ pub(super) struct Document {
     pub decks: Vec<DeckRecord>,
     pub cards: Vec<CardRecord>,
     pub review_events: Vec<EventRecord>,
-    /// No settings exist yet; must be empty in version 1.
+    /// Settings are not exported in version 1 (ADR 0027); must be empty.
     pub settings: BTreeMap<String, serde_json::Value>,
     /// No media exist yet; must be empty in version 1.
     pub media: Vec<serde_json::Value>,

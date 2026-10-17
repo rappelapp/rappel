@@ -2,3 +2,4 @@
 
 pub mod card_editor;
 pub mod deck_name_dialog;
+pub mod preferences;

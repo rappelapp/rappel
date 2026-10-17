@@ -10,7 +10,13 @@ fn fresh_database_is_created_private_migrated_and_not_backed_up() {
     assert_eq!(store.schema_version().unwrap(), latest(MIGRATIONS));
     assert_eq!(
         tables(&store.conn),
-        ["card_schedule", "cards", "decks", "review_events"]
+        [
+            "card_schedule",
+            "cards",
+            "decks",
+            "review_events",
+            "settings"
+        ]
     );
     assert_eq!(mode(&e.db), 0o600);
     assert_eq!(mode(e.db.parent().unwrap()), 0o700);

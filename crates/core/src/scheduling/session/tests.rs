@@ -91,10 +91,11 @@ proptest! {
 
 #[test]
 fn allowance_and_cap() {
-    assert_eq!(new_allowance(0), NEW_PER_DAY);
-    assert_eq!(new_allowance(5), NEW_PER_DAY - 5);
-    assert_eq!(new_allowance(NEW_PER_DAY), 0);
-    assert_eq!(new_allowance(NEW_PER_DAY + 3), 0);
+    assert_eq!(allowance(20, 0), 20);
+    assert_eq!(allowance(20, 5), 15);
+    assert_eq!(allowance(20, 20), 0);
+    assert_eq!(allowance(20, 23), 0);
+    assert_eq!(allowance(0, 0), 0);
     assert_eq!(capped(Duration::from_secs(5)), Duration::from_secs(5));
     assert_eq!(capped(Duration::from_secs(3_600)), MAX_DURATION);
 }
@@ -106,6 +107,7 @@ fn due_steps_come_first_then_the_queue() {
         steps: vec![due("s-later", T0 + 5 * MIN), due("s-due", T0 - MIN)],
         new: ids(&["n1"]),
         new_today: 0,
+        reviews_today: 0,
     };
     let mut session = Session::new(input);
     assert_eq!(session.remaining(), 5);

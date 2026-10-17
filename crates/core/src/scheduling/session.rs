@@ -17,9 +17,6 @@ use std::time::Duration;
 
 use crate::domain::{CardState, Grade, Phase};
 
-/// New cards a deck introduces per day (SPEC §3 default; a setting later).
-pub(crate) const NEW_PER_DAY: u32 = 20;
-
 /// How early a step card may be shown when nothing else is left.
 pub(crate) const EARLY_MS: i64 = 20 * 60 * 1000;
 
@@ -40,7 +37,8 @@ pub struct Due {
 /// [`Store::study_input`](crate::storage::Store::study_input)).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StudyInput {
-    /// Cards in review that are due, most overdue first.
+    /// Cards in review that are due, most overdue first, cut to the reviews
+    /// still allowed today.
     pub reviews: Vec<Due>,
     /// Cards in the 10-minute step due within `EARLY_MS`, earliest first.
     pub steps: Vec<Due>,
@@ -48,6 +46,8 @@ pub struct StudyInput {
     pub new: Vec<String>,
     /// New cards this deck already introduced today.
     pub new_today: u32,
+    /// Older cards of this deck already reviewed today.
+    pub reviews_today: u32,
 }
 
 impl StudyInput {
@@ -58,10 +58,11 @@ impl StudyInput {
     }
 }
 
-/// How many new cards may still be introduced today, after `new_today`.
+/// How many more cards may be taken today under a daily `limit`, after
+/// `done_today` (new cards introduced, or older cards reviewed).
 #[must_use]
-pub(crate) fn new_allowance(new_today: u32) -> u32 {
-    NEW_PER_DAY.saturating_sub(new_today)
+pub(crate) fn allowance(limit: u32, done_today: u32) -> u32 {
+    limit.saturating_sub(done_today)
 }
 
 /// `duration`, capped at `MAX_DURATION`.

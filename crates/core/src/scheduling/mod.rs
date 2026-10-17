@@ -28,7 +28,9 @@ pub use session::{Due, Session, StudyInput, Summary, capped};
 
 use fsrs::{FSRS, MemoryState};
 
-use crate::domain::{CardState, Grade, Phase, ReviewEvent, Schedule};
+use crate::domain::{
+    CardState, DEFAULT_DESIRED_RETENTION, Grade, Phase, ReviewEvent, Schedule, Settings,
+};
 use crate::error::{Error, Result};
 use fuzz::{floored_fuzzed_days, fuzz_factor};
 
@@ -37,14 +39,6 @@ pub const DAY_MS: i64 = 86_400_000;
 
 /// Length of the short-term step for new and failed cards, milliseconds.
 pub const STEP_MS: i64 = 10 * 60 * 1000;
-
-/// The desired retention used until the user changes it (SPEC §3).
-pub(crate) const DEFAULT_DESIRED_RETENTION: f32 = 0.90;
-
-/// The range of desired retention the user may choose (SPEC §3). Used
-/// only by tests until settings exist.
-#[cfg(test)]
-pub(crate) const DESIRED_RETENTION_RANGE: std::ops::RangeInclusive<f32> = 0.80..=0.97;
 
 /// FSRS rating for Pass ("Good"). Fail is rating 1 ("Again"); `schedule`
 /// picks the matching field of `NextStates` rather than passing ratings.
@@ -72,15 +66,11 @@ impl Scheduler {
     /// retention (probability of recall when a card comes due).
     ///
     /// # Errors
-    /// [`Error::InvalidRetention`] if `desired_retention` is outside
-    /// [`DESIRED_RETENTION_RANGE`].
-    #[cfg(test)]
+    /// [`Error::InvalidSetting`] if `desired_retention` is outside
+    /// [`DESIRED_RETENTION_RANGE`](crate::domain::DESIRED_RETENTION_RANGE).
     pub fn new(desired_retention: f32) -> Result<Self> {
-        if !DESIRED_RETENTION_RANGE.contains(&desired_retention) {
-            return Err(Error::InvalidRetention(desired_retention));
-        }
         Ok(Self {
-            desired_retention,
+            desired_retention: Settings::check_retention(desired_retention)?,
             ..Self::default()
         })
     }

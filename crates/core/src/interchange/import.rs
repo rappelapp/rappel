@@ -14,7 +14,7 @@ use super::{
 };
 use crate::domain::deck_name_key;
 use crate::error::{Error, Result};
-use crate::storage::{Store, create_backup, prune_backups, rebuild_cards};
+use crate::storage::{Store, create_backup, prune_backups, rebuild_cards, scheduler_in};
 use crate::time::now_ms;
 
 impl Store {
@@ -133,7 +133,7 @@ impl Store {
         // Decks first, so a new card can go into a revived deck.
         revive_rows(&tx, doc, &rows)?;
         let reviewed = insert_rows(&tx, doc, &rows)?;
-        rebuild_cards(&tx, &self.scheduler, reviewed)?;
+        rebuild_cards(&tx, &scheduler_in(&tx)?, reviewed)?;
         tx.commit()?;
         tracing::info!(
             decks = summary.decks.new,
