@@ -13,7 +13,9 @@ use rappel_core::domain::{
 use rappel_core::interchange::{ExportSummary, ImportPlan, ImportReport};
 use rappel_core::scheduling::StudyInput;
 use rappel_core::stats::{CardInfo, DayGrid, Stats};
-use rappel_core::storage::{self, BackupInfo, OpenWarning, Restored, Scope, Store};
+use rappel_core::storage::{
+    self, BackupInfo, BrowseQuery, BrowseRow, Moved, OpenWarning, Restored, Scope, Store,
+};
 
 use crate::clock::{local_day_bounds_ms, local_day_start_ms, local_next_day_start_ms};
 
@@ -369,6 +371,113 @@ impl AppState {
     /// Undoes [`Self::delete_card`] (see [`Store::undelete_card`]).
     pub fn undelete_card(&self, id: &str) -> rappel_core::Result<Card> {
         self.0.store.borrow_mut().undelete_card(id)
+    }
+
+    /// The cards the All Cards page lists for `query`, at `now` (see
+    /// [`Store::browse`]).
+    pub fn browse(&self, query: &BrowseQuery, now: i64) -> rappel_core::Result<Vec<BrowseRow>> {
+        self.0.store.borrow().browse(query, now)
+    }
+
+    /// One row of the All Cards page, `None` if the card is gone (see
+    /// [`Store::browse_row`]).
+    pub fn browse_row(&self, card_id: &str, now: i64) -> rappel_core::Result<Option<BrowseRow>> {
+        self.0.store.borrow().browse_row(card_id, now)
+    }
+
+    /// Suspends or unsuspends cards; returns those that changed (see
+    /// [`Store::set_suspended`]).
+    pub fn set_suspended(
+        &self,
+        ids: &[String],
+        suspended: bool,
+    ) -> rappel_core::Result<Vec<String>> {
+        self.0.store.borrow_mut().set_suspended(ids, suspended)
+    }
+
+    /// Undoes [`Self::set_suspended`] (see [`Store::restore_suspended`]).
+    pub fn restore_suspended(&self, ids: &[String], suspended: bool) -> rappel_core::Result<usize> {
+        self.0.store.borrow_mut().restore_suspended(ids, suspended)
+    }
+
+    /// Moves cards to a deck (see [`Store::move_cards`]).
+    pub fn move_cards(&self, ids: &[String], deck_id: &str) -> rappel_core::Result<Vec<Moved>> {
+        self.0.store.borrow_mut().move_cards(ids, deck_id)
+    }
+
+    /// Undoes [`Self::move_cards`] (see [`Store::unmove_cards`]).
+    pub fn unmove_cards(&self, moved: &[Moved]) -> rappel_core::Result<usize> {
+        self.0.store.borrow_mut().unmove_cards(moved)
+    }
+
+    /// Puts a tag, created if need be, on cards (see
+    /// [`Store::add_tag_to_cards`]).
+    pub fn add_tag_to_cards(
+        &self,
+        ids: &[String],
+        name: &str,
+    ) -> rappel_core::Result<(Tag, Vec<String>)> {
+        self.0.store.borrow_mut().add_tag_to_cards(ids, name)
+    }
+
+    /// Takes a tag off cards (see [`Store::remove_tag_from_cards`]).
+    pub fn remove_tag_from_cards(
+        &self,
+        ids: &[String],
+        tag_id: &str,
+    ) -> rappel_core::Result<Vec<String>> {
+        self.0.store.borrow_mut().remove_tag_from_cards(ids, tag_id)
+    }
+
+    /// Undoes [`Self::add_tag_to_cards`] (see
+    /// [`Store::release_tag_from_cards`]).
+    pub fn release_tag_from_cards(
+        &self,
+        card_ids: &[String],
+        tag_id: &str,
+    ) -> rappel_core::Result<usize> {
+        self.0
+            .store
+            .borrow_mut()
+            .release_tag_from_cards(card_ids, tag_id)
+    }
+
+    /// Undoes [`Self::remove_tag_from_cards`] (see
+    /// [`Store::restore_tag_on_cards`]).
+    pub fn restore_tag_on_cards(
+        &self,
+        card_ids: &[String],
+        tag_id: &str,
+    ) -> rappel_core::Result<usize> {
+        self.0
+            .store
+            .borrow_mut()
+            .restore_tag_on_cards(card_ids, tag_id)
+    }
+
+    /// Makes cards new again (see [`Store::reset_cards`]).
+    pub fn reset_cards(&self, ids: &[String], now: i64) -> rappel_core::Result<Vec<ReviewEvent>> {
+        self.0.store.borrow_mut().reset_cards(ids, now)
+    }
+
+    /// Undoes [`Self::reset_cards`]; returns the cards left alone (see
+    /// [`Store::undo_entries`]).
+    pub fn undo_entries(
+        &self,
+        entries: &[ReviewEvent],
+        now: i64,
+    ) -> rappel_core::Result<Vec<String>> {
+        self.0.store.borrow_mut().undo_entries(entries, now)
+    }
+
+    /// Soft-deletes cards (see [`Store::delete_cards`]).
+    pub fn delete_cards(&self, ids: &[String]) -> rappel_core::Result<()> {
+        self.0.store.borrow_mut().delete_cards(ids)
+    }
+
+    /// Undoes [`Self::delete_cards`] (see [`Store::undelete_cards`]).
+    pub fn undelete_cards(&self, ids: &[String]) -> rappel_core::Result<usize> {
+        self.0.store.borrow_mut().undelete_cards(ids)
     }
 
     /// The problems met while opening that did not stop it. Empty after

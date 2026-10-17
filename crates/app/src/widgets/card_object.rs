@@ -83,7 +83,12 @@ impl CardObject {
 
     /// What a screen reader says for the row (see [`row_label`]).
     pub fn row_label(&self) -> String {
-        row_label(&self.preview(), &self.tags_line())
+        let label = row_label(&self.preview(), &self.tags_line());
+        if self.card().suspended {
+            format!("{label}, suspended")
+        } else {
+            label
+        }
     }
 }
 

@@ -9,7 +9,7 @@ use rappel_core::domain::Card;
 use rappel_core::storage::Restored;
 
 use crate::dialogs::card_editor::CardEditor;
-use crate::pages::{DeckPage, DecksPage, Recovered};
+use crate::pages::{BrowserPage, DeckPage, DecksPage, Recovered};
 use crate::startup::{Problem, data_folder_line, too_new_text};
 use crate::state::AppState;
 use crate::transfer;
@@ -91,6 +91,11 @@ mod imp {
                     imp.decks_page.new_deck();
                 }
             });
+            // Ctrl+F (set in main.rs) and the deck list's search button: the
+            // All Cards page, filtered to the deck when asked from a deck page.
+            klass.install_action("win.search", None, |window, _, _| {
+                window.search();
+            });
             // The primary menu; enabled on the main page while no export
             // or import runs.
             klass.install_action("win.export", None, |window, _, _| {
@@ -118,6 +123,7 @@ mod imp {
             let window = self.obj();
             window.action_set_enabled("win.new-deck", false);
             window.action_set_enabled("win.new", false);
+            window.action_set_enabled("win.search", false);
             window.action_set_enabled("win.preferences", false);
             for action in super::TRANSFER_ACTIONS {
                 window.action_set_enabled(action, false);
@@ -209,6 +215,7 @@ impl RappelWindow {
         imp.stack.set_visible_child_name("main");
         self.action_set_enabled("win.new-deck", true);
         self.action_set_enabled("win.new", true);
+        self.action_set_enabled("win.search", true);
         self.action_set_enabled("win.preferences", true);
         for action in TRANSFER_ACTIONS {
             self.action_set_enabled(action, true);
@@ -245,6 +252,42 @@ impl RappelWindow {
         ));
     }
 
+    /// Opens All Cards (filtered to the deck of a deck page), or, if it is
+    /// open, puts the keyboard in its search field. Not while studying, and
+    /// not under an open dialog (the editor): the page would open behind it.
+    fn search(&self) {
+        let imp = self.imp();
+        let Some(state) = imp.state.get() else {
+            return;
+        };
+        if self.visible_dialog().is_some() {
+            return;
+        }
+        let Some(page) = imp.navigation_view.visible_page() else {
+            return;
+        };
+        let deck_id = if let Some(browser) = page.downcast_ref::<BrowserPage>() {
+            browser.focus_search();
+            return;
+        } else if let Some(deck) = page.downcast_ref::<DeckPage>() {
+            deck.deck_id()
+        } else if page.is::<DecksPage>() {
+            None
+        } else {
+            return;
+        };
+        match BrowserPage::new(state.clone(), deck_id.as_deref()) {
+            Ok(browser) => imp.navigation_view.push(&browser),
+            Err(err) => {
+                crate::ui::toast::show_error(
+                    self,
+                    "opening All Cards",
+                    &format!("The cards could not be read: {err}"),
+                );
+            }
+        }
+    }
+
     /// After a reset or its undo: the counts of every open deck page and of
     /// the deck list.
     pub fn study_changed(&self) {
@@ -253,6 +296,9 @@ impl RappelWindow {
         for page in (0..stack.n_items()).filter_map(|i| stack.item(i)) {
             if let Some(deck) = page.downcast_ref::<DeckPage>() {
                 deck.update_study();
+            } else if let Some(browser) = page.downcast_ref::<BrowserPage>() {
+                // A deck page's Undo (suspend, reset) changed cards it lists.
+                browser.requery();
             }
         }
         imp.decks_page.refresh();
@@ -267,6 +313,8 @@ impl RappelWindow {
                 decks.refresh();
             } else if let Some(deck) = page.downcast_ref::<DeckPage>() {
                 deck.reload();
+            } else if let Some(browser) = page.downcast_ref::<BrowserPage>() {
+                browser.reload_all();
             }
         }
     }
@@ -291,6 +339,13 @@ impl RappelWindow {
             .and_downcast::<DeckPage>()
         {
             page.restored(card);
+        }
+        // An open All Cards page lists the card too.
+        let stack = imp.navigation_view.navigation_stack();
+        for page in (0..stack.n_items()).filter_map(|i| stack.item(i)) {
+            if let Some(browser) = page.downcast_ref::<BrowserPage>() {
+                browser.requery();
+            }
         }
         imp.decks_page.refresh();
     }

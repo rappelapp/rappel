@@ -1,0 +1,1503 @@
+//! The All Cards page: search, filters and every card in one virtualised
+//! list, with actions on several cards at once, each undone from a toast
+//! (SPEC §4.6, ADR 0035, ADR 0036). Layout in `data/browser_page.blp`.
+//!
+//! The list model is a `gio::ListStore` of [`BrowseItem`]. Every search,
+//! filter change and write reads the rows again with `Store::browse` and
+//! replaces the model in one `splice`; the `GtkListView` only builds rows
+//! for what is on screen, so 5,000 cards stay smooth. The chosen cards are
+//! the page's own [`Selection`] and not a `GtkSelectionModel`'s: outside
+//! selection mode a click opens the editor, and a list view with a
+//! selection model selects on a click instead.
+
+use adw::prelude::*;
+use adw::subclass::prelude::*;
+use gtk::{gio, glib};
+use rappel_core::domain::{Card, Deck, Tag};
+use rappel_core::storage::BrowseQuery;
+
+use crate::dialogs::card_editor::{CardEditor, Saved};
+use crate::dialogs::{browser_dialogs, card_info};
+use crate::state::AppState;
+use crate::ui::focus::index_after_removal;
+use crate::ui::toast::{info_toast, show_error, show_toast_from, undo_toast};
+use crate::ui::{dropdown, init_once, nav};
+use crate::widgets::{BrowseItem, BrowserRow};
+use crate::window::RappelWindow;
+
+pub mod selection;
+pub mod text;
+
+use text::{Empty, EscapeAction, SuspendChoice};
+
+mod imp {
+    use std::cell::{Cell, OnceCell, RefCell};
+    use std::rc::Rc;
+
+    use adw::prelude::*;
+    use adw::subclass::prelude::*;
+    use gtk::{gio, glib};
+    use rappel_core::domain::{Deck, Tag};
+
+    use super::selection::Selection;
+    use crate::state::AppState;
+    use crate::ui::rows;
+
+    #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
+    #[properties(wrapper_type = super::BrowserPage)]
+    #[template(resource = "/io/github/rsmirke/Rappel/browser_page.ui")]
+    pub struct BrowserPage {
+        #[template_child]
+        pub breakpoint: TemplateChild<adw::Breakpoint>,
+        #[template_child]
+        pub search_entry: TemplateChild<gtk::SearchEntry>,
+        #[template_child]
+        pub select_button: TemplateChild<gtk::ToggleButton>,
+        #[template_child]
+        pub deck_filter: TemplateChild<gtk::DropDown>,
+        #[template_child]
+        pub tag_filter: TemplateChild<gtk::DropDown>,
+        #[template_child]
+        pub state_filter: TemplateChild<gtk::DropDown>,
+        #[template_child]
+        pub content_stack: TemplateChild<gtk::Stack>,
+        #[template_child]
+        pub clear_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub tags_button: TemplateChild<gtk::MenuButton>,
+        #[template_child]
+        pub count_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub card_list: TemplateChild<gtk::ListView>,
+        #[template_child]
+        pub action_bar: TemplateChild<gtk::ActionBar>,
+        #[template_child]
+        pub selection_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub suspend_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub suspend_content: TemplateChild<adw::ButtonContent>,
+        /// A narrow window; the rows follow it.
+        #[property(get, set)]
+        pub compact: Cell<bool>,
+        /// Cards are being chosen; the rows follow it.
+        #[property(get, set)]
+        pub selecting: Cell<bool>,
+        pub state: OnceCell<AppState>,
+        pub items: OnceCell<gio::ListStore>,
+        pub selection: RefCell<Selection>,
+        /// The decks and tags the filter drop-downs list, after "All".
+        pub decks: RefCell<Vec<Deck>>,
+        pub tags: RefCell<Vec<Tag>>,
+        /// An editor is open; a second one is not opened.
+        pub editing: Rc<Cell<bool>>,
+        /// The card to focus when the editor closes: the one last saved.
+        pub focus_after_edit: RefCell<Option<String>>,
+        /// The filters are being rebuilt: their changes are not searches.
+        pub quiet: Cell<bool>,
+        /// Something was written here: the other pages read it on leaving.
+        pub dirty: Cell<bool>,
+        /// The window, noted when the page is shown: a page that was popped
+        /// may no longer have a root when `hidden` is emitted.
+        pub window: glib::WeakRef<crate::window::RappelWindow>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for BrowserPage {
+        const NAME: &'static str = "RappelBrowserPage";
+        type Type = super::BrowserPage;
+        type ParentType = adw::NavigationPage;
+
+        fn class_init(klass: &mut Self::Class) {
+            klass.bind_template();
+            // Activated by the card rows' menus with the card id.
+            rows::install_id_action(klass, "browser.edit-card", super::BrowserPage::edit);
+            rows::install_id_action(klass, "browser.card-info", super::BrowserPage::card_info);
+            rows::install_id_action(klass, "browser.suspend-card", |page, id| {
+                page.run_on(id, super::Bulk::Suspend(true));
+            });
+            rows::install_id_action(klass, "browser.unsuspend-card", |page, id| {
+                page.run_on(id, super::Bulk::Suspend(false));
+            });
+            rows::install_id_action(klass, "browser.reset-card", |page, id| {
+                page.run_on(id, super::Bulk::Reset);
+            });
+            rows::install_id_action(klass, "browser.delete-card", |page, id| {
+                page.run_on(id, super::Bulk::Delete);
+            });
+            // A long press on a touch screen.
+            rows::install_id_action(klass, "browser.select-card", super::BrowserPage::press);
+            // The action bar.
+            klass.install_action("browser.move", None, |page, _, _| page.move_selected());
+            klass.install_action("browser.add-tag", None, |page, _, _| page.add_tag());
+            klass.install_action("browser.remove-tag", None, |page, _, _| page.remove_tag());
+            klass.install_action("browser.suspend-selected", None, |page, _, _| {
+                page.suspend_selected();
+            });
+            klass.install_action("browser.reset-selected", None, |page, _, _| {
+                page.run_selected(super::Bulk::Reset);
+            });
+            klass.install_action("browser.delete-selected", None, |page, _, _| {
+                page.run_selected(super::Bulk::Delete);
+            });
+            klass.install_action("browser.clear", None, |page, _, _| page.clear_filters());
+        }
+
+        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
+            obj.init_template();
+        }
+    }
+
+    #[glib::derived_properties]
+    impl ObjectImpl for BrowserPage {}
+    impl WidgetImpl for BrowserPage {}
+    impl NavigationPageImpl for BrowserPage {}
+}
+
+glib::wrapper! {
+    pub struct BrowserPage(ObjectSubclass<imp::BrowserPage>)
+        @extends adw::NavigationPage, gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+/// What a bulk action does to the cards it is given.
+#[derive(Debug, Clone)]
+enum Bulk {
+    Suspend(bool),
+    Move { deck_id: String, deck_name: String },
+    AddTag(String),
+    RemoveTag(Tag),
+    Reset,
+    Delete,
+}
+
+/// Takes a bulk action back; returns how many cards it restored.
+type UndoFn = Box<dyn Fn(&AppState) -> rappel_core::Result<usize>>;
+
+/// A bulk action that was done: what to tell, how many cards it changed
+/// and how to take it back. The undo returns how many cards it restored.
+struct Done {
+    text: String,
+    total: usize,
+    undo: UndoFn,
+}
+
+/// Does `action` on `ids`. `None` if every card was already as asked.
+fn perform(
+    state: &AppState,
+    ids: &[String],
+    action: Bulk,
+    now: i64,
+) -> rappel_core::Result<Option<Done>> {
+    let done = match action {
+        Bulk::Suspend(suspended) => {
+            let changed = state.set_suspended(ids, suspended)?;
+            Done {
+                text: text::suspended_text(changed.len(), suspended),
+                total: changed.len(),
+                undo: Box::new(move |s| s.restore_suspended(&changed, !suspended)),
+            }
+        }
+        Bulk::Move { deck_id, deck_name } => {
+            let moved = state.move_cards(ids, &deck_id)?;
+            Done {
+                text: text::moved_text(moved.len(), &deck_name),
+                total: moved.len(),
+                undo: Box::new(move |s| s.unmove_cards(&moved)),
+            }
+        }
+        Bulk::AddTag(name) => {
+            let (tag, changed) = state.add_tag_to_cards(ids, &name)?;
+            Done {
+                text: text::tag_added_text(changed.len(), &tag.name),
+                total: changed.len(),
+                undo: Box::new(move |s| s.release_tag_from_cards(&changed, &tag.id)),
+            }
+        }
+        Bulk::RemoveTag(tag) => {
+            let changed = state.remove_tag_from_cards(ids, &tag.id)?;
+            Done {
+                text: text::tag_removed_text(changed.len(), &tag.name),
+                total: changed.len(),
+                undo: Box::new(move |s| s.restore_tag_on_cards(&changed, &tag.id)),
+            }
+        }
+        Bulk::Reset => {
+            let events = state.reset_cards(ids, now)?;
+            Done {
+                text: text::reset_text(events.len()),
+                total: events.len(),
+                undo: Box::new(move |s| {
+                    let skipped = s.undo_entries(&events, rappel_core::time::now_ms())?;
+                    Ok(events.len().saturating_sub(skipped.len()))
+                }),
+            }
+        }
+        Bulk::Delete => {
+            state.delete_cards(ids)?;
+            let ids = ids.to_vec();
+            Done {
+                text: text::deleted_text(ids.len()),
+                total: ids.len(),
+                undo: Box::new(move |s| s.undelete_cards(&ids)),
+            }
+        }
+    };
+    Ok((done.total > 0).then_some(done))
+}
+
+impl BrowserPage {
+    /// The page, listing every card; `deck_id` starts it filtered to a deck.
+    ///
+    /// # Errors
+    /// If the decks or tags cannot be read.
+    pub fn new(state: AppState, deck_id: Option<&str>) -> rappel_core::Result<Self> {
+        let page: Self = glib::Object::new();
+        let imp = page.imp();
+        let store = gio::ListStore::new::<BrowseItem>();
+        imp.card_list
+            .set_model(Some(&gtk::NoSelection::new(Some(store.clone()))));
+        imp.card_list.set_factory(Some(&page.row_factory()));
+        init_once(&imp.state, state);
+        init_once(&imp.items, store);
+        page.load_filters(deck_id)?;
+        page.connect_signals();
+        page.load_rows()?;
+        Ok(page)
+    }
+
+    /// Puts the keyboard in the search field (Ctrl+F).
+    pub fn focus_search(&self) {
+        self.imp().search_entry.grab_focus();
+    }
+
+    /// Reads the rows again, after an import.
+    pub fn reload_all(&self) {
+        if let Err(err) = self.load_filters(None) {
+            self.error_toast(&format!("The decks could not be read: {err}"));
+        }
+        self.requery();
+    }
+
+    fn connect_signals(&self) {
+        let imp = self.imp();
+        imp.breakpoint.connect_apply(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| {
+                page.set_compact(true);
+                page.update_selection_ui();
+            }
+        ));
+        imp.breakpoint.connect_unapply(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| {
+                page.set_compact(false);
+                page.update_selection_ui();
+            }
+        ));
+        imp.search_entry.connect_search_changed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| page.search()
+        ));
+        // `stop-search` (Escape) has no default action (GtkSearchEntry
+        // docs): clear the text, or, if there is none, leave the field.
+        imp.search_entry.connect_stop_search(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |entry| {
+                if entry.text().is_empty() {
+                    page.leave_search();
+                } else {
+                    entry.set_text("");
+                }
+            }
+        ));
+        // Down in the field goes to the list.
+        let down = gtk::EventControllerKey::new();
+        down.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, _| {
+                if key == gtk::gdk::Key::Down {
+                    page.imp().card_list.grab_focus();
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
+        ));
+        imp.search_entry.add_controller(down);
+        for dropdown in [&*imp.deck_filter, &*imp.tag_filter, &*imp.state_filter] {
+            dropdown.connect_selected_notify(glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |_| {
+                    if !page.imp().quiet.get() {
+                        page.search();
+                    }
+                }
+            ));
+        }
+        imp.card_list.connect_activate(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_, position| page.activate(position)
+        ));
+        imp.select_button.connect_toggled(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |button| {
+                if !page.imp().quiet.get() {
+                    page.choose_mode(button.is_active());
+                }
+            }
+        ));
+        self.connect_hidden(|page| {
+            // The deck pages and the deck list read what was written here
+            // (the page may be about to go, so it is the window's to ask).
+            if page.imp().dirty.replace(false)
+                && let Some(window) = page.imp().window.upgrade()
+            {
+                window.data_changed();
+            }
+        });
+        self.connect_shown(|page| {
+            page.imp()
+                .window
+                .set(page.root().and_downcast::<RappelWindow>().as_ref());
+            page.focus_search();
+        });
+        self.add_list_shortcuts();
+        self.add_escape();
+    }
+
+    /// Ctrl+A and Space on the list. Capture phase on the list, so they come
+    /// before the list view's own bindings (`list.select-all` and the item's
+    /// `listitem.select` do nothing on a list without a selection model).
+    /// The search field is not under the list, so it keeps its own Ctrl+A.
+    fn add_list_shortcuts(&self) {
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, modifiers| {
+                let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+                if ctrl && matches!(key, gtk::gdk::Key::a | gtk::gdk::Key::A) {
+                    page.select_all();
+                    glib::Propagation::Stop
+                } else if key == gtk::gdk::Key::space
+                    && !ctrl
+                    && page.imp().selection.borrow().active()
+                    && let Some(id) = page.focused_card()
+                {
+                    page.toggle(&id);
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
+        ));
+        self.imp().card_list.add_controller(keys);
+    }
+
+    /// Escape while the focus is in the list. With nothing to leave or
+    /// clear it is not handled, so the navigation view goes back.
+    fn add_escape(&self) {
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, _| {
+                if key == gtk::gdk::Key::Escape {
+                    page.escape()
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
+        ));
+        self.add_controller(keys);
+    }
+
+    /// What Escape does in the list (see [`text::escape_action`]).
+    fn escape(&self) -> glib::Propagation {
+        // Read first: the actions below borrow the selection again, and a
+        // `Ref` kept in the `match` scrutinee would still be alive in them.
+        let selecting = self.imp().selection.borrow().active();
+        let filtered = text::is_filtered(&self.query());
+        match text::escape_action(selecting, filtered) {
+            EscapeAction::LeaveSelection => {
+                self.choose_mode(false);
+                glib::Propagation::Stop
+            }
+            EscapeAction::ClearSearch => {
+                self.clear_filters();
+                glib::Propagation::Stop
+            }
+            EscapeAction::Nothing => glib::Propagation::Proceed,
+        }
+    }
+
+    /// Escape in an empty search field leaves it: for the list, or the
+    /// button of the empty state; with nothing to focus the page goes back.
+    fn leave_search(&self) {
+        let imp = self.imp();
+        match imp.content_stack.visible_child_name().as_deref() {
+            Some("list") => {
+                imp.card_list.grab_focus();
+            }
+            Some("none") => {
+                imp.clear_button.grab_focus();
+            }
+            _ => nav::pop(self),
+        }
+    }
+
+    /// A row per visible card, following the page's `compact` and
+    /// `selecting` properties.
+    fn row_factory(&self) -> gtk::SignalListItemFactory {
+        let factory = gtk::SignalListItemFactory::new();
+        let page = self.downgrade();
+        factory.connect_setup(move |_, item| {
+            let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+                return;
+            };
+            let row = BrowserRow::default();
+            if let Some(page) = page.upgrade() {
+                page.bind_property("compact", &row, "compact")
+                    .sync_create()
+                    .build();
+                page.bind_property("selecting", &row, "selecting")
+                    .sync_create()
+                    .build();
+            }
+            item.set_child(Some(&row));
+        });
+        factory.connect_bind(|_, item| {
+            let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+                return;
+            };
+            if let (Some(card), Some(row)) = (
+                item.item().and_downcast::<BrowseItem>(),
+                item.child().and_downcast::<BrowserRow>(),
+            ) {
+                row.bind(&card, item);
+            }
+        });
+        factory.connect_unbind(|_, item| {
+            if let Some(row) = item
+                .downcast_ref::<gtk::ListItem>()
+                .and_then(|item| item.child().and_downcast::<BrowserRow>())
+            {
+                row.unbind();
+            }
+        });
+        factory
+    }
+
+    // --- reading ---------------------------------------------------------
+
+    /// Fills the deck and tag drop-downs, keeping what was chosen (or
+    /// choosing `deck_id`).
+    fn load_filters(&self, deck_id: Option<&str>) -> rappel_core::Result<()> {
+        let imp = self.imp();
+        let Some(state) = imp.state.get() else {
+            return Ok(());
+        };
+        let decks = state.decks()?;
+        let tags = state.tags()?;
+        let kept_deck = text::filter_choice(imp.deck_filter.selected(), imp.decks.borrow().len())
+            .map(|i| imp.decks.borrow()[i].id.clone());
+        let kept_tag = text::filter_choice(imp.tag_filter.selected(), imp.tags.borrow().len())
+            .map(|i| imp.tags.borrow()[i].id.clone());
+        let want_deck = deck_id.map(str::to_owned).or(kept_deck);
+
+        imp.quiet.set(true);
+        dropdown::set_labels(
+            &imp.deck_filter,
+            &labels(text::ALL_DECKS, decks.iter().map(|d| &d.name)),
+        );
+        dropdown::set_labels(
+            &imp.tag_filter,
+            &labels(text::ALL_TAGS, tags.iter().map(|t| &t.name)),
+        );
+        let position =
+            |found: Option<usize>| found.map_or(0, |i| u32::try_from(i + 1).unwrap_or(0));
+        imp.deck_filter.set_selected(position(
+            want_deck
+                .as_ref()
+                .and_then(|id| decks.iter().position(|d| &d.id == id)),
+        ));
+        imp.tag_filter.set_selected(position(
+            kept_tag
+                .as_ref()
+                .and_then(|id| tags.iter().position(|t| &t.id == id)),
+        ));
+        imp.quiet.set(false);
+        imp.decks.replace(decks);
+        imp.tags.replace(tags);
+        Ok(())
+    }
+
+    /// What the search field and the filters ask for.
+    fn query(&self) -> BrowseQuery {
+        let imp = self.imp();
+        BrowseQuery {
+            text: imp.search_entry.text().to_string(),
+            deck_id: text::filter_choice(imp.deck_filter.selected(), imp.decks.borrow().len())
+                .map(|i| imp.decks.borrow()[i].id.clone()),
+            tag_id: text::filter_choice(imp.tag_filter.selected(), imp.tags.borrow().len())
+                .map(|i| imp.tags.borrow()[i].id.clone()),
+            state: text::state_filter(imp.state_filter.selected()),
+        }
+    }
+
+    /// The user changed the words or a filter: read the rows again and tell
+    /// a screen reader how many there are.
+    fn search(&self) {
+        self.requery();
+        let imp = self.imp();
+        let n = imp.items.get().map_or(0, gio::ListStore::n_items);
+        imp.count_label.announce(
+            &text::count_text(n as usize),
+            gtk::AccessibleAnnouncementPriority::Medium,
+        );
+    }
+
+    /// Reads the rows again and puts them in the list. The cards chosen
+    /// stay chosen if they are still listed.
+    pub fn requery(&self) {
+        if let Err(err) = self.load_rows() {
+            self.error_toast(&format!("The cards could not be read: {err}"));
+        }
+    }
+
+    /// [`Self::requery`] that returns the error: a page that cannot read
+    /// its cards must not open and say "No Cards Yet".
+    fn load_rows(&self) -> rappel_core::Result<()> {
+        let imp = self.imp();
+        let (Some(state), Some(store)) = (imp.state.get(), imp.items.get()) else {
+            return Ok(());
+        };
+        let query = self.query();
+        let rows = state.browse(&query, rappel_core::time::now_ms())?;
+        let items: Vec<BrowseItem> = {
+            let mut selection = imp.selection.borrow_mut();
+            selection.retain(rows.iter().map(|r| r.card.id.as_str()));
+            rows.into_iter()
+                .map(|row| {
+                    let item = BrowseItem::new(row);
+                    item.set_selected(selection.contains(&item.id()));
+                    item
+                })
+                .collect()
+        };
+        store.splice(0, store.n_items(), &items);
+        let page = match text::empty_state(items.len(), text::is_filtered(&query)) {
+            Empty::No => "list",
+            Empty::NoCards => "empty",
+            Empty::NoResults => "none",
+        };
+        imp.content_stack.set_visible_child_name(page);
+        imp.count_label.set_label(&text::count_text(items.len()));
+        self.update_selection_ui();
+        Ok(())
+    }
+
+    fn clear_filters(&self) {
+        let imp = self.imp();
+        imp.quiet.set(true);
+        imp.deck_filter.set_selected(0);
+        imp.tag_filter.set_selected(0);
+        imp.state_filter.set_selected(0);
+        imp.quiet.set(false);
+        // Clearing the text searches again; if it was empty nothing fires.
+        imp.search_entry.set_text("");
+        self.search();
+        self.focus_search();
+    }
+
+    fn item(&self, position: u32) -> Option<BrowseItem> {
+        self.imp().items.get()?.item(position).and_downcast()
+    }
+
+    /// Where card `id` is in the list. A linear scan, only on a user action.
+    fn position(&self, id: &str) -> Option<u32> {
+        let store = self.imp().items.get()?;
+        (0..store.n_items()).find(|&p| self.item(p).is_some_and(|i| i.id() == id))
+    }
+
+    fn ids(&self) -> Vec<String> {
+        let n = self.imp().items.get().map_or(0, gio::ListStore::n_items);
+        (0..n)
+            .filter_map(|p| self.item(p))
+            .map(|i| i.id())
+            .collect()
+    }
+
+    /// The card whose row has the keyboard focus.
+    fn focused_card(&self) -> Option<String> {
+        let row = self
+            .imp()
+            .card_list
+            .focus_child()?
+            .first_child()
+            .and_downcast::<BrowserRow>()?;
+        let id = row.card_id();
+        (!id.is_empty()).then_some(id)
+    }
+
+    // --- choosing --------------------------------------------------------
+
+    /// Enters or leaves selection mode.
+    fn choose_mode(&self, on: bool) {
+        let imp = self.imp();
+        if on {
+            imp.selection.borrow_mut().enter();
+        } else {
+            imp.selection.borrow_mut().leave();
+            if let Some(store) = imp.items.get() {
+                for p in 0..store.n_items() {
+                    if let Some(item) = self.item(p) {
+                        item.set_selected(false);
+                    }
+                }
+            }
+        }
+        self.update_selection_ui();
+    }
+
+    fn select_all(&self) {
+        let imp = self.imp();
+        let ids = self.ids();
+        imp.selection
+            .borrow_mut()
+            .select_all(ids.iter().map(String::as_str));
+        if let Some(store) = imp.items.get() {
+            for p in 0..store.n_items() {
+                if let Some(item) = self.item(p) {
+                    item.set_selected(true);
+                }
+            }
+        }
+        self.update_selection_ui();
+    }
+
+    fn toggle(&self, id: &str) {
+        let Some(item) = self.position(id).and_then(|p| self.item(p)) else {
+            return;
+        };
+        let chosen = self.imp().selection.borrow_mut().toggle(id);
+        item.set_selected(chosen);
+        self.update_selection_ui();
+    }
+
+    /// A long press on a row: start choosing with this card.
+    fn press(&self, id: &str) {
+        if !self.imp().selection.borrow().active() {
+            self.choose_mode(true);
+            self.toggle(id);
+        }
+    }
+
+    /// A row was activated: choose it, or open its editor.
+    fn activate(&self, position: u32) {
+        let Some(item) = self.item(position) else {
+            return;
+        };
+        if self.imp().selection.borrow().active() {
+            self.toggle(&item.id());
+        } else {
+            self.open_editor(&item.row().card);
+        }
+    }
+
+    fn chosen_ids(&self) -> Vec<String> {
+        let ids = self.ids();
+        self.imp()
+            .selection
+            .borrow()
+            .ids_in(ids.iter().map(String::as_str))
+    }
+
+    /// Brings the mode toggle, the action bar and the rows in line with the
+    /// selection.
+    fn update_selection_ui(&self) {
+        let imp = self.imp();
+        let (active, n) = {
+            let selection = imp.selection.borrow();
+            (selection.active(), selection.len())
+        };
+        self.set_selecting(active);
+        imp.quiet.set(true);
+        imp.select_button.set_active(active);
+        imp.quiet.set(false);
+        imp.action_bar.set_revealed(active);
+        imp.selection_label.set_label(&text::selection_title(n));
+        for action in [
+            "browser.move",
+            "browser.add-tag",
+            "browser.remove-tag",
+            "browser.suspend-selected",
+            "browser.reset-selected",
+            "browser.delete-selected",
+        ] {
+            self.action_set_enabled(action, n > 0);
+        }
+        // Tags is a menu button, which does not follow its menu's actions.
+        imp.tags_button.set_sensitive(n > 0);
+        let choice = self.suspend_choice();
+        let (label, tooltip) = text::suspend_labels(choice);
+        imp.suspend_button.set_tooltip_text(Some(tooltip));
+        imp.suspend_button
+            .update_property(&[gtk::accessible::Property::Label(tooltip)]);
+        imp.suspend_content.set_icon_name(match choice {
+            SuspendChoice::Suspend => "media-playback-pause-symbolic",
+            SuspendChoice::Unsuspend => "media-playback-start-symbolic",
+        });
+        imp.suspend_content
+            .set_label(if self.compact() { "" } else { label });
+    }
+
+    fn suspend_choice(&self) -> SuspendChoice {
+        let imp = self.imp();
+        let Some(store) = imp.items.get() else {
+            return SuspendChoice::Suspend;
+        };
+        let selection = imp.selection.borrow();
+        text::suspend_choice(
+            (0..store.n_items())
+                .filter_map(|p| self.item(p))
+                .filter(|i| selection.contains(&i.id()))
+                .map(|i| i.suspended()),
+        )
+    }
+
+    // --- one card --------------------------------------------------------
+
+    fn edit(&self, id: &str) {
+        if let Some(item) = self.position(id).and_then(|p| self.item(p)) {
+            self.open_editor(&item.row().card);
+        }
+    }
+
+    fn open_editor(&self, card: &Card) {
+        let imp = self.imp();
+        let Some(state) = imp.state.get() else {
+            return;
+        };
+        CardEditor::open(
+            self,
+            &imp.editing,
+            state.clone(),
+            &card.deck_id,
+            Some(card),
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |saved| page.saved(&saved)
+            ),
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move || {
+                    if let Some(id) = page.imp().focus_after_edit.take()
+                        && let Some(position) = page.position(&id)
+                    {
+                        page.focus(position);
+                    }
+                }
+            ),
+        );
+    }
+
+    /// A save from the editor: the saved row is read again in place (so the
+    /// list keeps its place), a card added with Ctrl+Shift+Enter reads the
+    /// list again.
+    fn saved(&self, saved: &Saved) {
+        let imp = self.imp();
+        imp.dirty.set(true);
+        match saved {
+            Saved::Edited(tagged) => {
+                let id = &tagged.card.id;
+                imp.focus_after_edit.replace(Some(id.clone()));
+                let (Some(state), Some(store)) = (imp.state.get(), imp.items.get()) else {
+                    return;
+                };
+                let (Some(position), Ok(row)) = (
+                    self.position(id),
+                    state.browse_row(id, rappel_core::time::now_ms()),
+                ) else {
+                    self.requery();
+                    return;
+                };
+                match row {
+                    Some(row) => {
+                        let item = BrowseItem::new(row);
+                        item.set_selected(imp.selection.borrow().contains(id));
+                        store.splice(position, 1, &[item]);
+                    }
+                    None => self.requery(),
+                }
+                // A new tag may be in the filter's list.
+                if let Err(err) = self.load_filters(None) {
+                    self.error_toast(&format!("The tags could not be read: {err}"));
+                }
+            }
+            Saved::Added(_) => {
+                if let Err(err) = self.load_filters(None) {
+                    self.error_toast(&format!("The tags could not be read: {err}"));
+                }
+                self.requery();
+            }
+        }
+    }
+
+    fn card_info(&self, id: &str) {
+        if let Some(state) = self.imp().state.get() {
+            // AdwDialog gives the focus back to the widget that had it.
+            card_info::open(self, state, id, || {});
+        }
+    }
+
+    fn focus(&self, position: u32) {
+        self.imp()
+            .card_list
+            .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+    }
+
+    // --- actions on cards ------------------------------------------------
+
+    fn run_on(&self, id: &str, action: Bulk) {
+        self.run(&[id.to_owned()], action);
+    }
+
+    fn run_selected(&self, action: Bulk) {
+        self.run(&self.chosen_ids(), action);
+    }
+
+    fn suspend_selected(&self) {
+        let suspend = self.suspend_choice() == SuspendChoice::Suspend;
+        self.run_selected(Bulk::Suspend(suspend));
+    }
+
+    fn move_selected(&self) {
+        let decks: Vec<Deck> = self.imp().decks.borrow().clone();
+        let ids = self.chosen_ids();
+        if ids.is_empty() {
+            return;
+        }
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            async move {
+                let names: Vec<String> = decks.iter().map(|d| d.name.clone()).collect();
+                let body = text::move_body(ids.len());
+                let Some(i) =
+                    browser_dialogs::choose(&page, "Move Cards", &body, "_Move", &names).await
+                else {
+                    return;
+                };
+                if let Some(deck) = decks.get(i) {
+                    page.run(
+                        &ids,
+                        Bulk::Move {
+                            deck_id: deck.id.clone(),
+                            deck_name: deck.name.clone(),
+                        },
+                    );
+                }
+            }
+        ));
+    }
+
+    fn add_tag(&self) {
+        let ids = self.chosen_ids();
+        if ids.is_empty() {
+            return;
+        }
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            async move {
+                if let Some(name) = browser_dialogs::ask_tag_name(&page).await {
+                    page.run(&ids, Bulk::AddTag(name));
+                }
+            }
+        ));
+    }
+
+    fn remove_tag(&self) {
+        let ids = self.chosen_ids();
+        if ids.is_empty() {
+            return;
+        }
+        // Only the tags the chosen cards have.
+        let mut tags: Vec<Tag> = Vec::new();
+        for item in (0..self.imp().items.get().map_or(0, gio::ListStore::n_items))
+            .filter_map(|p| self.item(p))
+            .filter(|i| ids.contains(&i.id()))
+        {
+            for tag in &item.row().tags {
+                if !tags.iter().any(|t| t.id == tag.id) {
+                    tags.push(tag.clone());
+                }
+            }
+        }
+        if tags.is_empty() {
+            show_toast_from(self, info_toast(&text::no_tags_text()));
+            return;
+        }
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            async move {
+                let names: Vec<String> = tags.iter().map(|t| t.name.clone()).collect();
+                let body = text::remove_tag_body(ids.len());
+                let Some(i) =
+                    browser_dialogs::choose(&page, "Remove Tag", &body, "_Remove", &names).await
+                else {
+                    return;
+                };
+                if let Some(tag) = tags.get(i) {
+                    page.run(&ids, Bulk::RemoveTag(tag.clone()));
+                }
+            }
+        ));
+    }
+
+    /// Does `action` on `ids` at once and offers Undo in a toast.
+    fn run(&self, ids: &[String], action: Bulk) {
+        let Some(state) = self.imp().state.get().cloned() else {
+            return;
+        };
+        let first = ids.first().and_then(|id| self.position(id));
+        let first_id = ids.first().cloned();
+        match perform(&state, ids, action, rappel_core::time::now_ms()) {
+            Ok(Some(done)) => {
+                self.choose_mode(false);
+                self.changed();
+                self.refocus(first, first_id.as_deref());
+                self.offer_undo(state, done);
+            }
+            Ok(None) => show_toast_from(self, info_toast(&text::unchanged_text())),
+            Err(rappel_core::Error::CardNotFound(_) | rappel_core::Error::DeckNotFound(_)) => {
+                // Another window or an import removed a card or a deck: the
+                // list shown is old. Nothing was written (the write is all or
+                // nothing).
+                if let Err(err) = self.load_filters(None) {
+                    self.error_toast(&format!("The decks could not be read: {err}"));
+                }
+                self.changed();
+                show_toast_from(self, info_toast(&text::stale_text()));
+            }
+            Err(err) => self.error_toast(&format!("The cards could not be changed: {err}")),
+        }
+    }
+
+    /// After an action the focus goes to the card it started with, or, if
+    /// that left the list, to the row now at its place, else the last one,
+    /// else the empty state's button.
+    ///
+    /// Always set, because the action bar was hiding the focused button.
+    fn refocus(&self, first: Option<u32>, first_id: Option<&str>) {
+        let (Some(position), Some(id)) = (first, first_id) else {
+            return;
+        };
+        if let Some(still) = self.position(id) {
+            self.focus(still);
+            return;
+        }
+        let n = self.imp().items.get().map_or(0, gio::ListStore::n_items);
+        match index_after_removal(position, n) {
+            Some(next) => self.focus(next),
+            None => self.leave_search(),
+        }
+    }
+
+    /// Something was written: read the rows again, and the other pages when
+    /// this one goes.
+    fn changed(&self) {
+        self.imp().dirty.set(true);
+        self.requery();
+    }
+
+    /// The toast with Undo. It must work after leaving the page, so the
+    /// closure keeps the state and weak references, not the page.
+    fn offer_undo(&self, state: AppState, done: Done) {
+        let page = self.downgrade();
+        let window = self
+            .root()
+            .and_downcast::<RappelWindow>()
+            .map(|w| w.downgrade());
+        let title = done.text.clone();
+        let toast = undo_toast(&title, move || {
+            undo(&state, &done, &page, window.as_ref());
+        });
+        show_toast_from(self, toast);
+    }
+
+    fn error_toast(&self, message: &str) {
+        show_error(self, "a card operation", message);
+    }
+}
+
+/// The Undo of a bulk action. What it could not restore is said in a note.
+fn undo(
+    state: &AppState,
+    done: &Done,
+    page: &glib::WeakRef<BrowserPage>,
+    window: Option<&glib::WeakRef<RappelWindow>>,
+) {
+    let window = window.and_then(glib::WeakRef::upgrade);
+    match (done.undo)(state) {
+        Ok(restored) => {
+            // On the page if it is still shown, else through the window
+            // (the deck pages and the list read it).
+            match page.upgrade().filter(|p| p.root().is_some()) {
+                Some(page) => {
+                    page.changed();
+                    if let Some(note) = text::partial_undo_text(restored, done.total) {
+                        show_toast_from(&page, info_toast(&note));
+                    }
+                }
+                None => {
+                    if let Some(window) = &window {
+                        window.data_changed();
+                        if let Some(note) = text::partial_undo_text(restored, done.total) {
+                            show_toast_from(window, info_toast(&note));
+                        }
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            let message = format!("The change could not be undone: {err}");
+            match window {
+                Some(window) => show_error(&window, "a card operation", &message),
+                None => crate::ui::toast::log_failure("a card operation", &message),
+            }
+        }
+    }
+}
+
+/// "All …" first, then the names, each on one line.
+fn labels<'a>(all: &str, names: impl Iterator<Item = &'a String>) -> Vec<String> {
+    std::iter::once(all.to_owned())
+        .chain(names.map(|n| text::one_line(n)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use rappel_core::domain::Grade;
+    use rappel_core::storage::{CardStatus, StateFilter};
+
+    use super::*;
+
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+    fn tags(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    /// A state with decks "Maths" (algebra cards) and "Art" (one card).
+    /// Returns the ids of the Maths cards.
+    fn state_with_cards() -> (tempfile::TempDir, AppState, Vec<String>, String) {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = AppState::open(tmp.path().join("data")).unwrap();
+        let maths = state.create_deck("Maths").unwrap();
+        let art = state.create_deck("Art").unwrap();
+        let ids = ["alpha equation", "beta matrix", "gamma vector"]
+            .iter()
+            .map(|front| {
+                state
+                    .add_card_with_tags(&maths.id, front, "back", &tags(&["algebra"]))
+                    .unwrap()
+                    .card
+                    .id
+            })
+            .collect();
+        state
+            .add_card_with_tags(&art.id, "alpha painting", "back", &[])
+            .unwrap();
+        (tmp, state, ids, maths.id)
+    }
+
+    fn page_over(state: &AppState, deck: Option<&str>) -> BrowserPage {
+        adw::init().unwrap();
+        gio::resources_register_include!("rappel.gresource").unwrap();
+        BrowserPage::new(state.clone(), deck).unwrap()
+    }
+
+    fn shown(page: &BrowserPage) -> Vec<String> {
+        page.ids()
+    }
+
+    #[test]
+    fn every_action_is_taken_back_by_its_undo() {
+        let (_tmp, state, ids, maths) = state_with_cards();
+        let art = state
+            .decks()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.name == "Art")
+            .unwrap();
+        let now = rappel_core::time::now_ms();
+        let query = BrowseQuery::default();
+        let rows = |state: &AppState| state.browse(&query, now).unwrap();
+        let before = rows(&state);
+
+        // Suspend and unsuspend.
+        let done = perform(&state, &ids, Bulk::Suspend(true), now)
+            .unwrap()
+            .unwrap();
+        assert_eq!((done.text.as_str(), done.total), ("3 cards suspended", 3));
+        assert_eq!(rows(&state).iter().filter(|r| r.card.suspended).count(), 3);
+        assert_eq!((done.undo)(&state).unwrap(), 3);
+        assert_eq!(rows(&state), before);
+        // Already as asked: nothing to tell.
+        assert!(
+            perform(&state, &ids, Bulk::Suspend(false), now)
+                .unwrap()
+                .is_none()
+        );
+
+        // Move.
+        let bulk = Bulk::Move {
+            deck_id: art.id.clone(),
+            deck_name: art.name.clone(),
+        };
+        let done = perform(&state, &ids, bulk, now).unwrap().unwrap();
+        assert_eq!(done.text, "3 cards moved to Art");
+        assert_eq!(state.card(&ids[0]).unwrap().deck_id, art.id);
+        assert_eq!((done.undo)(&state).unwrap(), 3);
+        assert_eq!(state.card(&ids[0]).unwrap().deck_id, maths);
+
+        // Add a tag, take a tag off.
+        let done = perform(&state, &ids, Bulk::AddTag("hard".to_owned()), now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(done.text, "Tag “hard” added to 3 cards");
+        assert_eq!(state.card_tags(&ids[1]).unwrap().len(), 2);
+        assert_eq!((done.undo)(&state).unwrap(), 3);
+        assert_eq!(rows(&state), before);
+        let algebra = state
+            .tags()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.name == "algebra")
+            .unwrap();
+        let done = perform(&state, &ids, Bulk::RemoveTag(algebra), now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(done.text, "Tag “algebra” removed from 3 cards");
+        assert_eq!(state.card_tags(&ids[1]).unwrap().len(), 0);
+        assert_eq!((done.undo)(&state).unwrap(), 3);
+        assert_eq!(rows(&state), before);
+
+        // Delete.
+        let done = perform(&state, &ids, Bulk::Delete, now).unwrap().unwrap();
+        assert_eq!(done.text, "3 cards deleted");
+        assert_eq!(rows(&state).len(), 1);
+        assert_eq!((done.undo)(&state).unwrap(), 3);
+        assert_eq!(rows(&state), before);
+    }
+
+    #[test]
+    fn a_reset_is_undone_unless_the_card_was_studied_since() {
+        let (_tmp, state, ids, _) = state_with_cards();
+        let now = rappel_core::time::now_ms();
+        for id in &ids[..2] {
+            for at in [now - 60 * DAY_MS, now - 60 * DAY_MS + 11 * 60 * 1000] {
+                state
+                    .record_review(id, Grade::Pass, Duration::ZERO, at)
+                    .unwrap();
+            }
+        }
+        let done = perform(&state, &ids[..2], Bulk::Reset, now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(done.text, "Progress reset for 2 cards");
+        state
+            .record_review(&ids[0], Grade::Pass, Duration::ZERO, now)
+            .unwrap();
+        // One card was studied since: only the other comes back.
+        assert_eq!((done.undo)(&state).unwrap(), 1);
+        assert_eq!(
+            text::partial_undo_text(1, done.total).as_deref(),
+            Some("1 of 2 cards restored; the others changed since")
+        );
+    }
+
+    #[test]
+    fn a_stale_list_changes_nothing() {
+        let (_tmp, state, ids, _) = state_with_cards();
+        state.delete_card(&ids[2]).unwrap();
+        let result = perform(&state, &ids, Bulk::Suspend(true), 0);
+        assert!(matches!(result, Err(rappel_core::Error::CardNotFound(_))));
+        assert!(!state.card(&ids[0]).unwrap().suspended);
+    }
+
+    #[test]
+    fn typing_and_the_filters_narrow_the_list() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, ids, maths) = state_with_cards();
+            let page = page_over(&state, None);
+            let imp = page.imp();
+            assert_eq!(shown(&page).len(), 4);
+            assert_eq!(
+                imp.content_stack.visible_child_name().as_deref(),
+                Some("list")
+            );
+
+            // Case, accents and prefixes are ignored.
+            imp.search_entry.set_text("ALPH");
+            page.search();
+            assert_eq!(shown(&page).len(), 2);
+            // The deck filter: entry 0 is "All Decks", then the decks by name.
+            let position = imp
+                .decks
+                .borrow()
+                .iter()
+                .position(|d| d.id == maths)
+                .unwrap();
+            imp.deck_filter
+                .set_selected(u32::try_from(position + 1).unwrap());
+            assert_eq!(shown(&page), [ids[0].clone()]);
+            imp.search_entry.set_text("nothing like it");
+            page.search();
+            assert_eq!(
+                imp.content_stack.visible_child_name().as_deref(),
+                Some("none")
+            );
+
+            page.clear_filters();
+            assert_eq!(shown(&page).len(), 4);
+            assert_eq!(imp.search_entry.text(), "");
+            assert_eq!(imp.deck_filter.selected(), 0);
+        });
+    }
+
+    #[test]
+    fn opened_from_a_deck_it_starts_filtered_to_it() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, _, maths) = state_with_cards();
+            let page = page_over(&state, Some(&maths));
+            assert_eq!(shown(&page).len(), 3);
+            assert!(text::is_filtered(&page.query()));
+        });
+    }
+
+    #[test]
+    fn an_empty_collection_says_so() {
+        crate::testing::with_gtk(|| {
+            let tmp = tempfile::tempdir().unwrap();
+            let state = AppState::open(tmp.path().join("data")).unwrap();
+            let page = page_over(&state, None);
+            assert_eq!(
+                page.imp().content_stack.visible_child_name().as_deref(),
+                Some("empty")
+            );
+        });
+    }
+
+    #[test]
+    fn chosen_cards_are_suspended_and_selection_mode_ends() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, ids, _) = state_with_cards();
+            let page = page_over(&state, None);
+            let imp = page.imp();
+            page.choose_mode(true);
+            assert!(imp.action_bar.is_revealed());
+            assert_eq!(imp.selection_label.label(), "None selected");
+            page.toggle(&ids[0]);
+            page.toggle(&ids[1]);
+            assert_eq!(imp.selection_label.label(), "2 selected");
+            assert_eq!(page.suspend_choice(), SuspendChoice::Suspend);
+
+            page.suspend_selected();
+            assert!(!imp.selection.borrow().active());
+            assert!(!imp.action_bar.is_revealed());
+            let suspended = |state: &AppState| {
+                state
+                    .browse(
+                        &BrowseQuery {
+                            state: Some(StateFilter::Suspended),
+                            ..BrowseQuery::default()
+                        },
+                        rappel_core::time::now_ms(),
+                    )
+                    .unwrap()
+                    .len()
+            };
+            assert_eq!(suspended(&state), 2);
+
+            // Choosing only suspended cards offers Unsuspend.
+            page.choose_mode(true);
+            page.toggle(&ids[0]);
+            assert_eq!(page.suspend_choice(), SuspendChoice::Unsuspend);
+            page.toggle(&ids[2]);
+            assert_eq!(page.suspend_choice(), SuspendChoice::Suspend);
+        });
+    }
+
+    #[test]
+    fn choose_all_then_leave_forgets_the_choice() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, _, _) = state_with_cards();
+            let page = page_over(&state, None);
+            page.select_all();
+            assert_eq!(page.chosen_ids().len(), 4);
+            // The list read again keeps the choice.
+            page.requery();
+            assert_eq!(page.chosen_ids().len(), 4);
+            page.choose_mode(false);
+            assert_eq!(page.chosen_ids().len(), 0);
+            assert!(!page.selecting());
+        });
+    }
+
+    #[test]
+    fn a_suspended_card_reads_as_suspended() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, ids, _) = state_with_cards();
+            state.set_suspended(&ids[..1], true).unwrap();
+            let page = page_over(&state, None);
+            let item = page.position(&ids[0]).and_then(|p| page.item(p)).unwrap();
+            assert_eq!(item.row().status, CardStatus::Suspended);
+        });
+    }
+
+    #[test]
+    fn escape_leaves_selection_mode_then_clears_the_search_without_panicking() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, ids, _) = state_with_cards();
+            let page = page_over(&state, None);
+            let imp = page.imp();
+            // Both arms borrow the selection again: a `Ref` held while they
+            // run would panic inside GTK's key handler and abort.
+            page.choose_mode(true);
+            page.toggle(&ids[0]);
+            assert_eq!(page.escape(), glib::Propagation::Stop);
+            assert!(!imp.selection.borrow().active());
+
+            imp.search_entry.set_text("alpha");
+            assert_eq!(page.escape(), glib::Propagation::Stop);
+            assert_eq!(imp.search_entry.text(), "");
+            assert_eq!(page.ids().len(), 4);
+
+            // Nothing to leave or clear: not handled, so the page goes back.
+            assert_eq!(page.escape(), glib::Propagation::Proceed);
+        });
+    }
+
+    #[test]
+    fn an_action_on_a_list_that_is_out_of_date_changes_nothing_and_reads_again() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, ids, _) = state_with_cards();
+            let page = page_over(&state, None);
+            assert_eq!(page.ids().len(), 4);
+            // Another window deletes a card the list still shows.
+            state.delete_card(&ids[2]).unwrap();
+            page.run(&ids, Bulk::Suspend(true));
+            assert_eq!(page.ids().len(), 3, "the list was read again");
+            assert!(
+                !state.card(&ids[0]).unwrap().suspended,
+                "nothing was written"
+            );
+        });
+    }
+
+    /// Five thousand cards: the page loads, searches and filters within a
+    /// bound, and the list only builds the rows that fit on screen.
+    #[test]
+    fn five_thousand_cards_stay_fast_and_virtual() {
+        crate::testing::with_gtk(|| {
+            adw::init().unwrap();
+            gio::resources_register_include!("rappel.gresource").unwrap();
+            let tmp = tempfile::tempdir().unwrap();
+            let state = AppState::open(tmp.path().join("data")).unwrap();
+            let deck = state.create_deck("Scratch").unwrap();
+            for i in 0..5_000 {
+                state
+                    .add_card_with_tags(
+                        &deck.id,
+                        &format!("Card {i}"),
+                        "back",
+                        &tags(&[&format!("tag {}", i % 40)]),
+                    )
+                    .unwrap();
+            }
+            let started = Instant::now();
+            let page = BrowserPage::new(state.clone(), None).unwrap();
+            let load = started.elapsed();
+            let imp = page.imp();
+            assert_eq!(page.ids().len(), 5_000);
+
+            let started = Instant::now();
+            imp.search_entry.set_text("card 49");
+            page.search();
+            let search = started.elapsed();
+            assert_eq!(page.ids().len(), 111, "Card 49, 490-499, 4900-4999");
+            imp.search_entry.set_text("");
+            page.search();
+
+            let started = Instant::now();
+            page.select_all();
+            let choose = started.elapsed();
+            assert_eq!(page.chosen_ids().len(), 5_000);
+            page.choose_mode(false);
+
+            // On screen: only some rows exist.
+            let window = gtk::Window::builder()
+                .default_width(600)
+                .default_height(700)
+                .child(&page)
+                .build();
+            window.present();
+            let context = glib::MainContext::default();
+            for _ in 0..200 {
+                if !context.iteration(false) {
+                    break;
+                }
+            }
+            let rows = count_rows(page.upcast_ref());
+            window.destroy();
+
+            crate::testing::print_timing("browser page: load 5,000", load);
+            crate::testing::print_timing("browser page: search", search);
+            crate::testing::print_timing("browser page: choose all", choose);
+            if std::env::var_os("RAPPEL_TIMINGS").is_some() {
+                eprintln!("browser page: rows built: {rows}");
+            }
+            assert!(load < Duration::from_secs(5), "{load:?}");
+            assert!(search < Duration::from_secs(2), "{search:?}");
+            assert!(choose < Duration::from_secs(2), "{choose:?}");
+            // The list view builds the rows in view and a few more to size itself
+            // (about 200 here), never one per card.
+            assert!(rows > 0 && rows < 500, "{rows} rows are built");
+        });
+    }
+
+    fn count_rows(widget: &gtk::Widget) -> usize {
+        let mut n = usize::from(widget.is::<BrowserRow>());
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            n += count_rows(&c);
+            child = c.next_sibling();
+        }
+        n
+    }
+}

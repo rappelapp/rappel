@@ -1,0 +1,283 @@
+using Gtk 4.0;
+using Adw 1;
+
+// All Cards: search, filters and the list of every card, with actions on
+// several cards at once. The texts are set in pages/browser_page.rs; deck and
+// tag names (untrusted) only ever reach plain-text widgets.
+template $RappelBrowserPage: Adw.NavigationPage {
+  title: _("All Cards");
+
+  child: Adw.BreakpointBin {
+    width-request: 300;
+    height-request: 200;
+
+    // A phone: filters one under the other, rows without back and tags,
+    // action buttons without their words.
+    Adw.Breakpoint breakpoint {
+      condition ("max-width: 500sp")
+
+      setters {
+        filter_box.orientation: vertical;
+        move_content.label: "";
+        tags_content.label: "";
+        reset_content.label: "";
+        delete_content.label: "";
+      }
+    }
+
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar {
+        title-widget: Adw.Clamp {
+          maximum-size: 400;
+          tightening-threshold: 300;
+
+          child: Gtk.SearchEntry search_entry {
+            placeholder-text: _("Search cards");
+            search-delay: 150;
+            hexpand: true;
+
+            accessibility {
+              label: _("Search cards");
+            }
+          };
+        };
+
+        [end]
+        Gtk.ToggleButton select_button {
+          icon-name: "selection-mode-symbolic";
+          tooltip-text: _("Select Cards");
+
+          accessibility {
+            label: _("Select Cards");
+          }
+        }
+      }
+
+      [top]
+      Gtk.Box filter_box {
+        spacing: 6;
+        margin-top: 6;
+        margin-bottom: 6;
+        margin-start: 12;
+        margin-end: 12;
+        homogeneous: true;
+
+        Gtk.DropDown deck_filter {
+          enable-search: true;
+          tooltip-text: _("Deck");
+
+          accessibility {
+            label: _("Deck");
+          }
+        }
+
+        Gtk.DropDown tag_filter {
+          enable-search: true;
+          tooltip-text: _("Tag");
+
+          accessibility {
+            label: _("Tag");
+          }
+        }
+
+        Gtk.DropDown state_filter {
+          tooltip-text: _("State");
+          model: Gtk.StringList {
+            strings [
+              _("Any State"),
+              _("New"),
+              _("Learning"),
+              _("Due"),
+              _("Suspended"),
+            ]
+          };
+
+          accessibility {
+            label: _("State");
+          }
+        }
+      }
+
+      content: Gtk.Stack content_stack {
+        Gtk.StackPage {
+          name: "empty";
+
+          child: Adw.StatusPage {
+            icon-name: "document-new-symbolic";
+            title: _("No Cards Yet");
+            description: _("Cards you add to a deck appear here");
+          };
+        }
+
+        Gtk.StackPage {
+          name: "none";
+
+          child: Adw.StatusPage {
+            icon-name: "system-search-symbolic";
+            title: _("No Results");
+            description: _("Try other words or filters");
+
+            child: Gtk.Button clear_button {
+              label: _("_Clear Search and Filters");
+              use-underline: true;
+              action-name: "browser.clear";
+              halign: center;
+
+              styles [
+                "pill",
+              ]
+            };
+          };
+        }
+
+        Gtk.StackPage {
+          name: "list";
+
+          child: Gtk.Box {
+            orientation: vertical;
+
+            Gtk.Label count_label {
+              xalign: 0;
+              margin-top: 6;
+              margin-bottom: 6;
+              margin-start: 12;
+              margin-end: 12;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            // A GtkListView with a model: it only creates rows for what is
+            // on screen, so thousands of cards stay smooth (ADR 0013).
+            Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+              vexpand: true;
+
+              styles [
+                "view",
+              ]
+
+              child: Adw.ClampScrollable {
+                maximum-size: 900;
+                tightening-threshold: 600;
+
+                child: Gtk.ListView card_list {
+                  single-click-activate: true;
+
+                  accessibility {
+                    label: _("Cards");
+                  }
+
+                  styles [
+                    "rich-list",
+                    "separators",
+                  ]
+                };
+              };
+            }
+          };
+        }
+      };
+
+      [bottom]
+      Gtk.ActionBar action_bar {
+        revealed: false;
+
+        [start]
+        Gtk.Label selection_label {
+          xalign: 0;
+          ellipsize: end;
+
+          styles [
+            "heading",
+          ]
+        }
+
+        [end]
+        Gtk.Button delete_button {
+          action-name: "browser.delete-selected";
+          tooltip-text: _("Delete");
+
+          accessibility {
+            label: _("Delete selected cards");
+          }
+
+          child: Adw.ButtonContent delete_content {
+            icon-name: "user-trash-symbolic";
+            label: _("Delete");
+          };
+        }
+
+        [end]
+        Gtk.Button reset_button {
+          action-name: "browser.reset-selected";
+          tooltip-text: _("Reset Progress");
+
+          accessibility {
+            label: _("Reset progress of selected cards");
+          }
+
+          child: Adw.ButtonContent reset_content {
+            icon-name: "view-refresh-symbolic";
+            label: _("Reset");
+          };
+        }
+
+        [end]
+        Gtk.Button suspend_button {
+          action-name: "browser.suspend-selected";
+          tooltip-text: _("Suspend");
+
+          accessibility {
+            label: _("Suspend selected cards");
+          }
+
+          child: Adw.ButtonContent suspend_content {
+            icon-name: "media-playback-pause-symbolic";
+            label: _("Suspend");
+          };
+        }
+
+        [end]
+        Gtk.MenuButton tags_button {
+          menu-model: tags_menu;
+          tooltip-text: _("Tags");
+
+          accessibility {
+            label: _("Tags of selected cards");
+          }
+
+          child: Adw.ButtonContent tags_content {
+            icon-name: "bookmark-new-symbolic";
+            label: _("Tags");
+          };
+        }
+
+        [end]
+        Gtk.Button move_button {
+          action-name: "browser.move";
+          tooltip-text: _("Move to Deck");
+
+          accessibility {
+            label: _("Move selected cards to a deck");
+          }
+
+          child: Adw.ButtonContent move_content {
+            icon-name: "folder-symbolic";
+            label: _("Move…");
+          };
+        }
+      }
+    };
+  };
+}
+
+menu tags_menu {
+  section {
+    item (_("_Add Tag…"), "browser.add-tag")
+    item (_("_Remove Tag…"), "browser.remove-tag")
+  }
+}

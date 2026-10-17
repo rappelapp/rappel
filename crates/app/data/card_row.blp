@@ -28,6 +28,16 @@ template $RappelCardRow: Gtk.Box {
     ]
   }
 
+  Gtk.Label suspended_label {
+    visible: false;
+    label: _("Suspended");
+
+    styles [
+      "dim-label",
+      "caption",
+    ]
+  }
+
   Gtk.MenuButton menu_button {
     icon-name: "view-more-symbolic";
     tooltip-text: _("Card Actions");
@@ -46,7 +56,21 @@ menu card_menu {
     item (_("Card _Information"), "row.info")
   }
 
+  // Suspend and Unsuspend share a place: the one that does nothing for the
+  // bound card is disabled by the row and hidden by its menu.
   section {
+    item {
+      label: _("_Suspend");
+      action: "row.suspend";
+      hidden-when: "action-disabled";
+    }
+
+    item {
+      label: _("_Unsuspend");
+      action: "row.unsuspend";
+      hidden-when: "action-disabled";
+    }
+
     item (_("_Reset Progress"), "row.reset")
     item (_("_Delete"), "row.delete")
   }

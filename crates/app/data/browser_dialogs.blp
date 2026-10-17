@@ -1,0 +1,62 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Asks for one of a list: a deck to move cards to, or a tag to take off
+// them. The heading, the body and the confirm label are set in
+// dialogs/browser_dialogs.rs.
+Adw.AlertDialog choose_dialog {
+  close-response: "cancel";
+  default-response: "confirm";
+
+  responses [
+    cancel: _("_Cancel"),
+    confirm: _("_OK") suggested,
+  ]
+
+  extra-child: Gtk.DropDown choice_dropdown {
+    enable-search: true;
+  };
+}
+
+// Asks for the name of a tag to put on cards. The name is checked as it is
+// typed, with the store's own rule.
+Adw.AlertDialog tag_name_dialog {
+  heading: _("Add Tag");
+  body: _("Cards that already have the tag keep it");
+  close-response: "cancel";
+  default-response: "confirm";
+
+  responses [
+    cancel: _("_Cancel"),
+    confirm: _("_Add") suggested,
+  ]
+
+  extra-child: Gtk.Box {
+    orientation: vertical;
+    spacing: 6;
+
+    Gtk.ListBox {
+      selection-mode: none;
+
+      styles [
+        "boxed-list",
+      ]
+
+      Adw.EntryRow tag_entry {
+        title: _("Tag");
+        activates-default: true;
+      }
+    }
+
+    Gtk.Label error_label {
+      visible: false;
+      wrap: true;
+      xalign: 0;
+
+      styles [
+        "error",
+        "caption",
+      ]
+    }
+  };
+}

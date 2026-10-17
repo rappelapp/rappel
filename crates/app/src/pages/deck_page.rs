@@ -86,6 +86,12 @@ mod imp {
             // Activated by the card rows' menus with the card id.
             rows::install_id_action(klass, "deck.edit-card", super::DeckPage::edit);
             rows::install_id_action(klass, "deck.delete-card", super::DeckPage::delete);
+            rows::install_id_action(klass, "deck.suspend-card", |page, id| {
+                page.suspend(id, true);
+            });
+            rows::install_id_action(klass, "deck.unsuspend-card", |page, id| {
+                page.suspend(id, false);
+            });
             rows::install_id_action(klass, "deck.reset-card", super::DeckPage::reset);
             rows::install_id_action(klass, "deck.card-info", super::DeckPage::card_info);
         }
@@ -155,6 +161,11 @@ impl DeckPage {
         page.update_empty_state();
         page.update_study();
         Ok(page)
+    }
+
+    /// The id of this page's deck.
+    pub fn deck_id(&self) -> Option<String> {
+        self.imp().deck.get().map(|d| d.id.clone())
     }
 
     /// Recomputes what there is to study: the subtitle and whether Study
@@ -399,6 +410,60 @@ impl DeckPage {
         show_toast_from(self, toast);
     }
 
+    /// Suspends or unsuspends the card at once; the toast's Undo puts the
+    /// flag back (ADR 0035). A suspended card leaves what there is to study.
+    fn suspend(&self, id: &str, suspended: bool) {
+        let Some(state) = self.imp().state.get() else {
+            return;
+        };
+        let changed = match state.set_suspended(&[id.to_owned()], suspended) {
+            Ok(changed) => changed,
+            Err(err) => {
+                self.error_toast(&format!("The card could not be changed: {err}"));
+                return;
+            }
+        };
+        if changed.is_empty() {
+            return;
+        }
+        self.refresh_card(id);
+        let window = self.root().and_downcast::<RappelWindow>();
+        counts_changed(self, window.as_ref());
+
+        // As for a delete: Undo must work from another page.
+        let (id, state) = (id.to_owned(), state.clone());
+        let page = self.downgrade();
+        let window = window.map(|w| w.downgrade());
+        let title = if suspended {
+            "Card suspended"
+        } else {
+            "Card unsuspended"
+        };
+        let toast = undo_toast(title, move || {
+            undo_suspend(&state, &id, suspended, &page, window.as_ref());
+        });
+        show_toast_from(self, toast);
+    }
+
+    /// Reads card `id` again into its row, after its flag changed.
+    fn refresh_card(&self, id: &str) {
+        let imp = self.imp();
+        let (Some(state), Some(store)) = (imp.state.get(), imp.cards.get()) else {
+            return;
+        };
+        let Some(position) = self.position(id) else {
+            return;
+        };
+        match (state.card(id), state.card_tags(id)) {
+            (Ok(card), Ok(tags)) => {
+                store.splice(position, 1, &[CardObject::new(TaggedCard { card, tags })]);
+            }
+            (Err(err), _) | (_, Err(err)) => {
+                self.error_toast(&format!("The card could not be read: {err}"));
+            }
+        }
+    }
+
     /// Puts an undeleted card back in its place and focuses it, if it is
     /// a card of this deck. Harmless when it is already there.
     pub fn restored(&self, card: &Card) {
@@ -538,6 +603,37 @@ fn undo_reset(
                 show_error(&window, what, &message);
             } else {
                 log_failure(what, &message);
+            }
+        }
+    }
+}
+
+/// The Undo of a suspend (`suspended` is what the action did): puts the flag
+/// of card `id` back, on `page` if it is still there, and updates the counts
+/// through `window`.
+fn undo_suspend(
+    state: &AppState,
+    id: &str,
+    suspended: bool,
+    page: &glib::WeakRef<DeckPage>,
+    window: Option<&glib::WeakRef<RappelWindow>>,
+) {
+    let window = window.and_then(glib::WeakRef::upgrade);
+    match state.restore_suspended(&[id.to_owned()], !suspended) {
+        Ok(_) => {
+            if let Some(page) = page.upgrade() {
+                page.refresh_card(id);
+                counts_changed(&page, window.as_ref());
+            } else if let Some(window) = &window {
+                window.study_changed();
+            }
+        }
+        Err(err) => {
+            let message = format!("The change could not be undone: {err}");
+            if let Some(window) = window {
+                show_error(&window, "a card operation", &message);
+            } else {
+                log_failure("a card operation", &message);
             }
         }
     }
@@ -785,6 +881,22 @@ mod tests {
                 .clone();
             undo_reset(&state, &ids[0], &entry, &page.downgrade(), None);
             assert_eq!(subtitle(), "2 due");
+        });
+    }
+
+    #[test]
+    fn a_suspended_card_leaves_the_counts_and_its_undo_brings_it_back() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, page, ids) = page_of(2);
+            let subtitle = || page.imp().window_title.subtitle().to_string();
+            assert_eq!(subtitle(), "2 due");
+            page.suspend(&ids[0], true);
+            assert_eq!(subtitle(), "1 due");
+            assert!(page.item(0).unwrap().card().suspended);
+            assert!(page.item(0).unwrap().row_label().ends_with(", suspended"));
+            undo_suspend(&state, &ids[0], true, &page.downgrade(), None);
+            assert_eq!(subtitle(), "2 due");
+            assert!(!page.item(0).unwrap().card().suspended);
         });
     }
 

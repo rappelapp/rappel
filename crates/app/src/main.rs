@@ -53,6 +53,7 @@ fn main() -> glib::ExitCode {
     // which initialises GTK, runs before this one (gio's GApplication docs).
     app.connect_startup(|_| sourceview5::init());
     app.set_accels_for_action("win.new", &["<Control>n"]);
+    app.set_accels_for_action("win.search", &["<Control>f"]);
     app.set_accels_for_action("win.preferences", &["<Control>comma"]);
     app.connect_activate(|app| {
         if let Some(window) = app.active_window() {

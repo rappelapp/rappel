@@ -1,13 +1,14 @@
 //! One row of the deck page's card list: the front on one line, the card's
-//! tags dimmed after it, and a menu with Edit, Card Information, Reset
-//! Progress and Delete.
+//! tags dimmed after it, "Suspended" when it is, and a menu with Edit, Card
+//! Information, Suspend or Unsuspend, Reset Progress and Delete.
 //! Layout in `data/card_row.blp`.
 //!
 //! Rows are recycled by the `GtkListView`: [`CardRow::bind`] points a row
 //! at another card. As in `DeckRow`, the menu items activate the row's own
-//! `row.edit` / `row.info` / `row.reset` / `row.delete` actions, which forward
-//! to the page's `deck.edit-card` / `deck.card-info` / `deck.reset-card` /
-//! `deck.delete-card` with the bound card's id.
+//! `row.edit` / `row.info` / `row.suspend` / `row.unsuspend` / `row.reset` /
+//! `row.delete` actions, which forward to the page's `deck.edit-card` /
+//! `deck.card-info` / `deck.suspend-card` / `deck.unsuspend-card` /
+//! `deck.reset-card` / `deck.delete-card` with the bound card's id.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -30,6 +31,8 @@ mod imp {
         #[template_child]
         pub tags_label: TemplateChild<gtk::Label>,
         #[template_child]
+        pub suspended_label: TemplateChild<gtk::Label>,
+        #[template_child]
         pub menu_button: TemplateChild<gtk::MenuButton>,
         /// The bound card, empty while unbound.
         pub card_id: RefCell<String>,
@@ -48,6 +51,12 @@ mod imp {
             });
             klass.install_action("row.info", None, |row, _, _| {
                 row.forward("deck.card-info");
+            });
+            klass.install_action("row.suspend", None, |row, _, _| {
+                row.forward("deck.suspend-card");
+            });
+            klass.install_action("row.unsuspend", None, |row, _, _| {
+                row.forward("deck.unsuspend-card");
             });
             klass.install_action("row.reset", None, |row, _, _| {
                 row.forward("deck.reset-card");
@@ -89,6 +98,11 @@ impl CardRow {
         imp.tags_label.set_label(&tags);
         imp.tags_label.set_visible(!tags.is_empty());
         rows::label_menu_button(&imp.menu_button, &preview);
+        let suspended = item.card().suspended;
+        imp.suspended_label.set_visible(suspended);
+        // The row offers the one of the two that changes something.
+        self.action_set_enabled("row.suspend", !suspended);
+        self.action_set_enabled("row.unsuspend", suspended);
         imp.card_id.replace(item.card().id.clone());
     }
 

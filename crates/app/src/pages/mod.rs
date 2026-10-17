@@ -1,11 +1,14 @@
 //! Full-window pages. Each is a `.rs` file with its layout in `data/*.blp`.
 
+mod browser_page;
 mod deck_page;
 mod decks_page;
 mod recovery_page;
 mod review_page;
 mod stats_page;
 
+pub use browser_page::BrowserPage;
+pub(crate) use browser_page::text as browser_text;
 pub use deck_page::DeckPage;
 pub use decks_page::DecksPage;
 pub use recovery_page::{Recovered, RecoveryPage};

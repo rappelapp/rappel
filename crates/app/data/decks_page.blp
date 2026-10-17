@@ -19,6 +19,8 @@ template $RappelDecksPage: Adw.NavigationPage {
         }
       }
 
+      // The first [end] child is the last in the bar: the main menu, as the
+      // HIG puts it, with the search button before it.
       [end]
       Gtk.MenuButton {
         primary: true;
@@ -28,6 +30,17 @@ template $RappelDecksPage: Adw.NavigationPage {
 
         accessibility {
           label: _("Main Menu");
+        }
+      }
+
+      [end]
+      Gtk.Button {
+        icon-name: "system-search-symbolic";
+        action-name: "win.search";
+        tooltip-text: _("Search All Cards");
+
+        accessibility {
+          label: _("Search All Cards");
         }
       }
     }
