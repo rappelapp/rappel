@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-17
 - Amends: SPEC status line, the new Product vision section, §1 (principle 4), §4 (order, §4.1 streaming import, new §4.9 and §4.10), §5, §6
+- Amended by: ADR 0038 (the roadmap in phases; §4.10 is the internal code clean-up)
 - Refers to: ADR 0017 (the export format), ADR 0029 (tags are never deleted, so clean-up leaves them)
 
 ## Context

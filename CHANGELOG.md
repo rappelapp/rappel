@@ -7,6 +7,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **Roadmap in phases** (ADR 0038, SPEC only). Phase 1, text only, ends in 0.2.0: the missing features (shortcuts dialog, About dialog with font credits, remembering window size and last deck), a UI overhaul, code clean-up, hardening, a beta, then 0.2.0. Phase 2 ends in 0.3.0: streaming import, images, audio, removing unused media files (its own design decision first), phone and touch, Anki import, refactor and hardening. Phase 3 ends in 1.0: translation, a testing campaign, packaging, release. "Clean-up" is now the internal code clean-up; removing unused media is a separate item. Nested decks are listed as not scheduled.
 - **Product vision and roadmap** (ADR 0034, SPEC only). The SPEC now opens with what Rappel is (closer to Mochi than Anki, no note types, add-ons, field templates or per-deck presets) and sets the order: browser and search, streaming import, images, audio, clean-up, polish for phone and touch, Anki import, translation, release. Cloze cards are dropped; reversed cards are listed as later.
 
 ### Added

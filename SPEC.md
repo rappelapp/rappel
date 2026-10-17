@@ -1,4 +1,4 @@
-# Rappel — SPEC (v0.2)
+# Rappel — SPEC
 
 A native GNOME flashcard app. Rust, GTK4, libadwaita, Blueprint. Two grades only: **Fail** and **Pass**. Cards are Markdown with LaTeX math. Scheduling is FSRS. Everything is local: no network access, no accounts.
 
@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header), the search index, suspension and bulk writes in core (ADR 0035), the All Cards page (ADR 0036), and suspend and delete during review (ADR 0037). The product vision below and the order in §4 and §5 are set by ADR 0034.
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. Phase 1 of the roadmap (§4), text only and ending in 0.2.0, is **in progress**. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header), the search index, suspension and bulk writes in core (ADR 0035), the All Cards page (ADR 0036), and suspend and delete during review (ADR 0037). The product vision below is set by ADR 0034, the roadmap in phases (§4, §5) by ADR 0038.
 
 ---
 
@@ -120,7 +120,27 @@ Storage rules:
 
 ## 4. Features
 
-The order, set by ADR 0034: browser and search (§4.6), streaming import (§4.1), images (§4.3), audio (§4.9), clean-up (§4.10), polish for phone and touch (§4.8), Anki import (§5), translation (§5), release (§5). Sections keep their numbers; the order above is the priority, not the numbering. Statistics (§4.7) and the editor (§4.4) are done. Suspend and delete during review (§4.5) came with the browser.
+The work is done in three phases, each ending in a release (ADR 0038, amending the order of ADR 0034). Within a phase, items come in the order listed. Sections keep their numbers; the phases give the priority, not the numbering.
+
+**Phase 1 — text only, ends in v0.2.0.**
+1. *Done:* the editor (§4.4), statistics (§4.7), browser and search (§4.6), suspend and delete during review (§4.5).
+2. Missing features (§4.8): keyboard shortcuts dialog, About dialog with the font credits, remembering the window size and the last deck.
+3. UI overhaul (§4.8): a visual pass on every screen, and the accessibility issues.
+4. Code clean-up and refactor (§4.10).
+5. Hardening, round 2 (round 1 was ADR 0025).
+6. v0.2.0-beta, then v0.2.0.
+
+**Phase 2 — media and mobile, ends in v0.3.0.**
+1. Streaming import (§4.1).
+2. Images (§4.3).
+3. Audio (§4.9).
+4. Removing unused media files — needs its own design decision (undo, restore and backups must never lose a file).
+5. Phone and touch adaptivity (§4.8).
+6. Anki `.apkg` import (§4.11).
+7. A refactor and hardening, as in phase 1 (§4.10).
+8. v0.3.0.
+
+**Phase 3 — ends in v1.0:** translation, testing campaign, packaging, release (§5).
 
 ### 4.1 Export / import
 - Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 2`, `exported_at`, and all decks, cards, tags, card tags and the full review log with its resets and undos, deleted rows included with their `deleted_at`. Each card record has `suspended` (always written; a file without it reads as `false`, ADR 0035). It also has `settings` (the keys the user changed, ADR 0027) and `media` (empty until images or audio exist; their files go into `media/`).
@@ -130,7 +150,7 @@ The order, set by ADR 0034: browser and search (§4.6), streaming import (§4.1)
 - Merge rules: an id not in the DB is added; the same id with the same content is skipped. A tag whose name key a DB tag with another id has is mapped onto that tag (its card tags attach to the DB's id), not added; a tag with the same id and another name is a conflict, and so is an undo of an entry the DB has already undone. The file's settings are applied only into a DB without decks (deleted ones included); otherwise the DB keeps its own. A card that differs only in `suspended` is already present: the database keeps its own flag, since an import never changes how a live card is studied (ADR 0035). A row that differs only by being deleted is merged: deleted in the DB and live in the file, it is revived (`deleted_at` cleared; a revived deck also revives the cards deleted with it, as `undelete_deck` does, except those the file has, which follow their own row); live in the DB and deleted in the file, it is skipped (an import never deletes); deleted on both sides, at whatever times, it is already present. The same id with any other difference, or a live deck name (revived ones included) already used by another live deck, is a conflict, and any conflict refuses the whole import. The summary also counts revived rows. Importing the same file twice changes nothing.
 - The file is untrusted. A file is refused if any of these fail: size limits; the exact entry names (nothing is extracted, so no zip-slip); a supported format version; every id a lowercase `UUIDv7`; references that resolve; valid kinds, grades and timestamps; undos that cancel an earlier review or reset of the same card, once; tag names without a NUL or a comma; settings within their ranges; no NUL character in a deck name or card side.
 - Round-trip test: export → import into empty DB → export again produces an identical file.
-- **Streaming import** (next, after the browser): `plan_import` and `apply_import` read the archive entry by entry and keep memory bounded, so a file with a large media folder does not need to fit in memory. The checks and merge rules above do not change, and a refused file still writes nothing, so media are not put in the store before the plan is confirmed.
+- **Streaming import** (phase 2, first): `plan_import` and `apply_import` read the archive entry by entry and keep memory bounded, so a file with a large media folder does not need to fit in memory. The checks and merge rules above do not change, and a refused file still writes nothing, so media are not put in the store before the plan is confirmed.
 
 ### 4.2 Math
 - `$...$` inline and `$$...$$` display math in Markdown.
@@ -171,34 +191,37 @@ The order, set by ADR 0034: browser and search (§4.6), streaming import (§4.1)
 
 ### 4.8 Polish
 - `AdwPreferencesDialog` (done, ADR 0027): daily limits for new cards and reviews, the hour a study day starts, desired retention (asked about first, because it recalculates every due date), and an "Open Backup Folder" button.
-- `AdwAboutDialog`, keyboard shortcuts dialog, primary menu.
-- Remember window size and the last selected deck.
-- Every icon-only button has a tooltip and an accessible label. Full keyboard navigation.
-- Empty states (`AdwStatusPage`) everywhere a list can be empty.
-- Phone and touch: audit every screen at 360 px, touch targets of at least 44 px, no hover-only actions, grade buttons large enough for a thumb.
-- Nested decks: **not** in v0.2.
+- Phase 1, missing features: `AdwAboutDialog` with credits for the bundled KaTeX fonts (SIL OFL-1.1, see `deny.toml`), keyboard shortcuts dialog, primary menu. Remember window size and the last selected deck.
+- Phase 1, UI overhaul: a visual pass on every screen (spacing, alignment, style classes, consistent wording), checked in light and dark mode. Every icon-only button has a tooltip and an accessible label. Full keyboard navigation. Empty states (`AdwStatusPage`) everywhere a list can be empty. Fix the known accessibility issues.
+- Phase 2, phone and touch: audit every screen at 360 px, touch targets of at least 44 px, no hover-only actions, grade buttons large enough for a thumb.
 
 ### 4.9 Audio
 - Attach an audio file to a card side from the editor. It goes into the media store like an image (`<data dir>/media/<sha256>.<ext>`) and is referenced in Markdown as a link, `[](media:<sha256>.<ext>)`; only `media:` URLs play, nothing is fetched (§1 principle 5).
 - Untrusted input: playback opens only a local file built from the hash name, never an arbitrary URI (no `playbin` on card-supplied URLs), with an allow-list of formats and decoders. The ADR adds the row to the untrusted-input table (ADR 0025) and justifies the GStreamer binding as a new dependency.
 - A play button on the card, with a tooltip and an accessible label. Playback is by GStreamer, which GNOME already ships; no recording, and no autoplay at all (the user presses play). Formats and the size limit are decided in the slice's ADR.
 
-### 4.10 Clean-up
-- Remove media files that nothing uses, with the size it frees, always confirmed first. Media referenced by a deleted card still counts as used, since deleted cards can come back (undo, import revival). Backups hold only the database, so media referenced by any retained backup also counts as used, or removed files are set aside for the backup retention period; the clean-up's ADR decides which. It never touches cards, tags (never deleted, ADR 0029) or the review log.
-- Nothing runs by itself. It lives in one place (the primary menu), not in the preferences.
+### 4.10 Code clean-up and refactor
+- Internal work, not a user feature: nothing the user sees changes. Done once in phase 1 before hardening, and again at the end of phase 2.
+- Remove dead code and duplication, simplify what grew during the feature slices, move shared UI pieces into `crates/app/src/ui/`, and make the modules match `ARCHITECTURE.md` (or update it where the code is right).
+- Behaviour is pinned by the existing tests, which keep their meaning; add tests where a refactor touches logic without coverage. No migration, no change to the export format.
+
+### 4.11 Anki import
+- **Anki `.apkg` import**, one way. Cards, tags and review history become plain Rappel cards; note types, templates, add-ons and presets are dropped, not mapped (product vision). Field HTML becomes Markdown or plain text and is never rendered as HTML; Anki's four buttons map to two grades (Again = Fail, the others = Pass); cloze notes come in as ordinary cards with the text shown in full; `<img>` and `[sound:]` become `media:` files (no SVG, remote URLs stay text). An `.apkg` is an untrusted archive holding an untrusted SQLite database, so it gets its own limits and checks in the slice's ADR, as §4.1 has for `.rappel`.
 
 ---
 
-## 5. After the features above, and later
+## 5. Phase 3 and later
 
-In this order, after §4's items:
-1. **Anki `.apkg` import**, one way. Cards, tags and review history become plain Rappel cards; note types, templates, add-ons and presets are dropped, not mapped (product vision). Field HTML becomes Markdown or plain text and is never rendered as HTML; Anki's four buttons map to two grades (Again = Fail, the others = Pass); cloze notes come in as ordinary cards with the text shown in full; `<img>` and `[sound:]` become `media:` files (no SVG, remote URLs stay text). An `.apkg` is an untrusted archive holding an untrusted SQLite database, so it gets its own limits and checks in the slice's ADR, as §4.1 has for `.rappel`.
-2. **Translations** (gettext), French first.
-3. **Release**: Meson build + Flatpak manifest + AppStream metainfo + app icon + `.desktop` file (needed to install it properly and to look like a GNOME core app).
+Phase 3, ending in v1.0, in this order:
+1. **Translation** (gettext), French first.
+2. **Testing campaign**: testers use the app on real collections, on desktop and phone, before 1.0; what they find is fixed before release.
+3. **Packaging**: Meson build + Flatpak manifest + AppStream metainfo + app icon + `.desktop` file (needed to install it properly and to look like a GNOME core app).
+4. **Release** of 1.0.
 
 Not scheduled:
 - FSRS parameter optimisation from the user's own review log.
 - Sync.
+- Nested decks.
 - Reversed cards: a card also asked back to front. An option on a single card, not a note type or a template. It needs a schedule and review history per direction, so a migration and an ADR.
 - Obsidian-style in-place live preview in the editor (formulas rendered inside the text being edited, source shown where the cursor is). Needs a spike first, with its own ADR (next free number).
 
