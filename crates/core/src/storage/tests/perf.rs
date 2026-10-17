@@ -58,6 +58,23 @@ fn deck_reads_are_fast_at_five_thousand_cards() {
         (decks[0].new_count, decks[0].due_count),
         (20, u32::try_from(DUE).unwrap())
     );
+    // The rest of the row's summary, read in the same transaction.
+    assert_eq!(
+        (
+            decks[0].card_count,
+            decks[0].suspended_count,
+            decks[0].held_back_count
+        ),
+        (
+            u32::try_from(CARDS).unwrap(),
+            0,
+            u32::try_from(CARDS - DUE).unwrap() - 20
+        )
+    );
+    assert_eq!(
+        decks[0].next_change_at,
+        store.next_study_change(&deck, NOW).unwrap()
+    );
     let (input, study) = fastest("study_input", 3, || {
         store.study_input(&deck, NOW, day_start).unwrap()
     });
@@ -275,8 +292,12 @@ fn rebuilding_the_search_index_of_five_thousand_cards_is_fast() {
     assert!(t < Duration::from_millis(REBUILD_INDEX_MS), "{t:?}");
 }
 
-/// `study_input` + `next_study_change` (measured 14 ms), and `list_decks`
-/// (12 ms), each.
+/// `study_input` + `next_study_change`, and `list_decks`, each. Measured
+/// side by side on one loaded machine (debug build): `study_input` 27 ms,
+/// `next_study_change` 3 ms, `list_decks` 28 ms. `list_decks` counts
+/// without reading card ids (`deck_counts_in`, ADR 0041); before that it
+/// took 42 ms there, and 52 to 56 ms with a separate count and next-change
+/// query per deck.
 const STUDY_MS: u64 = 150;
 /// `list_cards` of 5,000 cards (measured 6 ms).
 const LIST_CARDS_MS: u64 = 100;

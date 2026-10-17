@@ -8,7 +8,7 @@ mod browser_row;
 mod card_object;
 mod card_row;
 pub mod chart_card;
-mod deck_row;
+pub mod deck_row;
 mod history_row;
 mod tag_suggestions;
 

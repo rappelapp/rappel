@@ -143,23 +143,30 @@ impl Store {
     pub fn next_study_change(&self, deck_id: &str, now: i64) -> Result<Option<i64>> {
         let tx = self.conn.unchecked_transaction()?;
         ensure_live_deck(&tx, deck_id)?;
-        // Phases are our own constant strings, never user input.
-        let next = tx.query_row(
-            &format!(
-                "SELECT min(CASE WHEN s.phase = '{review}' THEN s.due_at
-                                 ELSE s.due_at - ?3 END)
-                 FROM cards c JOIN card_schedule s ON s.card_id = c.id
-                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND c.suspended = 0
-                   AND (CASE WHEN s.phase = '{review}' THEN s.due_at
-                             ELSE s.due_at - ?3 END) > ?2",
-                review = Phase::Review.as_str()
-            ),
-            params![deck_id, now, EARLY_MS],
-            |r| r.get(0),
-        )?;
+        let next = next_study_change_in(&tx, deck_id, now)?;
         tx.finish()?;
         Ok(next)
     }
+}
+
+/// [`Store::next_study_change`] on a connection inside a read transaction,
+/// for a deck already known to be live. [`deck_counts_in`] computes the
+/// same value in its aggregate pass, with the same conditions.
+fn next_study_change_in(conn: &Connection, deck_id: &str, now: i64) -> Result<Option<i64>> {
+    // Phases are our own constant strings, never user input.
+    Ok(conn.query_row(
+        &format!(
+            "SELECT min(CASE WHEN s.phase = '{review}' THEN s.due_at
+                             ELSE s.due_at - ?3 END)
+             FROM cards c JOIN card_schedule s ON s.card_id = c.id
+             WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND c.suspended = 0
+               AND (CASE WHEN s.phase = '{review}' THEN s.due_at
+                         ELSE s.due_at - ?3 END) > ?2",
+            review = Phase::Review.as_str()
+        ),
+        params![deck_id, now, EARLY_MS],
+        |r| r.get(0),
+    )?)
 }
 
 /// [`Store::reset_card`] inside the caller's transaction.
@@ -279,17 +286,7 @@ pub(super) fn study_input_in(
     };
     // Phases are our own constant strings, never user input.
     let quote = |p: Phase| format!("'{}'", p.as_str());
-    // Cards that had a review before today and one today: not new today,
-    // and not counted by `new_today`.
-    let reviews_today: u32 = conn.query_row(
-        &format!(
-            "WITH {COUNTED_REVIEWS} SELECT count(*) FROM (
-                 SELECT card_id FROM counted GROUP BY card_id
-                 HAVING min(reviewed_at) < ?2 AND max(reviewed_at) >= ?2)"
-        ),
-        params![deck_id, day_start],
-        |r| r.get(0),
-    )?;
+    let (reviews_today, new_today) = today_counts_in(conn, deck_id, day_start)?;
     let reviews = due(
         &quote(Phase::Review),
         now,
@@ -300,15 +297,6 @@ pub(super) fn study_input_in(
         &format!("{}, {}", quote(Phase::Learning), quote(Phase::Relearning)),
         now.saturating_add(EARLY_MS),
         -1,
-    )?;
-    let new_today: u32 = conn.query_row(
-        &format!(
-            "WITH {COUNTED_REVIEWS} SELECT count(*) FROM (
-                 SELECT card_id FROM counted GROUP BY card_id
-                 HAVING min(reviewed_at) >= ?2)"
-        ),
-        params![deck_id, day_start],
-        |r| r.get(0),
     )?;
     let mut stmt = conn.prepare(
         "SELECT c.id FROM cards c LEFT JOIN card_schedule s ON s.card_id = c.id
@@ -329,6 +317,118 @@ pub(super) fn study_input_in(
         new,
         new_today,
         reviews_today,
+    })
+}
+
+/// How many older cards of deck `deck_id` were reviewed since `day_start`
+/// (`reviews_today`), and how many had their first review since then
+/// (`new_today`), in one pass over the counted reviews. Deleted cards
+/// count: they used today's budget.
+fn today_counts_in(conn: &Connection, deck_id: &str, day_start: i64) -> Result<(u32, u32)> {
+    // A card with reviews before today and today is not new today. `sum`
+    // of no rows is NULL, hence the `coalesce`.
+    let (reviews_today, new_today): (i64, i64) = conn.query_row(
+        &format!(
+            "WITH {COUNTED_REVIEWS} SELECT
+                 coalesce(sum(first < ?2 AND last >= ?2), 0),
+                 coalesce(sum(first >= ?2), 0)
+             FROM (SELECT min(reviewed_at) AS first, max(reviewed_at) AS last
+                   FROM counted GROUP BY card_id)"
+        ),
+        params![deck_id, day_start],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let count = |n: i64| u32::try_from(n.max(0)).unwrap_or(u32::MAX);
+    Ok((count(reviews_today), count(new_today)))
+}
+
+/// What [`Store::list_decks`] shows of deck `deck_id`: the lengths of its
+/// [`study_input_in`] and the counts around them, from counts alone (no
+/// card ids are read), inside the caller's read transaction.
+pub(super) struct DeckCounts {
+    /// `study_input_in(..).new.len()`.
+    pub new: u32,
+    /// `study_input_in(..).reviews.len()`.
+    pub reviews: u32,
+    /// `study_input_in(..).steps.len()`.
+    pub steps: u32,
+    /// Live cards, suspended ones included.
+    pub live: u32,
+    /// Live suspended cards.
+    pub suspended: u32,
+    /// Cards not offered now only because of the daily limits.
+    pub held_back: u32,
+    /// [`Store::next_study_change`].
+    pub next_change_at: Option<i64>,
+}
+
+/// [`DeckCounts`] of live deck `deck_id`: today's counts, then one
+/// aggregate pass over the deck's live cards with the same conditions as
+/// [`study_input_in`] and [`next_study_change_in`]. The deck list test
+/// `list_counts_equal_the_study_session_at_any_time` holds them equal.
+pub(super) fn deck_counts_in(
+    conn: &Connection,
+    deck_id: &str,
+    now: i64,
+    day_start: i64,
+) -> Result<DeckCounts> {
+    let limits = settings_in(conn)?;
+    let (reviews_today, new_today) = today_counts_in(conn, deck_id, day_start)?;
+    // Phases are our own constant strings, never user input.
+    let review = Phase::Review.as_str();
+    let step_phases = format!(
+        "'{}', '{}'",
+        Phase::Learning.as_str(),
+        Phase::Relearning.as_str()
+    );
+    let (live, suspended, new_total, due_reviews, steps, next): (
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+    ) = conn.query_row(
+        &format!(
+            "SELECT count(*),
+                        coalesce(sum(c.suspended <> 0), 0),
+                        coalesce(sum(c.suspended = 0 AND s.card_id IS NULL), 0),
+                        coalesce(sum(c.suspended = 0 AND s.phase = '{review}'
+                                     AND s.due_at <= ?2), 0),
+                        coalesce(sum(c.suspended = 0 AND s.phase IN ({step_phases})
+                                     AND s.due_at <= ?4), 0),
+                        min(CASE WHEN c.suspended <> 0 THEN NULL
+                                 WHEN s.phase = '{review}' AND s.due_at > ?2 THEN s.due_at
+                                 WHEN s.phase <> '{review}' AND s.due_at - ?3 > ?2
+                                     THEN s.due_at - ?3 END)
+                 FROM cards c LEFT JOIN card_schedule s ON s.card_id = c.id
+                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL"
+        ),
+        params![deck_id, now, EARLY_MS, now.saturating_add(EARLY_MS)],
+        |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        },
+    )?;
+    let count = |n: i64| u32::try_from(n.max(0)).unwrap_or(u32::MAX);
+    let new_total = count(new_total);
+    let due_reviews = count(due_reviews);
+    let new = new_total.min(allowance(limits.max_new_per_day, new_today));
+    let reviews = due_reviews.min(allowance(limits.max_reviews_per_day, reviews_today));
+    Ok(DeckCounts {
+        new,
+        reviews,
+        steps: count(steps),
+        live: count(live),
+        suspended: count(suspended),
+        held_back: (new_total - new).saturating_add(due_reviews - reviews),
+        next_change_at: next,
     })
 }
 

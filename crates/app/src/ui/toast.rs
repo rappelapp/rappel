@@ -72,6 +72,14 @@ impl ErrorSlot {
         show_toast_from(widget, toast);
     }
 
+    /// Dismisses this slot's error toast, if one is still shown: what it
+    /// reported has since worked (e.g. the decks could be read again).
+    pub fn clear(&self) {
+        if let Some(old) = self.0.take() {
+            old.dismiss();
+        }
+    }
+
     /// Like [`Self::show`], in a preferences dialog's own toast overlay,
     /// which covers the window's (`adw_preferences_dialog_add_toast`).
     pub fn show_in_preferences(&self, dialog: &adw::PreferencesDialog, what: &str, message: &str) {

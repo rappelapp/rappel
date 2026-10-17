@@ -200,7 +200,7 @@ impl RappelWindow {
         }
         // Checked before keeping the state, so a failure leaves the window
         // without one (and a later retry could still call this).
-        if let Err(err) = state.list_decks() {
+        if let Err(err) = state.list_decks(rappel_core::time::now_ms()) {
             self.decks_unreadable(&err, state.data_dir());
             return;
         }

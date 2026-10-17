@@ -142,10 +142,9 @@ impl AppState {
         &self.0.data_dir
     }
 
-    /// The live decks with what each has to study now, counted like the
-    /// deck page (see [`Store::list_decks`]).
-    pub fn list_decks(&self) -> rappel_core::Result<Vec<DeckSummary>> {
-        let now = rappel_core::time::now_ms();
+    /// The live decks with what each has to study at `now`, counted like
+    /// the deck page (see [`Store::list_decks`]).
+    pub fn list_decks(&self, now: i64) -> rappel_core::Result<Vec<DeckSummary>> {
         let store = self.0.store.borrow();
         let hour = store.settings()?.day_start_hour;
         store.list_decks(now, local_day_start_ms(now, hour))

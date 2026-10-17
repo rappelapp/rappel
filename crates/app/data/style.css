@@ -1,6 +1,7 @@
 /* The app's only stylesheet, loaded by AdwApplication from `style.css` in
  * the resource base path (AdwApplication docs, "Stylesheet"). It styles the
- * grid of a Markdown table and the sideways-scroll hint of wide formulas (render/).
+ * grid of a Markdown table and the sideways-scroll hint of wide formulas (render/),
+ * the focus ring of a chart and the deck rows.
  * No literal colours: lines and shading are the text colour at a low
  * opacity, so they follow light, dark and high-contrast themes. */
 
@@ -44,4 +45,18 @@
   outline: 2px solid alpha(currentColor, 0.6);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* A deck row (data/deck_row.blp). Its line is drawn by libadwaita's
+ * `row label.subtitle` rule, which dims it; the due count is in the accent
+ * colour (`.accent`) and stays at full strength, so it reads as the thing
+ * to do. A little more room above and below than an action row's 6 px, so
+ * the two-line rows are comfortable to point at and to tap. */
+.deck-row label.deck-due {
+  opacity: 1;
+}
+
+.deck-row > box.header > box.title {
+  margin-top: 12px;
+  margin-bottom: 12px;
 }
