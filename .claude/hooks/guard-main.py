@@ -179,10 +179,15 @@ def check(command, cwd, depth=0):
                 check(words[index + 1], cwd, depth + 1)
         elif head == "eval" and depth < 3:
             check(" ".join(words[1:]), cwd, depth + 1)
-        elif head == "git":
-            check_git(words, cwd)
-        elif head == "gh":
-            check_gh(words, cwd)
+        else:
+            # Any wrapper (xvfb-run, timeout, nice, …) may run git or gh
+            # further along, so check from every occurrence.
+            for index, word in enumerate(words):
+                name = word.rsplit("/", 1)[-1]
+                if name == "git":
+                    check_git(words[index:], cwd)
+                elif name == "gh":
+                    check_gh(words[index:], cwd)
 
 
 def main():
