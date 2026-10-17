@@ -11,7 +11,7 @@ use std::cell::{OnceCell, Ref, RefCell};
 use gtk::glib;
 use gtk::subclass::prelude::*;
 use rappel_core::content::plain_summary;
-use rappel_core::domain::{Card, Tag, TaggedCard};
+use rappel_core::domain::{Card, TaggedCard};
 
 use super::card_row::text::row_label;
 use super::tag_pills::text::pill_text;
@@ -114,37 +114,5 @@ impl CardObject {
             &self.tags(),
             self.card().suspended,
         )
-    }
-}
-
-/// The tag names joined by ", ", each on one line (tag names are only
-/// trimmed, so a pasted one can hold a line break or runs of spaces).
-/// Plain text, never markup.
-pub fn tags_line(tags: &[Tag]) -> String {
-    tags.iter()
-        .map(|tag| pill_text(&tag.name))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn tag(name: &str) -> Tag {
-        Tag {
-            id: format!("id-{name}"),
-            name: name.to_owned(),
-        }
-    }
-
-    #[test]
-    fn tags_are_one_plain_line() {
-        assert_eq!(tags_line(&[]), "");
-        assert_eq!(tags_line(&[tag("maths")]), "maths");
-        assert_eq!(
-            tags_line(&[tag("maths"), tag("a\n  b"), tag("<b>x</b>")]),
-            "maths, a b, <b>x</b>"
-        );
     }
 }

@@ -1,5 +1,6 @@
 //! Drop-downs over a list of names.
 
+use gtk::glib;
 use gtk::prelude::*;
 
 /// Shows `labels` in `dropdown`, as plain text (they are the user's deck and
@@ -14,4 +15,252 @@ pub fn set_labels(dropdown: &gtk::DropDown, labels: &[String]) {
         None::<gtk::Expression>,
         "string",
     )));
+}
+
+/// Lets `dropdown` be narrower than its chosen entry: the button shows the
+/// entry on one line ending in "…" when it does not fit, and the popup
+/// keeps every entry whole, with a check mark on the chosen one as
+/// `GtkDropDown`'s own factory has. That factory makes a label that does
+/// not ellipsize, so the button would be at least as wide as the entry
+/// (gtkdropdown.c, `setup_item`); `factory` is used for the button and
+/// `list-factory` for the popup (`GtkDropDown:list-factory` docs). The
+/// entries must be `GtkStringObject`s (a `GtkStringList`, as [`set_labels`]
+/// makes). Plain text, never markup.
+pub fn shrinkable(dropdown: &gtk::DropDown) {
+    dropdown.set_factory(Some(&button_factory()));
+    dropdown.set_list_factory(Some(&popup_factory(dropdown)));
+}
+
+/// A plain label for a `GtkStringObject`, on one line.
+fn string_label() -> gtk::Label {
+    gtk::Label::builder()
+        .xalign(0.0)
+        .use_markup(false)
+        .single_line_mode(true)
+        .build()
+}
+
+fn bind_label(item: &gtk::ListItem, label: &gtk::Label) {
+    if let Some(string) = item.item().and_downcast::<gtk::StringObject>() {
+        label.set_label(&string.string());
+    }
+}
+
+/// The button: the chosen entry, ellipsized.
+fn button_factory() -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let label = string_label();
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        item.set_child(Some(&label));
+    });
+    factory.connect_bind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        if let Some(label) = item.child().and_downcast::<gtk::Label>() {
+            bind_label(item, &label);
+        }
+    });
+    factory
+}
+
+/// Whether the popup's check mark shows on `entry`: it is the drop-down's
+/// `chosen` item (none is never chosen). Compared by item, as GTK's own
+/// factory does (gtkdropdown.c, `selected_item_changed`), not by
+/// `GtkListItem:selected`, which follows the pointer and the arrow keys in
+/// the popup, nor by position, which a search in the popup changes.
+fn same_item(chosen: Option<&glib::Object>, entry: Option<&glib::Object>) -> bool {
+    entry.is_some() && chosen == entry
+}
+
+/// The popup: every entry whole, a check mark on the chosen one (shown by
+/// opacity, as GTK's, so the popup keeps its width).
+///
+/// The check mark's opacity is bound once per row, when the row is made,
+/// to an expression of the drop-down's `selected-item` and the row's
+/// `item`: GTK re-evaluates it when either changes (`gtk_expression_bind`
+/// docs), so a recycled row follows its new item with no handler added on
+/// a bind. The drop-down is held weakly (`GtkObjectExpression` docs: "meant
+/// to break reference cycles"), and the watch goes with the check image,
+/// so rows that are dropped leave nothing connected to the drop-down.
+fn popup_factory(dropdown: &gtk::DropDown) -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    let weak = dropdown.downgrade();
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let label = string_label();
+        label.set_hexpand(true);
+        row.append(&label);
+        let check = gtk::Image::builder()
+            .icon_name("object-select-symbolic")
+            .accessible_role(gtk::AccessibleRole::Presentation)
+            .opacity(0.0)
+            .build();
+        row.append(&check);
+        item.set_child(Some(&row));
+        if let Some(dropdown) = weak.upgrade() {
+            let chosen = gtk::PropertyExpression::new(
+                gtk::DropDown::static_type(),
+                Some(gtk::ObjectExpression::new(&dropdown)),
+                "selected-item",
+            );
+            let entry = gtk::PropertyExpression::new(
+                gtk::ListItem::static_type(),
+                None::<gtk::Expression>,
+                "item",
+            );
+            let opacity = gtk::ClosureExpression::with_callback([chosen, entry], |values| {
+                // values[0] is the row's list item (`this`), then the
+                // drop-down's choice and the row's entry.
+                let object = |i: usize| {
+                    values
+                        .get(i)
+                        .and_then(|v| v.get::<Option<glib::Object>>().ok())
+                        .flatten()
+                };
+                check_opacity(same_item(object(1).as_ref(), object(2).as_ref()))
+            });
+            opacity.bind(&check, "opacity", Some(item));
+        }
+    });
+    factory.connect_bind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        if let Some(label) = item
+            .child()
+            .and_then(|row| row.first_child())
+            .and_downcast::<gtk::Label>()
+        {
+            bind_label(item, &label);
+        }
+    });
+    factory
+}
+
+/// The check mark's opacity: shown on the chosen entry only.
+fn check_opacity(chosen: bool) -> f64 {
+    if chosen { 1.0 } else { 0.0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The check mark is on the drop-down's chosen item, wherever it is in
+    /// the popup, and on nothing when nothing is chosen.
+    #[test]
+    fn the_check_mark_is_on_the_chosen_entry() {
+        crate::testing::with_widgets(|| {
+            let dropdown = gtk::DropDown::builder().build();
+            set_labels(
+                &dropdown,
+                &["All".to_owned(), "a".to_owned(), "b".to_owned()],
+            );
+            let model = dropdown.model().expect("set_labels sets a model");
+            dropdown.set_selected(2);
+            let chosen = dropdown.selected_item();
+            assert!(same_item(chosen.as_ref(), model.item(2).as_ref()));
+            assert!(!same_item(chosen.as_ref(), model.item(1).as_ref()));
+            assert!(!same_item(None, model.item(1).as_ref()));
+            assert!(!same_item(None, None));
+        });
+    }
+
+    /// All the check images under `widget`, in order.
+    fn checks(widget: &gtk::Widget) -> Vec<gtk::Image> {
+        let mut found = Vec::new();
+        if let Some(image) = widget.downcast_ref::<gtk::Image>() {
+            found.push(image.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            found.extend(checks(&c));
+            child = c.next_sibling();
+        }
+        found
+    }
+
+    /// The popup's rows, made by the factory in a shown list: the check
+    /// mark follows the drop-down's choice and the rows' items, through new
+    /// models too, and once the rows are gone nothing is left connected to
+    /// the drop-down.
+    #[test]
+    fn the_popup_rows_follow_the_choice_and_leave_no_handler() {
+        crate::testing::with_widgets(|| {
+            let names = |n: usize| (0..n).map(|i| format!("entry {i}")).collect::<Vec<_>>();
+            let dropdown = gtk::DropDown::builder().build();
+            set_labels(&dropdown, &names(3));
+            let pending = |dropdown: &gtk::DropDown| {
+                glib::signal::signal_has_handler_pending(
+                    dropdown,
+                    glib::subclass::signal::SignalId::lookup("notify", glib::Object::static_type())
+                        .expect("GObject has notify"),
+                    Some(glib::Quark::from_str("selected-item")),
+                    true,
+                )
+            };
+            assert!(!pending(&dropdown));
+            let list = gtk::ListView::new(None::<gtk::NoSelection>, Some(popup_factory(&dropdown)));
+            let show = |dropdown: &gtk::DropDown, list: &gtk::ListView| {
+                let model = dropdown.model().expect("set_labels sets a model");
+                list.set_model(Some(&gtk::NoSelection::new(Some(model))));
+                assert!(crate::testing::settle_until(
+                    || checks(list.upcast_ref()).len() >= 3,
+                    std::time::Duration::from_secs(5)
+                ));
+            };
+            let window = gtk::Window::builder()
+                .default_width(300)
+                .default_height(300)
+                .child(&list)
+                .build();
+            window.present();
+            let opacities = |list: &gtk::ListView| -> Vec<f64> {
+                checks(list.upcast_ref())
+                    .iter()
+                    .map(WidgetExt::opacity)
+                    .collect()
+            };
+            show(&dropdown, &list);
+            dropdown.set_selected(1);
+            assert_eq!(opacities(&list), [0.0, 1.0, 0.0]);
+            dropdown.set_selected(2);
+            assert_eq!(opacities(&list), [0.0, 0.0, 1.0]);
+            // New models (a save, an import): the recycled rows follow.
+            for _ in 0..5 {
+                set_labels(&dropdown, &names(3));
+                dropdown.set_selected(0);
+                show(&dropdown, &list);
+            }
+            assert_eq!(opacities(&list), [1.0, 0.0, 0.0]);
+            assert_eq!(checks(list.upcast_ref()).len(), 3, "one check per row");
+            // The rows' watches are on the drop-down while they live...
+            assert!(pending(&dropdown));
+            let one = checks(list.upcast_ref())[0].downgrade();
+            let lw = list.downgrade();
+            window.destroy();
+            drop(window);
+            drop(list);
+            assert!(
+                crate::testing::settle_until(
+                    || one.upgrade().is_none() && lw.upgrade().is_none(),
+                    std::time::Duration::from_secs(5)
+                ),
+                "the rows are gone"
+            );
+            // ...and go with them.
+            assert!(
+                !pending(&dropdown),
+                "a row's watch is still on the drop-down"
+            );
+        });
+    }
 }
