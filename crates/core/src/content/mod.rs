@@ -13,7 +13,7 @@ mod plain;
 pub use parse::parse;
 #[cfg(test)]
 use plain::PREVIEW_CHARS;
-pub use plain::{one_line_summary, plain_summary, plain_text};
+pub use plain::{one_line_summary, plain_summary, plain_text, search_text};
 
 /// How deep containers (block quotes, lists, emphasis, links…) nest at
 /// most. Deeper content is flattened into the deepest container, so no

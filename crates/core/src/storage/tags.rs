@@ -144,7 +144,12 @@ impl Store {
 
 /// The tag named `name` (already checked and trimmed): the one with its name
 /// key if there is one, else a new tag.
-fn find_or_create_tag(conn: &Connection, ids: &mut IdGen, name: &str, now: i64) -> Result<Tag> {
+pub(super) fn find_or_create_tag(
+    conn: &Connection,
+    ids: &mut IdGen,
+    name: &str,
+    now: i64,
+) -> Result<Tag> {
     let key = name_key(name);
     if let Some(tag) = tag_by_key(conn, &key)? {
         return Ok(tag);

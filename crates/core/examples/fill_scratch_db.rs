@@ -3,7 +3,7 @@
 //! try studying without waiting days (ADR 0014).
 //!
 //! ```text
-//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags]
+//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags] [--suspended N]
 //! RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 //! ```
 //!
@@ -18,6 +18,8 @@
 //! 11 display formulas), and one card with invalid LaTeX. With `--tags`, the
 //! cards of the first deck get tags (ADR 0029): a few names that differ by
 //! accents and case, one card with a very long list, every fifth card none.
+//! With `--suspended N`, the last N cards of the first deck are suspended
+//! (ADR 0035), so they never overlap the first `--due N` ones.
 //! The directory
 //! must be absolute and is never one of the
 //! app's own data directories, release or debug: this is for throwaway
@@ -53,7 +55,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<String, String> {
-    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags]";
+    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags] [--suspended N]";
     let number = |arg: Option<std::ffi::OsString>| {
         arg.as_ref()
             .and_then(|n| n.to_str())
@@ -63,6 +65,7 @@ fn run() -> Result<String, String> {
     let mut args = std::env::args_os().skip(1);
     let dir = PathBuf::from(args.next().ok_or(usage)?);
     let (mut count, mut due, mut markdown, mut math, mut tags) = (None, 0, false, false, false);
+    let mut suspended = 0;
     while let Some(arg) = args.next() {
         if arg == "--due" {
             due = number(args.next())?;
@@ -72,6 +75,8 @@ fn run() -> Result<String, String> {
             math = true;
         } else if arg == "--tags" {
             tags = true;
+        } else if arg == "--suspended" {
+            suspended = number(args.next())?;
         } else if count.is_none() {
             count = Some(number(Some(arg))?);
         } else {
@@ -84,6 +89,11 @@ fn run() -> Result<String, String> {
     }
     if due > count {
         return Err(format!("--due {due} is more than the {count} cards"));
+    }
+    if due.saturating_add(suspended) > count {
+        return Err(format!(
+            "--due {due} and --suspended {suspended} are more than the {count} cards"
+        ));
     }
     if !dir.is_absolute() {
         return Err(format!("{} is not an absolute path", dir.display()));
@@ -99,29 +109,7 @@ fn run() -> Result<String, String> {
     let mut store = Store::open(&dir).map_err(|e| e.to_string())?;
     let mut added = Vec::new();
     if count > 0 {
-        let deck = store
-            .create_deck(&format!("Scratch ({count} cards)"))
-            .map_err(|e| e.to_string())?;
-        let now = now_ms();
-        for i in 0..count {
-            let (front, back) = sample(i);
-            let card = store
-                .add_card(&deck.id, &front, &back)
-                .map_err(|e| e.to_string())?;
-            if tags {
-                for name in sample_tags(i) {
-                    store.add_tag(&card.id, name).map_err(|e| e.to_string())?;
-                }
-            }
-            if i < due {
-                for (grade, at) in past_reviews(i, now) {
-                    store
-                        .record_review(&card.id, grade, Duration::from_secs(8), at)
-                        .map_err(|e| e.to_string())?;
-                }
-            }
-        }
-        added.push(format!("{count} cards ({due} due now) to “{}”", deck.name));
+        added.push(fill_main_deck(&mut store, count, due, suspended, tags)?);
     }
     if markdown {
         let deck = store
@@ -148,6 +136,48 @@ fn run() -> Result<String, String> {
         "Added {} in {}",
         added.join(" and "),
         dir.display()
+    ))
+}
+
+/// The first deck: `count` cards, the first `due` of them with a past review
+/// history, the last `suspended` of them suspended. Returns what to report.
+fn fill_main_deck(
+    store: &mut Store,
+    count: usize,
+    due: usize,
+    suspended: usize,
+    tags: bool,
+) -> Result<String, String> {
+    let deck = store
+        .create_deck(&format!("Scratch ({count} cards)"))
+        .map_err(|e| e.to_string())?;
+    let now = now_ms();
+    let mut ids = Vec::with_capacity(count);
+    for i in 0..count {
+        let (front, back) = sample(i);
+        let card = store
+            .add_card(&deck.id, &front, &back)
+            .map_err(|e| e.to_string())?;
+        ids.push(card.id.clone());
+        if tags {
+            for name in sample_tags(i) {
+                store.add_tag(&card.id, name).map_err(|e| e.to_string())?;
+            }
+        }
+        if i < due {
+            for (grade, at) in past_reviews(i, now) {
+                store
+                    .record_review(&card.id, grade, Duration::from_secs(8), at)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    store
+        .set_suspended(&ids[count - suspended..], true)
+        .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "{count} cards ({due} due now, {suspended} suspended) to “{}”",
+        deck.name
     ))
 }
 

@@ -34,6 +34,7 @@ mod imp {
                     back_md: String::new(),
                     created_at: 0,
                     updated_at: 0,
+                    suspended: false,
                 }),
                 preview: RefCell::new(String::new()),
                 tags_line: RefCell::new(String::new()),

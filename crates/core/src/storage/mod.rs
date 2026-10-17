@@ -3,12 +3,14 @@
 //! See ADR 0005 for the decisions behind this module.
 
 mod backup;
+mod bulk;
 mod cards;
 mod decks;
 mod migrations;
 mod restore;
 mod review;
 mod schedule;
+mod search;
 mod settings;
 mod stats;
 mod tags;
@@ -26,9 +28,12 @@ use crate::time::now_ms;
 pub use backup::{BackupInfo, list_backups};
 use backup::{check_rows, has_backup_for_day};
 pub(crate) use backup::{create_backup, prune_backups};
+pub use bulk::Moved;
 use migrations::{MIGRATIONS, Migration, latest, migrate};
 pub use restore::{Restored, finish_restore, restore_backup, start_fresh};
 pub(crate) use schedule::rebuild_cards;
+pub(crate) use search::index_card_in;
+pub use search::{BrowseQuery, BrowseRow, CardStatus, StateFilter};
 pub(crate) use settings::{StoredSettings, replace_settings, scheduler_in, stored_settings};
 pub use stats::Scope;
 

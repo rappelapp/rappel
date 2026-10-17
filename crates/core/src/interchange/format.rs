@@ -70,6 +70,10 @@ pub(super) struct CardRecord {
     pub back_md: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Excluded from study (ADR 0035). Always written; a file without it
+    /// (made before suspension existed) reads as `false`.
+    #[serde(default)]
+    pub suspended: bool,
     /// Required, though it may be `null`: serde would otherwise read a
     /// missing field as `null`, which would make a deleted row live.
     #[serde(deserialize_with = "Option::deserialize")]

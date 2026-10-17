@@ -164,6 +164,7 @@ fn card() -> Card {
         back_md: String::new(),
         created_at: T0 - DAY_MS,
         updated_at: T0 - 1,
+        suspended: false,
     }
 }
 

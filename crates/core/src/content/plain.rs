@@ -2,6 +2,7 @@
 //! and the card list's one-line previews.
 
 use super::{Block, Document, Inline, parse};
+use crate::domain::search_key;
 
 /// The longest [`plain_summary`], in characters. A label lays out all of
 /// its text even when it ellipsises, so a huge front is cut before it gets
@@ -15,6 +16,15 @@ pub fn plain_text(doc: &Document) -> String {
     let mut out = String::new();
     push_blocks_text(&doc.blocks, &mut out);
     out
+}
+
+/// What the search index holds for one side (ADR 0035): the [`plain_text`]
+/// of `md`, in lower case without accents ([`search_key`]), so a query
+/// folded the same way matches what the user reads and never the Markdown
+/// syntax.
+#[must_use]
+pub fn search_text(md: &str) -> String {
+    search_key(&plain_text(&parse(md)))
 }
 
 /// How much of a side [`plain_summary`] parses, in bytes. 200 characters

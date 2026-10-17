@@ -70,7 +70,7 @@ fn read_document(conn: &Connection, now: i64) -> Result<Document> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let cards = tx
         .prepare(
-            "SELECT id, deck_id, front_md, back_md, created_at, updated_at, deleted_at
+            "SELECT id, deck_id, front_md, back_md, created_at, updated_at, suspended, deleted_at
              FROM cards ORDER BY id",
         )?
         .query_map([], |r| {
@@ -81,7 +81,8 @@ fn read_document(conn: &Connection, now: i64) -> Result<Document> {
                 back_md: r.get(3)?,
                 created_at: r.get(4)?,
                 updated_at: r.get(5)?,
-                deleted_at: r.get(6)?,
+                suspended: r.get(6)?,
+                deleted_at: r.get(7)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

@@ -113,7 +113,7 @@ fn scheduled_cards(conn: &Connection, deck: Option<&str>) -> Result<Vec<Schedule
         "SELECT s.due_at, s.stability, s.difficulty, s.last_review_at
          FROM card_schedule s
          JOIN cards c ON c.id = s.card_id JOIN decks d ON d.id = c.deck_id
-         WHERE c.deleted_at IS NULL AND d.deleted_at IS NULL
+         WHERE c.deleted_at IS NULL AND d.deleted_at IS NULL AND c.suspended = 0
            AND (?1 IS NULL OR c.deck_id = ?1)",
     )?;
     let rows = stmt.query_map([deck], |r| {

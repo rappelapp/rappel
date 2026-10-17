@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header). The product vision below and the order in §4 and §5 are set by ADR 0034.
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page), export format version 2 (§4.1), the statistics and card information in core (§4.7, ADR 0032), and their pages (ADR 0033: Statistics from the main menu and each deck's ⋮ menu, Card Information from each card's ⋮ menu and the review header), and the search index, suspension and bulk writes in core (ADR 0035; the All Cards page is next). The product vision below and the order in §4 and §5 are set by ADR 0034.
 
 ---
 
@@ -84,7 +84,7 @@ rappel/
 Keep everything from v0 (migration 0001, ADR 0005). Ids are UUIDv7 stored as `TEXT`. Timestamps are UTC milliseconds. `cards` also has an internal `seq INTEGER PRIMARY KEY`, a stable integer key for FTS5 that is never exported. `review_events` is the source of truth; `card_schedule` is a cache rebuilt from it. Triggers forbid `UPDATE`/`DELETE` on `review_events`, and a card with reviews cannot be deleted (`ON DELETE RESTRICT`), so card deletion is a soft delete. Add, via numbered migrations:
 
 ```sql
-ALTER TABLE cards ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE cards ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0;  -- excluded from study and from the schedule's statistics (ADR 0035)
 
 tags(id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE);
 -- Flat, unique by name key (trimmed, NFC, lower-cased, as decks), never deleted (ADR 0029).
@@ -106,8 +106,9 @@ settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 media(hash TEXT PRIMARY KEY, mime TEXT NOT NULL, bytes INTEGER NOT NULL, created_at INTEGER NOT NULL);
 
--- Full-text search
-CREATE VIRTUAL TABLE cards_fts USING fts5(front_md, back_md, content='cards', content_rowid='seq');
+-- Full-text search (ADR 0035): a cache of the plain text of each side (what the user
+-- reads, folded to lower case without accents), written by the store with every card write.
+CREATE VIRTUAL TABLE cards_fts USING fts5(front, back, tokenize = 'unicode61 remove_diacritics 0');  -- rowid = cards.seq
 ```
 
 Storage rules:
@@ -122,11 +123,11 @@ Storage rules:
 The order, set by ADR 0034: browser and search (§4.6), streaming import (§4.1), images (§4.3), audio (§4.9), clean-up (§4.10), polish for phone and touch (§4.8), Anki import (§5), translation (§5), release (§5). Sections keep their numbers; the order above is the priority, not the numbering. Statistics (§4.7) and the editor (§4.4) are done. The rest of §4.5 comes with the browser: suspend (the `suspended` migration of §3, the action in the review and card menus, and the browser's filter and bulk action) and delete during review.
 
 ### 4.1 Export / import
-- Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 2`, `exported_at`, and all decks, cards, tags, card tags and the full review log with its resets and undos, deleted rows included with their `deleted_at`. It also has `settings` (the keys the user changed, ADR 0027) and `media` (empty until images or audio exist; their files go into `media/`).
+- Export everything to one `.rappel` file (older `.cards` files import too, ADR 0020): a zip archive holding exactly `cards.json` and a `media/` folder (ADR 0017). `cards.json` has `"format_version": 2`, `exported_at`, and all decks, cards, tags, card tags and the full review log with its resets and undos, deleted rows included with their `deleted_at`. Each card record has `suspended` (always written; a file without it reads as `false`, ADR 0035). It also has `settings` (the keys the user changed, ADR 0027) and `media` (empty until images or audio exist; their files go into `media/`).
 - Versions: version 1 was written only by test versions (0.2.0-alpha, and `.cards` files) and is refused with "made by an early test version of Rappel and cannot be imported" (ADR 0017). **From 1.0 on, every format version a release wrote stays importable by every later release.**
 - Deterministic: the same database exported at the same time gives the same bytes (lists sorted by id, fixed zip metadata). Only `exported_at` differs between exports.
 - Import into an empty or existing DB in two steps: `plan_import` checks the file and returns a summary without writing anything (new / already present / conflicts, e.g. "12 decks, 840 cards, 5,210 reviews"); `apply_import` backs up the database, then writes in one transaction and rebuilds the schedule of the affected cards from the log.
-- Merge rules: an id not in the DB is added; the same id with the same content is skipped. A tag whose name key a DB tag with another id has is mapped onto that tag (its card tags attach to the DB's id), not added; a tag with the same id and another name is a conflict, and so is an undo of an entry the DB has already undone. The file's settings are applied only into a DB without decks (deleted ones included); otherwise the DB keeps its own. A row that differs only by being deleted is merged: deleted in the DB and live in the file, it is revived (`deleted_at` cleared; a revived deck also revives the cards deleted with it, as `undelete_deck` does, except those the file has, which follow their own row); live in the DB and deleted in the file, it is skipped (an import never deletes); deleted on both sides, at whatever times, it is already present. The same id with any other difference, or a live deck name (revived ones included) already used by another live deck, is a conflict, and any conflict refuses the whole import. The summary also counts revived rows. Importing the same file twice changes nothing.
+- Merge rules: an id not in the DB is added; the same id with the same content is skipped. A tag whose name key a DB tag with another id has is mapped onto that tag (its card tags attach to the DB's id), not added; a tag with the same id and another name is a conflict, and so is an undo of an entry the DB has already undone. The file's settings are applied only into a DB without decks (deleted ones included); otherwise the DB keeps its own. A card that differs only in `suspended` is already present: the database keeps its own flag, since an import never changes how a live card is studied (ADR 0035). A row that differs only by being deleted is merged: deleted in the DB and live in the file, it is revived (`deleted_at` cleared; a revived deck also revives the cards deleted with it, as `undelete_deck` does, except those the file has, which follow their own row); live in the DB and deleted in the file, it is skipped (an import never deletes); deleted on both sides, at whatever times, it is already present. The same id with any other difference, or a live deck name (revived ones included) already used by another live deck, is a conflict, and any conflict refuses the whole import. The summary also counts revived rows. Importing the same file twice changes nothing.
 - The file is untrusted. A file is refused if any of these fail: size limits; the exact entry names (nothing is extracted, so no zip-slip); a supported format version; every id a lowercase `UUIDv7`; references that resolve; valid kinds, grades and timestamps; undos that cancel an earlier review or reset of the same card, once; tag names without a NUL or a comma; settings within their ranges; no NUL character in a deck name or card side.
 - Round-trip test: export → import into empty DB → export again produces an identical file.
 - **Streaming import** (next, after the browser): `plan_import` and `apply_import` read the archive entry by entry and keep memory bounded, so a file with a large media folder does not need to fit in memory. The checks and merge rules above do not change, and a refused file still writes nothing, so media are not put in the store before the plan is confirmed.
@@ -157,8 +158,9 @@ The order, set by ADR 0034: browser and search (§4.6), streaming import (§4.1)
 - Session summary at the end: cards reviewed, pass rate, time spent.
 
 ### 4.6 Browser and search
-- A "All Cards" page: search field (FTS5), filter by deck, tag, state (new / due / suspended).
-- Multi-select: move to deck, add tag, suspend, delete.
+- An "All Cards" page: full-text search (FTS5) over the plain text of both sides, ignoring case and accents, with each word matched as a prefix; filter by deck, tag and state (new / learning / due / suspended). A virtualised list, fast at 5,000 cards and more.
+- Multi-select: move to deck, add or remove a tag, suspend or unsuspend, reset progress, delete; each with an Undo toast where the core can undo it. Open a card's editor and Card Information from the list.
+- Suspend: a suspended card is excluded from study and from the schedule's statistics, and kept otherwise. *Core done (ADR 0035): the index, the flag, the bulk writes and the `browse` query; the page comes next.*
 
 ### 4.7 Stats
 - Per deck and global: reviews per day and time studied per day (last 30 days, bar chart), pass rate, due forecast (next 14 days), and **expected retention** today = mean FSRS retrievability over reviewed cards.

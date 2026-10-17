@@ -122,6 +122,159 @@ fn planning_a_five_thousand_card_import_is_fast() {
     assert!(plan < Duration::from_millis(PLAN_IMPORT_MS), "{plan:?}");
 }
 
+/// A scratch store whose cards also have tags and a second deck, as the
+/// All Cards page meets them.
+fn tagged_scratch_store() -> (Store, String, Vec<String>) {
+    let (mut store, deck) = scratch_store();
+    let ids: Vec<String> = store
+        .list_cards(&deck)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    for (i, id) in ids.iter().enumerate() {
+        store
+            .add_tag_at(id, &format!("tag {}", i % 40), T0)
+            .unwrap();
+    }
+    (store, deck, ids)
+}
+
+#[test]
+fn browsing_five_thousand_cards_is_fast() {
+    use crate::storage::{BrowseQuery, StateFilter};
+
+    let (mut store, deck, ids) = tagged_scratch_store();
+    store.set_suspended(&ids[4_000..4_100], true).unwrap();
+    let tag = store.tags().unwrap()[0].id.clone();
+    let run = |what: &str, q: BrowseQuery| {
+        let (t, rows) = fastest(what, 3, || store.browse(&q, NOW).unwrap());
+        (t, rows.len())
+    };
+    let (all, n) = run("browse (all)", BrowseQuery::default());
+    assert_eq!(n, CARDS);
+    let (text, n) = run(
+        "browse (text)",
+        BrowseQuery {
+            text: "card 12".to_owned(),
+            ..BrowseQuery::default()
+        },
+    );
+    assert_eq!(n, 111, "Card 12, 120-129, 1200-1299");
+    let (rare, n) = run(
+        "browse (one word)",
+        BrowseQuery {
+            text: "card 4999".to_owned(),
+            ..BrowseQuery::default()
+        },
+    );
+    assert_eq!(n, 1);
+    let (filtered, n) = run(
+        "browse (deck, tag, due)",
+        BrowseQuery {
+            deck_id: Some(deck),
+            tag_id: Some(tag),
+            state: Some(StateFilter::Due),
+            ..BrowseQuery::default()
+        },
+    );
+    assert!(n > 0);
+    let (suspended, n) = run(
+        "browse (suspended)",
+        BrowseQuery {
+            state: Some(StateFilter::Suspended),
+            ..BrowseQuery::default()
+        },
+    );
+    assert_eq!(n, 100);
+    for t in [all, text, rare, filtered, suspended] {
+        assert!(t < Duration::from_millis(BROWSE_MS), "{t:?}");
+    }
+}
+
+#[test]
+fn browsing_twenty_thousand_cards_is_fast() {
+    use crate::storage::BrowseQuery;
+
+    let mut store = Store::in_memory();
+    let deck = store.create_deck_at("Big", T0).unwrap().id;
+    for i in 0..20_000 {
+        store
+            .add_card_at(&deck, &format!("Card {i}"), "back", T0)
+            .unwrap();
+    }
+    let (all, rows) = fastest("browse 20,000 (all)", 3, || {
+        store.browse(&BrowseQuery::default(), NOW).unwrap()
+    });
+    assert_eq!(rows.len(), 20_000);
+    let (text, rows) = fastest("browse 20,000 (text)", 3, || {
+        store
+            .browse(
+                &BrowseQuery {
+                    text: "card 19999".to_owned(),
+                    ..BrowseQuery::default()
+                },
+                NOW,
+            )
+            .unwrap()
+    });
+    assert_eq!(rows.len(), 1);
+    assert!(all < Duration::from_millis(4 * BROWSE_MS), "{all:?}");
+    assert!(text < Duration::from_millis(4 * BROWSE_MS), "{text:?}");
+}
+
+#[test]
+fn bulk_writes_on_five_thousand_cards_are_fast() {
+    let (mut store, deck, ids) = tagged_scratch_store();
+    let other = store.create_deck_at("Other", T0).unwrap().id;
+    let (suspend, changed) = fastest("set_suspended (5,000)", 1, || {
+        store.set_suspended(&ids, true).unwrap()
+    });
+    assert_eq!(changed.len(), CARDS);
+    let (moved, m) = fastest("move_cards (5,000)", 1, || {
+        store.move_cards(&ids, &other).unwrap()
+    });
+    assert_eq!(m.len(), CARDS);
+    let (unmove, back) = fastest("unmove_cards (5,000)", 1, || {
+        store.unmove_cards(&m).unwrap()
+    });
+    assert_eq!(back, CARDS);
+    let (tagged, _) = fastest("add_tag_to_cards (5,000)", 1, || {
+        store.add_tag_to_cards_at(&ids, "bulk", T0).unwrap()
+    });
+    let (reset, events) = fastest("reset_cards (5,000)", 1, || {
+        store.reset_cards(&ids, NOW).unwrap()
+    });
+    let (undo, skipped) = fastest("undo_entries (5,000)", 1, || {
+        store.undo_entries(&events, NOW + 1).unwrap()
+    });
+    assert_eq!(skipped.len(), 0);
+    let (deleted, ()) = fastest("delete_cards (5,000)", 1, || {
+        store.delete_cards_at(&ids, NOW + 2).unwrap();
+    });
+    let (undeleted, back) = fastest("undelete_cards (5,000)", 1, || {
+        store.undelete_cards(&ids).unwrap()
+    });
+    assert_eq!(back, CARDS);
+    assert_eq!(store.list_cards(&deck).unwrap().len(), CARDS);
+    for t in [
+        suspend, moved, unmove, tagged, reset, undo, deleted, undeleted,
+    ] {
+        assert!(t < Duration::from_millis(BULK_MS), "{t:?}");
+    }
+}
+
+#[test]
+fn rebuilding_the_search_index_of_five_thousand_cards_is_fast() {
+    let (mut store, _) = scratch_store();
+    let (t, ()) = fastest("rebuild_search_index (5,000)", 3, || {
+        let tx = store.conn.transaction().unwrap();
+        crate::storage::search::rebuild_search_index(&tx).unwrap();
+        tx.commit().unwrap();
+    });
+    assert!(t < Duration::from_millis(REBUILD_INDEX_MS), "{t:?}");
+}
+
 /// `study_input` + `next_study_change` (measured 14 ms), and `list_decks`
 /// (12 ms), each.
 const STUDY_MS: u64 = 150;
@@ -132,3 +285,11 @@ const LIST_TAGGED_MS: u64 = 300;
 /// Planning the import of the 5,000-card export into an empty store
 /// (measured 80 ms).
 const PLAN_IMPORT_MS: u64 = 1_000;
+/// `browse` of 5,000 cards with tags, each query (measured 13 to 28 ms; 20,000
+/// cards: 48 ms, with a bound four times as long).
+const BROWSE_MS: u64 = 500;
+/// Each bulk write on 5,000 cards. The slowest is `undo_entries` (measured
+/// 0.9 s: it replays every card's log); the others take 25 to 420 ms.
+const BULK_MS: u64 = 9_000;
+/// The migration's index backfill of 5,000 cards (measured 87 ms).
+const REBUILD_INDEX_MS: u64 = 1_000;

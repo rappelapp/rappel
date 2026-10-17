@@ -418,7 +418,7 @@ fn classify_decks<'d>(
 
 fn classify_cards(conn: &Connection, doc: &Document, rows: &mut Classified) -> Result<()> {
     let mut stmt = conn.prepare(
-        "SELECT id, deck_id, front_md, back_md, created_at, updated_at, deleted_at
+        "SELECT id, deck_id, front_md, back_md, created_at, updated_at, suspended, deleted_at
          FROM cards WHERE id = ?1",
     )?;
     for (i, c) in doc.cards.iter().enumerate() {
@@ -431,7 +431,8 @@ fn classify_cards(conn: &Connection, doc: &Document, rows: &mut Classified) -> R
                     back_md: r.get(3)?,
                     created_at: r.get(4)?,
                     updated_at: r.get(5)?,
-                    deleted_at: r.get(6)?,
+                    suspended: r.get(6)?,
+                    deleted_at: r.get(7)?,
                 })
             })
             .optional()?;
@@ -441,8 +442,11 @@ fn classify_cards(conn: &Connection, doc: &Document, rows: &mut Classified) -> R
             continue;
         };
         let stored_deleted = s.deleted_at;
+        // The database keeps its own `suspended`: an import never changes
+        // how a live card is studied (ADR 0035).
         let rest_equal = CardRecord {
             deleted_at: c.deleted_at,
+            suspended: c.suspended,
             ..s
         } == *c;
         match compare(rest_equal, stored_deleted, c.deleted_at) {
@@ -591,8 +595,8 @@ fn insert_rows<'d>(
         ])?;
     }
     let mut card = conn.prepare(
-        "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at, suspended, deleted_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )?;
     for c in rows.new_cards.iter().map(|&i| &doc.cards[i]) {
         card.execute(params![
@@ -602,8 +606,10 @@ fn insert_rows<'d>(
             c.back_md,
             c.created_at,
             c.updated_at,
+            c.suspended,
             c.deleted_at
         ])?;
+        crate::storage::index_card_in(conn, &c.id, &c.front_md, &c.back_md)?;
     }
     let mut tag = conn.prepare("INSERT INTO tags (id, name, name_key) VALUES (?1, ?2, ?3)")?;
     for t in rows.new_tags.iter().map(|&i| &doc.tags[i]) {

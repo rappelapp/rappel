@@ -13,7 +13,7 @@ use crate::domain::{CardState, EventKind, Grade, Phase, ReviewEvent};
 use crate::error::{Error, Result};
 use crate::id::IdGen;
 use crate::scheduling::session::{Due, EARLY_MS, StudyInput, allowance};
-use crate::scheduling::surviving;
+use crate::scheduling::{Scheduler, surviving};
 
 impl Store {
     /// Records that card `card_id` was answered with `grade` after
@@ -72,17 +72,7 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        live_card(&tx, card_id)?;
-        let reviewed_at = next_entry_time(&tx, &mut self.ids, card_id, now)?;
-        let event = ReviewEvent {
-            id: self.ids.next(now)?,
-            card_id: card_id.to_owned(),
-            reviewed_at,
-            kind: EventKind::Reset,
-            duration_ms: 0,
-        };
-        insert_event(&tx, &event)?;
-        write_card_state(&tx, card_id, &CardState::New)?;
+        let event = reset_in(&tx, &mut self.ids, card_id, now)?;
         tx.commit()?;
         Ok(event)
     }
@@ -105,28 +95,8 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        live_card(&tx, card_id)?;
-        let log = read_log(&tx, card_id)?;
-        if !log.iter().any(|e| e.id == event_id) {
-            return Err(Error::EventNotFound(event_id.to_owned()));
-        }
-        if surviving(&log)?.last().is_none_or(|e| e.id != event_id) {
-            return Err(Error::NotLatestEntry(event_id.to_owned()));
-        }
-        let reviewed_at = next_entry_time(&tx, &mut self.ids, card_id, now)?;
-        let event = ReviewEvent {
-            id: self.ids.next(now)?,
-            card_id: card_id.to_owned(),
-            reviewed_at,
-            kind: EventKind::Undo {
-                undoes: event_id.to_owned(),
-            },
-            duration_ms: 0,
-        };
-        insert_event(&tx, &event)?;
-        // Rebuilt from the log, never patched: the result must equal a
-        // replay of the log that never had the cancelled entry (#11).
-        rebuild_cards(&tx, &scheduler_in(&tx)?, [card_id])?;
+        let scheduler = scheduler_in(&tx)?;
+        let event = undo_in(&tx, &mut self.ids, &scheduler, card_id, event_id, now)?;
         tx.commit()?;
         Ok(event)
     }
@@ -179,7 +149,7 @@ impl Store {
                 "SELECT min(CASE WHEN s.phase = '{review}' THEN s.due_at
                                  ELSE s.due_at - ?3 END)
                  FROM cards c JOIN card_schedule s ON s.card_id = c.id
-                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL
+                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND c.suspended = 0
                    AND (CASE WHEN s.phase = '{review}' THEN s.due_at
                              ELSE s.due_at - ?3 END) > ?2",
                 review = Phase::Review.as_str()
@@ -190,6 +160,61 @@ impl Store {
         tx.finish()?;
         Ok(next)
     }
+}
+
+/// [`Store::reset_card`] inside the caller's transaction.
+pub(super) fn reset_in(
+    tx: &Connection,
+    ids: &mut IdGen,
+    card_id: &str,
+    now: i64,
+) -> Result<ReviewEvent> {
+    live_card(tx, card_id)?;
+    let reviewed_at = next_entry_time(tx, ids, card_id, now)?;
+    let event = ReviewEvent {
+        id: ids.next(now)?,
+        card_id: card_id.to_owned(),
+        reviewed_at,
+        kind: EventKind::Reset,
+        duration_ms: 0,
+    };
+    insert_event(tx, &event)?;
+    write_card_state(tx, card_id, &CardState::New)?;
+    Ok(event)
+}
+
+/// [`Store::undo`] inside the caller's transaction.
+pub(super) fn undo_in(
+    tx: &Connection,
+    ids: &mut IdGen,
+    scheduler: &Scheduler,
+    card_id: &str,
+    event_id: &str,
+    now: i64,
+) -> Result<ReviewEvent> {
+    live_card(tx, card_id)?;
+    let log = read_log(tx, card_id)?;
+    if !log.iter().any(|e| e.id == event_id) {
+        return Err(Error::EventNotFound(event_id.to_owned()));
+    }
+    if surviving(&log)?.last().is_none_or(|e| e.id != event_id) {
+        return Err(Error::NotLatestEntry(event_id.to_owned()));
+    }
+    let reviewed_at = next_entry_time(tx, ids, card_id, now)?;
+    let event = ReviewEvent {
+        id: ids.next(now)?,
+        card_id: card_id.to_owned(),
+        reviewed_at,
+        kind: EventKind::Undo {
+            undoes: event_id.to_owned(),
+        },
+        duration_ms: 0,
+    };
+    insert_event(tx, &event)?;
+    // Rebuilt from the log, never patched: the result must equal a
+    // replay of the log that never had the cancelled entry (#11).
+    rebuild_cards(tx, scheduler, [card_id])?;
+    Ok(event)
 }
 
 /// The time for a new entry of `card_id` written at `now`, inside the
@@ -239,7 +264,8 @@ pub(super) fn study_input_in(
     let due = |phases: &str, until: i64, limit: i64| -> Result<Vec<Due>> {
         let mut stmt = conn.prepare(&format!(
             "SELECT c.id, s.due_at FROM cards c JOIN card_schedule s ON s.card_id = c.id
-             WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.phase IN ({phases})
+             WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND c.suspended = 0
+               AND s.phase IN ({phases})
                AND s.due_at <= ?2
              ORDER BY s.due_at, c.seq LIMIT ?3"
         ))?;
@@ -286,7 +312,8 @@ pub(super) fn study_input_in(
     )?;
     let mut stmt = conn.prepare(
         "SELECT c.id FROM cards c LEFT JOIN card_schedule s ON s.card_id = c.id
-         WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND s.card_id IS NULL
+         WHERE c.deck_id = ?1 AND c.deleted_at IS NULL AND c.suspended = 0
+           AND s.card_id IS NULL
          ORDER BY c.seq LIMIT ?2",
     )?;
     let new = stmt

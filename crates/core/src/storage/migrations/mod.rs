@@ -106,7 +106,26 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         rebuild_schedule: false,
         backfill: None,
     },
+    Migration {
+        version: 9,
+        name: "suspended",
+        sql: include_str!("0009_suspended.sql"),
+        rebuild_schedule: false,
+        backfill: None,
+    },
+    Migration {
+        version: 10,
+        name: "search",
+        sql: include_str!("0010_search.sql"),
+        rebuild_schedule: false,
+        backfill: Some(backfill_search_index),
+    },
 ];
+
+/// Migration 0010: the search index of every card, deleted ones included.
+fn backfill_search_index(tx: &Transaction<'_>) -> Result<()> {
+    crate::storage::search::rebuild_search_index(tx)
+}
 
 /// Migration 0004: `decks.name_key` for every deck, deleted ones included.
 /// Two live decks whose names now share a key violate the unique index, so
@@ -234,6 +253,8 @@ mod tests {
             (6, 4_814_555_124_323_229_936),
             (7, 5_098_997_871_159_998_159),
             (8, 5_300_822_826_126_250_477),
+            (9, 1_539_123_956_118_822_870),
+            (10, 15_621_161_985_399_297_379),
         ];
         assert_eq!(
             MIGRATIONS.len(),

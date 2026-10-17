@@ -175,6 +175,7 @@ const FIXTURE: &str = r#"{
       "back_md": "4",
       "created_at": 1792067696789,
       "updated_at": 1792067696789,
+      "suspended": false,
       "deleted_at": null
     },
     {
@@ -184,6 +185,7 @@ const FIXTURE: &str = r#"{
       "back_md": "",
       "created_at": 1792067696789,
       "updated_at": 1792067696789,
+      "suspended": true,
       "deleted_at": 1792067700000
     }
   ],
@@ -287,3 +289,4 @@ mod refused;
 mod revive;
 mod round_trip;
 mod settings;
+mod suspended;

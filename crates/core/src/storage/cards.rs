@@ -3,6 +3,7 @@
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use super::decks::ensure_live_deck;
+use super::search::index_card_in;
 use super::tags::set_card_tags_in;
 use super::{Store, observe_max_id};
 use crate::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, TaggedCard, card_side_fits, has_nul};
@@ -12,7 +13,7 @@ use crate::time::now_ms;
 
 /// The columns [`card_from_row`] reads, for a query with `cards` as `c`.
 pub(super) const CARD_COLUMNS: &str =
-    "c.id, c.deck_id, c.front_md, c.back_md, c.created_at, c.updated_at";
+    "c.id, c.deck_id, c.front_md, c.back_md, c.created_at, c.updated_at, c.suspended";
 
 /// A [`Card`] from a row selected with [`CARD_COLUMNS`].
 pub(super) fn card_from_row(r: &Row<'_>) -> rusqlite::Result<Card> {
@@ -23,6 +24,7 @@ pub(super) fn card_from_row(r: &Row<'_>) -> rusqlite::Result<Card> {
         back_md: r.get(3)?,
         created_at: r.get(4)?,
         updated_at: r.get(5)?,
+        suspended: r.get(6)?,
     })
 }
 
@@ -129,10 +131,11 @@ impl Store {
             card = tx.query_row(
                 "UPDATE cards SET front_md = ?2, back_md = ?3, updated_at = ?4
                  WHERE id = ?1
-                 RETURNING id, deck_id, front_md, back_md, created_at, updated_at",
+                 RETURNING id, deck_id, front_md, back_md, created_at, updated_at, suspended",
                 params![id, front_md, back_md, now],
                 card_from_row,
             )?;
+            index_card_in(&tx, id, front_md, back_md)?;
         }
         let tags = match tag_names {
             Some(names) => set_card_tags_in(&tx, &mut self.ids, id, names, now)?,
@@ -161,19 +164,25 @@ impl Store {
         now: i64,
     ) -> Result<Card> {
         check_sides(front_md, back_md)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         // One statement, so the returned card is exactly what was written.
-        self.conn
+        let card = tx
             .query_row(
                 // RETURNING takes no table-qualified names; same order as
                 // CARD_COLUMNS.
                 "UPDATE cards SET front_md = ?2, back_md = ?3, updated_at = ?4
                  WHERE id = ?1 AND deleted_at IS NULL
-                 RETURNING id, deck_id, front_md, back_md, created_at, updated_at",
+                 RETURNING id, deck_id, front_md, back_md, created_at, updated_at, suspended",
                 params![id, front_md, back_md, now],
                 card_from_row,
             )
             .optional()?
-            .ok_or_else(|| Error::CardNotFound(id.to_owned()))
+            .ok_or_else(|| Error::CardNotFound(id.to_owned()))?;
+        index_card_in(&tx, id, front_md, back_md)?;
+        tx.commit()?;
+        Ok(card)
     }
 
     /// Card `id`.
@@ -237,7 +246,7 @@ impl Store {
             .query_row(
                 &format!("SELECT {CARD_COLUMNS}, c.deleted_at FROM cards c WHERE c.id = ?1"),
                 [id],
-                |r| Ok((card_from_row(r)?, r.get(6)?)),
+                |r| Ok((card_from_row(r)?, r.get(7)?)),
             )
             .optional()?
             .ok_or_else(|| Error::CardNotFound(id.to_owned()))?;
@@ -269,6 +278,7 @@ fn insert_card(
         back_md: back_md.to_owned(),
         created_at: now,
         updated_at: now,
+        suspended: false,
     };
     conn.execute(
         "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
@@ -282,6 +292,7 @@ fn insert_card(
             card.updated_at
         ],
     )?;
+    index_card_in(conn, &card.id, front_md, back_md)?;
     Ok(card)
 }
 

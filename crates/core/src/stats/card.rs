@@ -52,6 +52,8 @@ pub struct CardInfo {
     /// The surviving reviews and resets, oldest first. Undone entries are
     /// left out.
     pub history: Vec<HistoryEntry>,
+    /// The card is suspended: excluded from study (ADR 0035).
+    pub suspended: bool,
 }
 
 impl CardInfo {
@@ -129,6 +131,7 @@ pub(crate) fn card_info(
         retrievability: schedule
             .map(|s| retrievability(s.stability, s.difficulty, s.last_review_at, now)),
         next_due: schedule.map(|s| s.due_at),
+        suspended: card.suspended,
         history,
     })
 }

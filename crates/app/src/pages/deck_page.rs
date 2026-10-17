@@ -705,6 +705,7 @@ mod tests {
                                 back_md: "Back".to_owned(),
                                 created_at: i,
                                 updated_at: i,
+                                suspended: false,
                             },
                             tags: Vec::new(),
                         })

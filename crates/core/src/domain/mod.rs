@@ -308,6 +308,8 @@ pub struct Card {
     pub created_at: i64,
     /// When the card was last edited (or created), UTC milliseconds.
     pub updated_at: i64,
+    /// Excluded from study, kept otherwise (ADR 0035).
+    pub suspended: bool,
 }
 
 #[cfg(test)]

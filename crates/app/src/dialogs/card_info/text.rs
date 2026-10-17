@@ -184,6 +184,7 @@ mod tests {
             difficulty: None,
             retrievability: None,
             next_due: None,
+            suspended: false,
             history: vec![],
         }
     }

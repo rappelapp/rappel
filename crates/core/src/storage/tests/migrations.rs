@@ -306,6 +306,30 @@ fn negative_user_version_is_refused() {
     ));
 }
 
+/// The cards of `DECK` with the columns every schema version has, for the
+/// tests of migrations older than a column the current code reads.
+fn old_cards(conn: &Connection) -> Vec<(String, String, String, String, i64, i64)> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, deck_id, front_md, back_md, created_at, updated_at FROM cards
+             WHERE deck_id = ?1 AND deleted_at IS NULL ORDER BY seq",
+        )
+        .unwrap();
+    stmt.query_map([DECK], |r| {
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+        ))
+    })
+    .unwrap()
+    .collect::<rusqlite::Result<_>>()
+    .unwrap()
+}
+
 /// Migration 0006 only adds the empty `settings` table: data and the
 /// schedule cache stay as they were, and every setting has its default.
 #[test]
@@ -321,7 +345,7 @@ fn migration_0006_adds_settings_and_keeps_everything_else() {
         (
             schedule_table(&v5),
             v5.review_events(CARD).unwrap(),
-            v5.list_cards(DECK).unwrap(),
+            old_cards(&v5.conn),
         )
     };
     let store = e.open_with(DAY0, &MIGRATIONS[..6]).unwrap();
@@ -332,7 +356,7 @@ fn migration_0006_adds_settings_and_keeps_everything_else() {
         (
             schedule_table(&store),
             store.review_events(CARD).unwrap(),
-            store.list_cards(DECK).unwrap()
+            old_cards(&store.conn)
         ),
         before
     );
@@ -481,7 +505,7 @@ fn migration_0008_adds_tags_and_keeps_everything_else() {
         (
             schedule_table(&v7),
             v7.review_events(CARD).unwrap(),
-            v7.list_cards(DECK).unwrap(),
+            old_cards(&v7.conn),
         )
     };
     let store = e.open_with(DAY0, &MIGRATIONS[..8]).unwrap();
@@ -493,9 +517,77 @@ fn migration_0008_adds_tags_and_keeps_everything_else() {
         (
             schedule_table(&store),
             store.review_events(CARD).unwrap(),
-            store.list_cards(DECK).unwrap()
+            old_cards(&store.conn)
         ),
         before
     );
+    assert_eq!(e.backups().len(), 1);
+}
+
+/// Migrations 0009 and 0010 on a version 8 database: every card is
+/// unsuspended, the data and the schedule stay as they were, and the
+/// search index holds the plain text of every card, deleted ones too.
+#[test]
+fn migrations_0009_and_0010_add_suspension_and_index_every_card() {
+    use crate::content::search_text;
+    use crate::domain::Settings;
+    use crate::test_support::schedule_table;
+
+    const GONE: &str = "01920000-0000-7000-8000-00000000000a";
+    let e = env();
+    let before = {
+        let v8 = e.open_with(DAY0, &MIGRATIONS[..8]).unwrap();
+        insert_sample(&v8.conn);
+        v8.conn
+            .execute(
+                "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at, deleted_at)
+                 VALUES (?1, ?2, '**Économie** $x^2$', '[lien](https://a.b)', 1, 1, 5)",
+                rusqlite::params![GONE, DECK],
+            )
+            .unwrap();
+        assert!(!tables(&v8.conn).contains(&"cards_fts".to_owned()));
+        (
+            schedule_table(&v8),
+            v8.review_events(CARD).unwrap(),
+            old_cards(&v8.conn),
+            v8.settings().unwrap(),
+        )
+    };
+    let store = e.open_with(DAY0, &MIGRATIONS[..10]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 10);
+    assert_eq!(
+        (
+            schedule_table(&store),
+            store.review_events(CARD).unwrap(),
+            old_cards(&store.conn),
+            store.settings().unwrap(),
+        ),
+        before
+    );
+    assert_eq!(before.3, Settings::default());
+    assert_eq!(
+        count(&store.conn, "cards WHERE suspended = 0"),
+        count(&store.conn, "cards")
+    );
+    assert_eq!(count(&store.conn, "cards_fts"), 2);
+    let rows: Vec<(String, String)> = store
+        .conn
+        .prepare(
+            "SELECT f.front, f.back FROM cards_fts f JOIN cards c ON c.seq = f.rowid
+             ORDER BY c.seq",
+        )
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (search_text("front"), search_text("back")),
+            ("economie x^2".to_owned(), "lien".to_owned()),
+        ]
+    );
+    // The pre-migration backup is the version-8 database.
     assert_eq!(e.backups().len(), 1);
 }
