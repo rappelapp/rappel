@@ -462,10 +462,10 @@ impl ReviewPage {
     /// is the one saved, then tells the owner of this page.
     fn saved(&self, saved: Saved) {
         let imp = self.imp();
-        if let Saved::Edited(card) = &saved
-            && imp.current.borrow().as_deref() == Some(card.id.as_str())
+        if let Saved::Edited(tagged) = &saved
+            && imp.current.borrow().as_deref() == Some(tagged.card.id.as_str())
         {
-            self.redraw(&card.front_md, &card.back_md);
+            self.redraw(&tagged.card.front_md, &tagged.card.back_md);
         }
         if let Some(on_saved) = imp.on_saved.get().map(Callback::get) {
             on_saved(saved);
@@ -745,8 +745,9 @@ mod tests {
         let ids: Vec<String> = (0..n)
             .map(|i| {
                 let id = state
-                    .add_card(&deck.id, &format!("front {i}"), "back")
+                    .add_card_with_tags(&deck.id, &format!("front {i}"), "back", &[])
                     .unwrap()
+                    .card
                     .id;
                 // Two Passes long ago leave the card in review and due now.
                 for at in [now - 60 * day, now - 60 * day + 11 * 60 * 1000] {
@@ -846,7 +847,9 @@ mod tests {
         crate::testing::with_gtk(|| {
             let (_tmp, state, page, ids) = page_of(2);
             pass(&page);
-            state.edit_card(&ids[0], "edited front", "back").unwrap();
+            state
+                .edit_card_with_tags(&ids[0], "edited front", "back", None)
+                .unwrap();
             page.undo();
             let front = first_label(page.imp().front_box.upcast_ref());
             assert_eq!(front.as_deref(), Some("edited front"));

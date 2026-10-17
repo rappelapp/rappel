@@ -14,8 +14,15 @@
 //! - Closing with unsaved changes asks first, whether by Escape, Cancel or
 //!   closing the window (`RappelWindow` calls [`CardEditor::confirm_discard`]).
 //! - A store error keeps the dialog open with the text as typed.
+//! - The Tags field under Back is a comma-separated list; the card and its
+//!   tags are saved in one write. Invalid names show an error under the
+//!   field and disable saving. Ctrl+Shift+Enter keeps the tags for the next
+//!   card. Suggestions are in `suggest.rs`, the decisions in `tags.rs`
+//!   (ADR 0031).
 
 mod format;
+mod suggest;
+mod tags;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -25,7 +32,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 use rappel_core::content;
-use rappel_core::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits};
+use rappel_core::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, Tag, TaggedCard, card_side_fits};
 use sourceview5::prelude::*;
 
 use crate::render::{back_shown, clear, fill, shown_part};
@@ -34,6 +41,7 @@ use crate::ui::callback::Callback;
 use crate::ui::text::group_digits;
 use crate::ui::toast::{info_toast, show_error};
 use crate::ui::{dialog, init_once};
+use crate::widgets::TagSuggestions;
 
 /// How long typing must pause before the preview is rendered again. Short
 /// enough to feel live, long enough that a 1 MiB card is not parsed and
@@ -43,8 +51,8 @@ const PREVIEW_DELAY: Duration = Duration::from_millis(250);
 /// What a save did, for the deck page to update its list.
 #[derive(Debug, Clone)]
 pub enum Saved {
-    Added(Card),
-    Edited(Card),
+    Added(TaggedCard),
+    Edited(TaggedCard),
 }
 
 type OnSaved = dyn Fn(Saved);
@@ -79,6 +87,10 @@ mod imp {
         #[template_child]
         pub back_error: TemplateChild<gtk::Label>,
         #[template_child]
+        pub tags_entry: TemplateChild<gtk::Entry>,
+        #[template_child]
+        pub tags_error: TemplateChild<gtk::Label>,
+        #[template_child]
         pub preview_button: TemplateChild<gtk::ToggleButton>,
         #[template_child]
         pub preview_front: TemplateChild<gtk::Box>,
@@ -99,6 +111,24 @@ mod imp {
         pub card_id: RefCell<Option<String>>,
         /// Front and back as last loaded or saved, to tell unsaved changes.
         pub saved_text: RefCell<(String, String)>,
+        /// The tags as last loaded or saved, as [`super::tags::tag_keys`].
+        pub saved_tag_keys: RefCell<Vec<String>>,
+        /// Whether the card's tags could be read. If not, the field is
+        /// disabled and a save leaves the tags as they are.
+        pub tags_loaded: Cell<bool>,
+        /// Every tag, for the suggestions.
+        pub all_tags: RefCell<Vec<super::Tag>>,
+        /// The suggestions under the tags field, parented to it.
+        pub suggestions: OnceCell<crate::widgets::TagSuggestions>,
+        /// The tags the suggestions list shows now, and the highlighted one.
+        pub suggested: RefCell<Vec<super::Tag>>,
+        pub highlighted: Cell<Option<usize>>,
+        /// The editor is putting text in the tags field itself (a loaded
+        /// card, an accepted suggestion): that is not typing.
+        pub filling: Cell<bool>,
+        /// The field's text changed and its cursor has not been seen
+        /// moving since (see `suggest.rs`).
+        pub edited: Cell<bool>,
         pub on_saved: OnceCell<Callback<OnSaved>>,
         /// The "Discard Changes?" question is showing; it is not asked twice.
         pub asking_discard: Cell<bool>,
@@ -152,6 +182,11 @@ mod imp {
         }
 
         fn dispose(&self) {
+            // A popover parented to a widget must be unparented before that
+            // widget is finalised.
+            if let Some(suggestions) = self.suggestions.get() {
+                suggestions.unparent();
+            }
             self.preview.cancel();
             if let Some(handler) = self.dark_handler.take() {
                 adw::StyleManager::default().disconnect(handler);
@@ -182,9 +217,13 @@ impl CardEditor {
         init_once(&imp.state, state);
         init_once(&imp.deck_id, deck_id.to_owned());
         init_once(&imp.on_saved, Callback::new(Rc::new(on_saved)));
-        match card {
-            Some(card) => editor.load(Some(&card.id), &card.front_md, &card.back_md),
-            None => editor.load(None, "", ""),
+        editor.reload_all_tags();
+        if let Some(card) = card {
+            let tags = editor.read_card_tags(&card.id);
+            editor.load(Some(&card.id), &card.front_md, &card.back_md, &tags);
+        } else {
+            imp.tags_loaded.set(true);
+            editor.load(None, "", "", "");
         }
         editor
     }
@@ -223,6 +262,7 @@ impl CardEditor {
     fn setup(&self) {
         self.setup_shortcuts();
         self.setup_views();
+        self.setup_tags();
         self.setup_preview();
         self.connect_close_attempt(Self::ask_discard);
     }
@@ -388,7 +428,8 @@ impl CardEditor {
     }
 
     /// Shows `front` and `back` as the saved state of card `card_id`.
-    fn load(&self, card_id: Option<&str>, front: &str, back: &str) {
+    /// `tags` is the tags field's text, which counts as saved too.
+    fn load(&self, card_id: Option<&str>, front: &str, back: &str, tags: &str) {
         let imp = self.imp();
         self.set_title(if card_id.is_some() {
             "Edit Card"
@@ -404,6 +445,12 @@ impl CardEditor {
             buffer.set_text(text);
             buffer.end_irreversible_action();
         }
+        imp.saved_tag_keys
+            .replace(tags::tag_keys(&tags::check_tags(tags).names));
+        imp.filling.set(true);
+        imp.tags_entry.set_text(tags);
+        imp.tags_entry.set_position(-1);
+        imp.filling.set(false);
         self.update_actions();
         self.refresh_preview();
     }
@@ -421,32 +468,55 @@ impl CardEditor {
         let imp = self.imp();
         let texts = self.texts();
         let check = check_card(&texts.0, &texts.1);
-        self.action_set_enabled("editor.save", check.can_save);
-        self.action_set_enabled("editor.save-and-new", check.can_save);
+        let tags = self.tags_check();
+        let can_save = check.can_save && tags.error.is_none();
+        self.action_set_enabled("editor.save", can_save);
+        self.action_set_enabled("editor.save-and-new", can_save);
         show_field_error(&*imp.front_view, &imp.front_error, check.front_error);
         show_field_error(&*imp.back_view, &imp.back_error, check.back_error);
-        // With unsaved changes, closing emits `close-attempt` instead.
-        self.set_can_close(texts == *self.imp().saved_text.borrow());
+        // While the tags could not be read, the error says so (it is set by
+        // `read_card_tags`); there is nothing to check.
+        if imp.tags_loaded.get() {
+            show_field_error(&*imp.tags_entry, &imp.tags_error, tags.error.clone());
+        }
+        // With unsaved changes, closing emits `close-attempt` instead. A
+        // tags field that holds an error is a change.
+        let tags_same = !imp.tags_loaded.get()
+            || (tags.error.is_none()
+                && tags::tag_keys(&tags.names) == *imp.saved_tag_keys.borrow());
+        self.set_can_close(texts == *imp.saved_text.borrow() && tags_same);
     }
 
     fn save(&self, and_new: bool) {
         let imp = self.imp();
         let (front, back) = self.texts();
-        if !check_card(&front, &back).can_save {
+        let tags = self.tags_check();
+        if !check_card(&front, &back).can_save || tags.error.is_some() {
             return;
         }
         let (Some(state), Some(deck_id)) = (imp.state.get(), imp.deck_id.get()) else {
             return;
         };
         let card_id = imp.card_id.borrow().clone();
+        // `None` leaves the tags alone: the field could not be loaded.
+        let names = imp.tags_loaded.get().then_some(tags.names.as_slice());
+        let tags_same =
+            names.is_none_or(|names| tags::tag_keys(names) == *imp.saved_tag_keys.borrow());
         // An unchanged card is not written (that would bump `updated_at`).
-        if card_id.is_some() && (front.clone(), back.clone()) == *imp.saved_text.borrow() {
-            self.after_save(and_new);
+        if card_id.is_some()
+            && tags_same
+            && (front.clone(), back.clone()) == *imp.saved_text.borrow()
+        {
+            self.after_save(and_new, &tags.names);
             return;
         }
         let result = match &card_id {
-            Some(id) => state.edit_card(id, &front, &back).map(Saved::Edited),
-            None => state.add_card(deck_id, &front, &back).map(Saved::Added),
+            Some(id) => state
+                .edit_card_with_tags(id, &front, &back, names)
+                .map(Saved::Edited),
+            None => state
+                .add_card_with_tags(deck_id, &front, &back, &tags.names)
+                .map(Saved::Added),
         };
         let saved = match result {
             Ok(saved) => saved,
@@ -457,24 +527,33 @@ impl CardEditor {
                 return;
             }
         };
-        let toast_text = match &saved {
-            Saved::Added(_) => "Card added",
-            Saved::Edited(_) => "Card saved",
+        let (toast_text, kept) = match &saved {
+            Saved::Added(tagged) => ("Card added", tagged.tags.clone()),
+            Saved::Edited(tagged) => ("Card saved", tagged.tags.clone()),
         };
         if let Some(on_saved) = imp.on_saved.get().map(Callback::get) {
             on_saved(saved);
         }
-        self.after_save(and_new);
+        // New tags can be suggested from now on.
+        self.reload_all_tags();
+        let kept: Vec<String> = kept.into_iter().map(|tag| tag.name).collect();
+        self.after_save(and_new, &kept);
         if and_new {
             imp.toast_overlay.add_toast(info_toast(toast_text));
         }
     }
 
-    /// After a save (or nothing to save): an empty editor for the next
-    /// card, or close.
-    fn after_save(&self, and_new: bool) {
+    /// After a save (or nothing to save): an empty editor for the next card
+    /// that starts with the same tags (`kept`), or close.
+    fn after_save(&self, and_new: bool, kept: &[String]) {
         if and_new {
-            self.load(None, "", "");
+            let imp = self.imp();
+            imp.tags_loaded.set(true);
+            imp.tags_entry.set_sensitive(true);
+            // Focus first: filling the field while it has the focus would
+            // open the suggestions for the last name.
+            imp.front_view.grab_focus();
+            self.load(None, "", "", &kept.join(", "));
             self.imp().front_view.grab_focus();
         } else {
             self.force_close();
@@ -649,6 +728,153 @@ mod tests {
             (check.front_error, check.back_error),
             (message("front"), message("back"))
         );
+    }
+
+    /// A state with one deck, and an editor on a new card in it or on the
+    /// card `existing` (front, tags) already in it.
+    fn editor_over(
+        existing: Option<(&str, &[&str])>,
+    ) -> (
+        tempfile::TempDir,
+        AppState,
+        String,
+        CardEditor,
+        Rc<std::cell::RefCell<Vec<Saved>>>,
+    ) {
+        adw::init().unwrap();
+        gtk::gio::resources_register_include!("rappel.gresource").unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let state = AppState::open(tmp.path().join("data")).unwrap();
+        let deck = state.create_deck("Deck").unwrap();
+        let card = existing.map(|(front, tags)| {
+            let names: Vec<String> = tags.iter().map(|t| (*t).to_owned()).collect();
+            state
+                .add_card_with_tags(&deck.id, front, "", &names)
+                .unwrap()
+                .card
+        });
+        let saved = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = Rc::clone(&saved);
+        let editor = CardEditor::new(state.clone(), &deck.id, card.as_ref(), move |s| {
+            sink.borrow_mut().push(s);
+        });
+        (tmp, state, deck.id, editor, saved)
+    }
+
+    fn type_into(editor: &CardEditor, front: &str, tags: &str) {
+        editor.imp().front_buffer.set_text(front);
+        editor.imp().tags_entry.set_text(tags);
+    }
+
+    #[test]
+    fn a_card_is_saved_with_its_tags_and_the_next_one_keeps_them() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, deck, editor, saved) = editor_over(None);
+            type_into(&editor, "2 + 2", " maths ,Alg\u{E8}bre, ");
+            editor.save(true);
+
+            let cards = state.list_tagged_cards(&deck).unwrap();
+            assert_eq!(cards.len(), 1);
+            let names: Vec<&str> = cards[0].tags.iter().map(|t| t.name.as_str()).collect();
+            assert_eq!(names, ["Alg\u{E8}bre", "maths"]);
+            assert!(matches!(saved.borrow()[0], Saved::Added(_)));
+            // The next card starts with the same tags, as saved state: no
+            // "Discard Changes?" for an untouched editor.
+            let imp = editor.imp();
+            assert_eq!(imp.tags_entry.text(), "Alg\u{E8}bre, maths");
+            assert_eq!(imp.front_buffer.char_count(), 0);
+            assert!(editor.can_close());
+            // Another tag makes it a change; the front still blocks saving.
+            imp.tags_entry.set_text("maths, new");
+            assert!(!editor.can_close());
+            editor.save(false);
+            assert_eq!(state.list_tagged_cards(&deck).unwrap().len(), 1);
+            // The new tag is suggested from now on.
+            assert!(imp.all_tags.borrow().iter().any(|t| t.name == "maths"));
+        });
+    }
+
+    #[test]
+    fn an_invalid_tag_shows_an_error_and_blocks_saving() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, deck, editor, _saved) = editor_over(None);
+            let imp = editor.imp();
+            type_into(&editor, "front", "a,,b");
+            assert!(imp.tags_error.is_visible());
+            assert_eq!(
+                imp.tags_error.label(),
+                "Tag 2 is empty: remove the extra comma"
+            );
+            // Pressing the key anyway writes nothing.
+            editor.save(false);
+            assert_eq!(state.list_tagged_cards(&deck).unwrap(), []);
+
+            type_into(&editor, "front", &"x".repeat(300));
+            assert!(imp.tags_error.label().starts_with("Tag 1 is too long"));
+            type_into(&editor, "front", "ok");
+            assert!(!imp.tags_error.is_visible());
+            editor.save(false);
+            assert_eq!(state.list_tagged_cards(&deck).unwrap().len(), 1);
+        });
+    }
+
+    #[test]
+    fn editing_a_card_loads_its_tags_and_unlinks_the_ones_removed() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, deck, editor, saved) = editor_over(Some(("front", &["a", "b"])));
+            let imp = editor.imp();
+            assert_eq!(imp.tags_entry.text(), "a, b");
+            assert!(editor.can_close());
+            // Spacing, case and order are not changes.
+            imp.tags_entry.set_text("B,a");
+            assert!(editor.can_close());
+
+            let before = state.list_tagged_cards(&deck).unwrap().remove(0);
+            imp.tags_entry.set_text("b");
+            assert!(!editor.can_close());
+            editor.save(false);
+            let after = state.list_tagged_cards(&deck).unwrap().remove(0);
+            let names: Vec<&str> = after.tags.iter().map(|t| t.name.as_str()).collect();
+            assert_eq!(names, ["b"]);
+            // Tags only: the card itself is untouched, and the tag stays.
+            assert_eq!(after.card, before.card);
+            assert_eq!(state.tags().unwrap().len(), 2);
+            assert!(matches!(saved.borrow()[0], Saved::Edited(_)));
+        });
+    }
+
+    #[test]
+    fn unreadable_tags_disable_the_field_and_say_why_and_a_save_keeps_them() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, state, deck, editor, _saved) = editor_over(Some(("front", &["a"])));
+            let imp = editor.imp();
+            let card = state.list_tagged_cards(&deck).unwrap().remove(0);
+            // A card that is gone cannot have its tags read.
+            state.delete_card(&card.card.id).unwrap();
+            let text = editor.read_card_tags(&card.card.id);
+            editor.load(Some(&card.card.id), "front", "", &text);
+            assert!(!imp.tags_entry.is_sensitive());
+            assert!(imp.tags_error.is_visible());
+            // Edits to the sides do not hide the explanation.
+            imp.front_buffer.set_text("front 2");
+            assert!(imp.tags_error.is_visible());
+        });
+    }
+
+    #[test]
+    fn accepting_a_suggestion_completes_the_name_being_typed() {
+        crate::testing::with_gtk(|| {
+            let (_tmp, _state, _deck, editor, _saved) = editor_over(Some(("front", &["algebra"])));
+            let imp = editor.imp();
+            imp.tags_entry.set_text("maths, alg");
+            imp.tags_entry.set_position(-1);
+            let found = tags::suggestions(&imp.all_tags.borrow(), "maths, alg", 10);
+            assert_eq!(found.len(), 1);
+            imp.suggested.replace(found);
+            editor.accept_suggestion(0);
+            assert_eq!(imp.tags_entry.text(), "maths, algebra, ");
+            assert_eq!(imp.tags_entry.position(), 16);
+        });
     }
 
     /// The longest time the main loop is blocked in one step over the next

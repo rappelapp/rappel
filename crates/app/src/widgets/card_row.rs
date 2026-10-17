@@ -1,11 +1,13 @@
-//! One row of the deck page's card list: the front on one line and a menu
-//! with Edit, Reset Progress and Delete. Layout in `data/card_row.blp`.
+//! One row of the deck page's card list: the front on one line, the card's
+//! tags dimmed after it, and a menu with Edit, Reset Progress and Delete.
+//! Layout in `data/card_row.blp`.
 //!
 //! Rows are recycled by the `GtkListView`: [`CardRow::bind`] points a row
 //! at another card. As in `DeckRow`, the menu items activate the row's own
 //! `row.edit` / `row.reset` / `row.delete` actions, which forward to the
 //! page's `deck.edit-card` / `deck.reset-card` / `deck.delete-card` with the bound card's id.
 
+use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
@@ -23,6 +25,8 @@ mod imp {
     pub struct CardRow {
         #[template_child]
         pub front_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub tags_label: TemplateChild<gtk::Label>,
         #[template_child]
         pub menu_button: TemplateChild<gtk::MenuButton>,
         /// The bound card, empty while unbound.
@@ -76,6 +80,9 @@ impl CardRow {
         let imp = self.imp();
         let preview = item.preview();
         imp.front_label.set_label(&preview);
+        let tags = item.tags_line();
+        imp.tags_label.set_label(&tags);
+        imp.tags_label.set_visible(!tags.is_empty());
         rows::label_menu_button(&imp.menu_button, &preview);
         imp.card_id.replace(item.card().id.clone());
     }

@@ -3,7 +3,7 @@
 //! try studying without waiting days (ADR 0014).
 //!
 //! ```text
-//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math]
+//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags]
 //! RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 //! ```
 //!
@@ -15,7 +15,10 @@
 //! Markdown construct (ADR 0019), all studyable today, to check how they
 //! look. With `--math`, it adds the deck "Math": 15 new cards, one per
 //! formula of the math spike (ADR 0021: 4 sentences with inline math, then
-//! 11 display formulas), and one card with invalid LaTeX. The directory
+//! 11 display formulas), and one card with invalid LaTeX. With `--tags`, the
+//! cards of the first deck get tags (ADR 0029): a few names that differ by
+//! accents and case, one card with a very long list, every fifth card none.
+//! The directory
 //! must be absolute and is never one of the
 //! app's own data directories, release or debug: this is for throwaway
 //! data only.
@@ -50,8 +53,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<String, String> {
-    let usage =
-        "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math]";
+    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags]";
     let number = |arg: Option<std::ffi::OsString>| {
         arg.as_ref()
             .and_then(|n| n.to_str())
@@ -60,7 +62,7 @@ fn run() -> Result<String, String> {
     };
     let mut args = std::env::args_os().skip(1);
     let dir = PathBuf::from(args.next().ok_or(usage)?);
-    let (mut count, mut due, mut markdown, mut math) = (None, 0, false, false);
+    let (mut count, mut due, mut markdown, mut math, mut tags) = (None, 0, false, false, false);
     while let Some(arg) = args.next() {
         if arg == "--due" {
             due = number(args.next())?;
@@ -68,6 +70,8 @@ fn run() -> Result<String, String> {
             markdown = true;
         } else if arg == "--math" {
             math = true;
+        } else if arg == "--tags" {
+            tags = true;
         } else if count.is_none() {
             count = Some(number(Some(arg))?);
         } else {
@@ -104,6 +108,11 @@ fn run() -> Result<String, String> {
             let card = store
                 .add_card(&deck.id, &front, &back)
                 .map_err(|e| e.to_string())?;
+            if tags {
+                for name in sample_tags(i) {
+                    store.add_tag(&card.id, name).map_err(|e| e.to_string())?;
+                }
+            }
             if i < due {
                 for (grade, at) in past_reviews(i, now) {
                     store
@@ -140,6 +149,28 @@ fn run() -> Result<String, String> {
         added.join(" and "),
         dir.display()
     ))
+}
+
+/// The tags of card `i` for `--tags`: spellings that differ by case and
+/// accents, none on every fifth card, and a long list on every 50th.
+fn sample_tags(i: usize) -> Vec<&'static str> {
+    const NAMES: [&str; 8] = [
+        "maths",
+        "Économie",
+        "algebra",
+        "Algèbre",
+        "history",
+        "économie générale",
+        "physics",
+        "ÉCOLOGIE",
+    ];
+    if i % 5 == 4 {
+        Vec::new()
+    } else if i.is_multiple_of(50) {
+        NAMES.to_vec()
+    } else {
+        vec![NAMES[i % NAMES.len()], NAMES[(i / 3) % NAMES.len()]]
+    }
 }
 
 /// The sentences of the math spike with inline formulas (ADR 0021), formulas

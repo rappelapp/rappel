@@ -64,112 +64,152 @@ template $RappelCardEditor: Adw.Dialog {
       child: Gtk.Box main_box {
         orientation: horizontal;
 
-        Gtk.Box {
-          orientation: vertical;
-          spacing: 6;
+        // Scrolls rather than clips when the window is short (360 x 294).
+        Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
           hexpand: true;
           vexpand: true;
-          margin-top: 6;
-          margin-bottom: 18;
-          margin-start: 18;
-          margin-end: 18;
 
-          Gtk.Label front_label {
-            label: _("Front");
-            xalign: 0;
+          Gtk.Box {
+            orientation: vertical;
+            spacing: 6;
+            hexpand: true;
+            vexpand: true;
+            margin-top: 6;
+            margin-bottom: 18;
+            margin-start: 18;
+            margin-end: 18;
 
-            styles [
-              "heading",
-            ]
-          }
+            Gtk.Label front_label {
+              label: _("Front");
+              xalign: 0;
 
-          // A frame, not a card: GtkFrame clips its child to its rounded
-          // corners (`gtk_frame_init` sets overflow hidden), and libadwaita
-          // draws it as a 1 px border that follows light, dark and high
-          // contrast. A card on the scroller had its corners painted over by
-          // the view's square background, cutting its shadow. The background
-          // is the Adwaita style scheme's (the view colour; mod.rs). No
-          // `inline` class: libadwaita 1.10's style-class docs say it "cannot
-          // be used with GtkSourceView"
-          // (gnome.pages.gitlab.gnome.org/libadwaita/doc/1.10/style-classes.html).
-          Gtk.Frame {
-            child: Gtk.ScrolledWindow {
-              hscrollbar-policy: never;
-              min-content-height: 96;
-              vexpand: true;
+              styles [
+                "heading",
+              ]
+            }
 
-              child: GtkSource.View front_view {
-                buffer: GtkSource.Buffer front_buffer {};
-                monospace: true;
-                wrap-mode: word_char;
-                accepts-tab: false;
-                top-margin: 12;
-                bottom-margin: 12;
-                left-margin: 12;
-                right-margin: 12;
+            // A frame, not a card: GtkFrame clips its child to its rounded
+            // corners (`gtk_frame_init` sets overflow hidden), and libadwaita
+            // draws it as a 1 px border that follows light, dark and high
+            // contrast. A card on the scroller had its corners painted over by
+            // the view's square background, cutting its shadow. The background
+            // is the Adwaita style scheme's (the view colour; mod.rs). No
+            // `inline` class: libadwaita 1.10's style-class docs say it "cannot
+            // be used with GtkSourceView"
+            // (gnome.pages.gitlab.gnome.org/libadwaita/doc/1.10/style-classes.html).
+            Gtk.Frame {
+              child: Gtk.ScrolledWindow {
+                hscrollbar-policy: never;
+                min-content-height: 96;
+                vexpand: true;
 
-                accessibility {
-                  labelled-by: front_label;
-                  described-by: front_error;
-                }
+                child: GtkSource.View front_view {
+                  buffer: GtkSource.Buffer front_buffer {};
+                  monospace: true;
+                  wrap-mode: word_char;
+                  accepts-tab: false;
+                  top-margin: 12;
+                  bottom-margin: 12;
+                  left-margin: 12;
+                  right-margin: 12;
+
+                  accessibility {
+                    labelled-by: front_label;
+                    described-by: front_error;
+                  }
+                };
               };
-            };
-          }
+            }
 
-          Gtk.Label front_error {
-            visible: false;
-            wrap: true;
-            xalign: 0;
+            Gtk.Label front_error {
+              visible: false;
+              wrap: true;
+              xalign: 0;
 
-            styles [
-              "error",
-              "caption",
-            ]
-          }
+              styles [
+                "error",
+                "caption",
+              ]
+            }
 
-          Gtk.Label back_label {
-            label: _("Back");
-            xalign: 0;
-            margin-top: 12;
+            Gtk.Label back_label {
+              label: _("Back");
+              xalign: 0;
+              margin-top: 12;
 
-            styles [
-              "heading",
-            ]
-          }
+              styles [
+                "heading",
+              ]
+            }
 
-          Gtk.Frame {
-            child: Gtk.ScrolledWindow {
-              hscrollbar-policy: never;
-              min-content-height: 96;
-              vexpand: true;
+            Gtk.Frame {
+              child: Gtk.ScrolledWindow {
+                hscrollbar-policy: never;
+                min-content-height: 96;
+                vexpand: true;
 
-              child: GtkSource.View back_view {
-                buffer: GtkSource.Buffer back_buffer {};
-                monospace: true;
-                wrap-mode: word_char;
-                accepts-tab: false;
-                top-margin: 12;
-                bottom-margin: 12;
-                left-margin: 12;
-                right-margin: 12;
+                child: GtkSource.View back_view {
+                  buffer: GtkSource.Buffer back_buffer {};
+                  monospace: true;
+                  wrap-mode: word_char;
+                  accepts-tab: false;
+                  top-margin: 12;
+                  bottom-margin: 12;
+                  left-margin: 12;
+                  right-margin: 12;
 
-                accessibility {
-                  labelled-by: back_label;
-                  described-by: back_error;
-                }
+                  accessibility {
+                    labelled-by: back_label;
+                    described-by: back_error;
+                  }
+                };
               };
-            };
-          }
+            }
 
-          Gtk.Label back_error {
-            visible: false;
-            wrap: true;
-            xalign: 0;
+            Gtk.Label back_error {
+              visible: false;
+              wrap: true;
+              xalign: 0;
 
-            styles [
-              "error",
-              "caption",
-            ]
+              styles [
+                "error",
+                "caption",
+              ]
+            }
+
+            Gtk.Label tags_label {
+              label: _("Tags");
+              xalign: 0;
+              margin-top: 12;
+
+              styles [
+                "heading",
+              ]
+            }
+
+            // Names separated by commas; suggestions from the tags that exist
+            // appear in a popover (widgets/tag_suggestions.rs), and the entry
+            // keeps the focus throughout.
+            Gtk.Entry tags_entry {
+              placeholder-text: _("Separate tags with commas");
+
+              accessibility {
+                labelled-by: tags_label;
+                described-by: tags_error;
+              }
+            }
+
+            Gtk.Label tags_error {
+              visible: false;
+              wrap: true;
+              xalign: 0;
+
+              styles [
+                "error",
+                "caption",
+              ]
+            }
           }
         }
 

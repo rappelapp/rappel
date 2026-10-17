@@ -1,6 +1,9 @@
 //! Tags: flat labels on cards, unique by their name key (ADR 0029).
 
-use super::has_nul;
+use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::char::is_combining_mark;
+
+use super::{Card, has_nul, name_key};
 use crate::error::{Error, Result};
 
 /// The longest tag name, in UTF-8 bytes once trimmed.
@@ -15,6 +18,70 @@ pub struct Tag {
     /// The name, trimmed, unique among tags by its
     /// [`name_key`](super::name_key).
     pub name: String,
+}
+
+/// A card with its tags, ordered by name key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaggedCard {
+    /// The card.
+    pub card: Card,
+    /// Its tags.
+    pub tags: Vec<Tag>,
+}
+
+/// The key suggestions are matched by: `name` without accents and in lower
+/// case ("Économie", "economie" and "ECONOMIE" share one). Letters that do
+/// not decompose into a base and a mark (ß, ø, ł) are left as they are.
+/// This is for finding tags while typing only; whether two names are one tag
+/// is decided by [`name_key`] (ADR 0029), which keeps accents.
+#[must_use]
+pub fn search_key(name: &str) -> String {
+    name.trim()
+        .nfd()
+        .filter(|c| !is_combining_mark(*c))
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// A name in a tags field that cannot be a tag name.
+#[derive(Debug, thiserror::Error)]
+#[error("tag {position}: {error}")]
+pub struct TagFieldError {
+    /// Which name, counting from 1 in the order typed.
+    pub position: usize,
+    /// What is wrong with it.
+    pub error: Error,
+}
+
+/// The tag names in `text`, a comma-separated list (SPEC §4.4): each trimmed
+/// and checked by [`check_tag_name`], names equal by [`name_key`] merged
+/// (the first spelling is kept), in the order typed. An empty piece after
+/// the last comma is ignored, since "maths, " is what is left after typing a
+/// comma or accepting a suggestion; any other empty piece is an error, so
+/// "a,,b" is refused. Blank text gives no names.
+///
+/// # Errors
+/// [`TagFieldError`] for the first name that is not valid.
+pub fn parse_tag_field(text: &str) -> std::result::Result<Vec<String>, TagFieldError> {
+    let pieces: Vec<&str> = text.split(',').collect();
+    let last = pieces.len() - 1;
+    let mut names: Vec<String> = Vec::new();
+    let mut keys: Vec<String> = Vec::new();
+    for (i, piece) in pieces.into_iter().enumerate() {
+        if i == last && piece.trim().is_empty() {
+            break;
+        }
+        let name = check_tag_name(piece).map_err(|error| TagFieldError {
+            position: i + 1,
+            error,
+        })?;
+        let key = name_key(name);
+        if !keys.contains(&key) {
+            keys.push(key);
+            names.push(name.to_owned());
+        }
+    }
+    Ok(names)
 }
 
 /// `name` trimmed, if it can be a tag name: not empty, at most
@@ -60,5 +127,48 @@ mod tests {
         ));
         // Trimmed before measuring.
         assert!(check_tag_name(&format!(" {longest} ")).is_ok());
+    }
+
+    #[test]
+    fn search_keys_ignore_accents_and_case() {
+        for same in ["Économie", "economie", "ECONOMIE", "E\u{301}conomie "] {
+            assert_eq!(search_key(same), "economie");
+        }
+        assert_eq!(search_key("Ça va"), "ca va");
+        assert_ne!(search_key("ß"), search_key("ss"));
+    }
+
+    fn field(text: &str) -> Vec<String> {
+        parse_tag_field(text).unwrap()
+    }
+
+    #[test]
+    fn a_tags_field_is_a_comma_separated_list() {
+        assert_eq!(field(""), Vec::<String>::new());
+        assert_eq!(field("  \n"), Vec::<String>::new());
+        assert_eq!(field("maths"), ["maths"]);
+        assert_eq!(field(" maths ,algebra"), ["maths", "algebra"]);
+        // What typing a comma or accepting a suggestion leaves behind.
+        assert_eq!(field("maths, "), ["maths"]);
+        assert_eq!(field("maths,"), ["maths"]);
+        // The same tag twice is one; the first spelling stays.
+        assert_eq!(field("Maths, a, maths, MATHS"), ["Maths", "a"]);
+    }
+
+    #[test]
+    fn a_tags_field_names_the_first_invalid_name() {
+        let position = |text| parse_tag_field(text).unwrap_err().position;
+        assert_eq!(position("a,,b"), 2);
+        assert_eq!(position(",a"), 1);
+        assert_eq!(position(","), 1);
+        assert_eq!(position("a, b, \u{0}"), 3);
+        let long = "x".repeat(MAX_TAG_NAME_BYTES + 1);
+        let err = parse_tag_field(&format!("a, {long}")).unwrap_err();
+        assert_eq!(err.position, 2);
+        assert!(matches!(err.error, Error::TagNameTooLong { limit: 256 }));
+        assert!(matches!(
+            parse_tag_field("a,,b").unwrap_err().error,
+            Error::EmptyTagName
+        ));
     }
 }

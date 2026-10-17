@@ -6,6 +6,15 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Tags in the card editor** (SPEC §4.4, ADR 0031). A **Tags** field under Back takes names separated by commas. While you type a name, the tags that exist are suggested in a list under the field, ignoring case and accents ("eco" finds "Économie"): **Tab** takes the highlighted suggestion, or the first, **Down** / **Up** highlight one (nothing is highlighted to start), **Enter** takes a highlighted one and otherwise keeps what you typed, and **Escape** closes the list. The card and its tags are saved together, with **Ctrl+Enter** or **Ctrl+Shift+Enter**; the latter keeps the tags for the next card, which suits adding a batch. An empty name ("a,,b") or one over 256 bytes shows an error under the field and disables saving. Taking a tag off a card only unlinks it; the tag itself stays (ADR 0029).
+- **Tags on the deck page**: each card row shows its tags, dimmed, after the front, cut off with an ellipsis when they do not fit; screen readers read them after the front.
+- `rappel-core`: `Store::add_card_with_tags`, `edit_card_with_tags` (one write for the card and its tags; a change to the tags alone leaves `updated_at` alone), `list_tagged_cards` (cards with their tags in two queries), and `domain::{parse_tag_field, search_key, TaggedCard}`.
+- `fill_scratch_db --tags`: tags on the scratch cards (accents, case variants, a long list, none).
+
+### Changed
+- `Store::add_tag` shares its code with the new calls; nothing changes for callers.
+
 
 ## [0.2.0-alpha.3] — 2026-10-17
 

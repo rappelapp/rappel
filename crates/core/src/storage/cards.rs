@@ -3,9 +3,11 @@
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use super::decks::ensure_live_deck;
+use super::tags::set_card_tags_in;
 use super::{Store, observe_max_id};
-use crate::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, card_side_fits, has_nul};
+use crate::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, TaggedCard, card_side_fits, has_nul};
 use crate::error::{Error, Result};
+use crate::id::IdGen;
 use crate::time::now_ms;
 
 /// The columns [`card_from_row`] reads, for a query with `cards` as `c`.
@@ -47,30 +49,97 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_live_deck(&tx, deck_id)?;
-        observe_max_id(&tx, &mut self.ids, "cards.id")?;
-        let card = Card {
-            id: self.ids.next(now)?,
-            deck_id: deck_id.to_owned(),
-            front_md: front_md.to_owned(),
-            back_md: back_md.to_owned(),
-            created_at: now,
-            updated_at: now,
-        };
-        tx.execute(
-            "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                card.id,
-                card.deck_id,
-                card.front_md,
-                card.back_md,
-                card.created_at,
-                card.updated_at
-            ],
-        )?;
+        let card = insert_card(&tx, &mut self.ids, deck_id, front_md, back_md, now)?;
         tx.commit()?;
         Ok(card)
+    }
+
+    /// [`Self::add_card`] with its tags, written in one transaction: the
+    /// card has exactly `tag_names` (see [`Self::edit_card_with_tags`]).
+    ///
+    /// # Errors
+    /// Those of [`Self::add_card`] and of
+    /// [`check_tag_name`](crate::domain::check_tag_name). On error nothing
+    /// is written.
+    pub fn add_card_with_tags(
+        &mut self,
+        deck_id: &str,
+        front_md: &str,
+        back_md: &str,
+        tag_names: &[String],
+    ) -> Result<TaggedCard> {
+        self.add_card_with_tags_at(deck_id, front_md, back_md, tag_names, now_ms())
+    }
+
+    /// [`Self::add_card_with_tags`] at time `now` (UTC milliseconds).
+    pub(super) fn add_card_with_tags_at(
+        &mut self,
+        deck_id: &str,
+        front_md: &str,
+        back_md: &str,
+        tag_names: &[String],
+        now: i64,
+    ) -> Result<TaggedCard> {
+        check_sides(front_md, back_md)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let card = insert_card(&tx, &mut self.ids, deck_id, front_md, back_md, now)?;
+        let tags = set_card_tags_in(&tx, &mut self.ids, &card.id, tag_names, now)?;
+        tx.commit()?;
+        Ok(TaggedCard { card, tags })
+    }
+
+    /// [`Self::edit_card`] with its tags, in one transaction. With
+    /// `tag_names`, the card ends up with exactly those tags: a tag it has
+    /// that is not named is unlinked (the tag stays, ADR 0029), and one that
+    /// does not exist is created. `None` leaves the tags alone. The card row
+    /// (and its `updated_at`) is written only if a side changed, since tags
+    /// are not part of the card's content (ADR 0029).
+    ///
+    /// # Errors
+    /// Those of [`Self::edit_card`] and of
+    /// [`check_tag_name`](crate::domain::check_tag_name). On error nothing
+    /// is written.
+    pub fn edit_card_with_tags(
+        &mut self,
+        id: &str,
+        front_md: &str,
+        back_md: &str,
+        tag_names: Option<&[String]>,
+    ) -> Result<TaggedCard> {
+        self.edit_card_with_tags_at(id, front_md, back_md, tag_names, now_ms())
+    }
+
+    /// [`Self::edit_card_with_tags`] at time `now` (UTC milliseconds).
+    pub(super) fn edit_card_with_tags_at(
+        &mut self,
+        id: &str,
+        front_md: &str,
+        back_md: &str,
+        tag_names: Option<&[String]>,
+        now: i64,
+    ) -> Result<TaggedCard> {
+        check_sides(front_md, back_md)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut card = live_card(&tx, id)?;
+        if card.front_md != front_md || card.back_md != back_md {
+            card = tx.query_row(
+                "UPDATE cards SET front_md = ?2, back_md = ?3, updated_at = ?4
+                 WHERE id = ?1
+                 RETURNING id, deck_id, front_md, back_md, created_at, updated_at",
+                params![id, front_md, back_md, now],
+                card_from_row,
+            )?;
+        }
+        let tags = match tag_names {
+            Some(names) => set_card_tags_in(&tx, &mut self.ids, id, names, now)?,
+            None => super::tags::card_tags_in(&tx, id)?,
+        };
+        tx.commit()?;
+        Ok(TaggedCard { card, tags })
     }
 
     /// Replaces the front and back of card `id` and returns the card as
@@ -180,6 +249,40 @@ impl Store {
         tx.commit()?;
         Ok(card)
     }
+}
+
+/// Inserts a card into live deck `deck_id`, inside the caller's transaction.
+fn insert_card(
+    conn: &Connection,
+    ids: &mut IdGen,
+    deck_id: &str,
+    front_md: &str,
+    back_md: &str,
+    now: i64,
+) -> Result<Card> {
+    ensure_live_deck(conn, deck_id)?;
+    observe_max_id(conn, ids, "cards.id")?;
+    let card = Card {
+        id: ids.next(now)?,
+        deck_id: deck_id.to_owned(),
+        front_md: front_md.to_owned(),
+        back_md: back_md.to_owned(),
+        created_at: now,
+        updated_at: now,
+    };
+    conn.execute(
+        "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            card.id,
+            card.deck_id,
+            card.front_md,
+            card.back_md,
+            card.created_at,
+            card.updated_at
+        ],
+    )?;
+    Ok(card)
 }
 
 /// Card `id` if it exists and is live, else [`Error::CardNotFound`].

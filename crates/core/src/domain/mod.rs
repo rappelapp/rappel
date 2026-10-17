@@ -8,7 +8,9 @@ use unicode_normalization::UnicodeNormalization;
 mod settings;
 mod tag;
 
-pub use tag::{MAX_TAG_NAME_BYTES, Tag, check_tag_name};
+pub use tag::{
+    MAX_TAG_NAME_BYTES, Tag, TagFieldError, TaggedCard, check_tag_name, parse_tag_field, search_key,
+};
 
 pub use settings::{
     DEFAULT_DESIRED_RETENTION, DESIRED_RETENTION_RANGE, MAX_DAILY_LIMIT, MAX_DAY_START_HOUR,

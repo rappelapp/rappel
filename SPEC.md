@@ -7,7 +7,7 @@ App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
 
-v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4; tags still to come), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), and, in `rappel-core` only, tags (ADR 0029) and export format version 2 (§4.1); the tags UI is still to come.
+v0 is released as 0.1.0: decks, plain-text cards, review with Fail/Pass, FSRS, SQLite. v0.2 (**in progress**) builds on it. Done so far: export / import (§4.1), Markdown rendering on the review page, math rendered with RaTeX (§4.2, ADR 0021), editing the card on screen during review (part of §4.5), the Markdown editor with live preview (§4.4), the settings with their Preferences dialog (§4.8, ADR 0027; the rest of the polish is still to come), undo and reset in the review log with their UI (ADR 0028, 0030; Ctrl+Z on the review page, Reset Progress in the card menu), tags (ADR 0029, 0031: the field in the editor and the tags on the deck page) and export format version 2 (§4.1).
 
 ---
 
@@ -131,7 +131,7 @@ Storage rules:
 ### 4.4 Editor
 - `GtkSourceView` 5 with Markdown highlighting, monospace, line wrapping.
 - Live preview below or beside the editor (toggle), using the same renderer as review.
-- Tags field (comma-separated or `AdwEntryRow` chips). *The core part (migration 0008, store API, export) is done (ADR 0029); the field comes with its UI slice. A tag name has no comma.*
+- Tags field, comma-separated, with suggestions from the existing tags while typing (ignoring case and accents). *Done (ADR 0029, 0031). A tag name has no comma. Ctrl+Shift+Enter keeps the tags for the next card.*
 - Ctrl+Enter saves, Ctrl+Shift+Enter saves and starts a new card in the same deck.
 
 ### 4.5 Review

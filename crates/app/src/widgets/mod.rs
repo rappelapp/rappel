@@ -5,8 +5,10 @@ mod backup_row;
 mod card_object;
 mod card_row;
 mod deck_row;
+mod tag_suggestions;
 
 pub use backup_row::BackupRow;
 pub use card_object::CardObject;
 pub use card_row::CardRow;
 pub use deck_row::DeckRow;
+pub use tag_suggestions::TagSuggestions;

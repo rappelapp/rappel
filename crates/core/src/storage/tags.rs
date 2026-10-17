@@ -2,10 +2,14 @@
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::cards::live_card;
+use std::collections::HashMap;
+
+use super::cards::{CARD_COLUMNS, card_from_row, live_card};
+use super::decks::ensure_live_deck;
 use super::{Store, observe_max_id};
-use crate::domain::{Tag, check_tag_name, name_key};
+use crate::domain::{Tag, TaggedCard, check_tag_name, name_key};
 use crate::error::{Error, Result};
+use crate::id::IdGen;
 use crate::time::now_ms;
 
 impl Store {
@@ -27,12 +31,7 @@ impl Store {
     /// [`Error::CardNotFound`] for a missing or deleted card, SQLite errors.
     pub fn card_tags(&self, card_id: &str) -> Result<Vec<Tag>> {
         live_card(&self.conn, card_id)?;
-        let mut stmt = self.conn.prepare(
-            "SELECT t.id, t.name FROM card_tags ct JOIN tags t ON t.id = ct.tag_id
-             WHERE ct.card_id = ?1 ORDER BY t.name_key, t.id",
-        )?;
-        let rows = stmt.query_map([card_id], tag_from_row)?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        card_tags_in(&self.conn, card_id)
     }
 
     /// Puts the tag named `name` (trimmed) on live card `card_id`, and
@@ -52,25 +51,11 @@ impl Store {
     /// [`Self::add_tag`] at time `now` (UTC milliseconds, for a new id).
     pub(super) fn add_tag_at(&mut self, card_id: &str, name: &str, now: i64) -> Result<Tag> {
         let name = check_tag_name(name)?;
-        let key = name_key(name);
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         live_card(&tx, card_id)?;
-        let tag = if let Some(tag) = tag_by_key(&tx, &key)? {
-            tag
-        } else {
-            observe_max_id(&tx, &mut self.ids, "tags.id")?;
-            let tag = Tag {
-                id: self.ids.next(now)?,
-                name: name.to_owned(),
-            };
-            tx.execute(
-                "INSERT INTO tags (id, name, name_key) VALUES (?1, ?2, ?3)",
-                params![tag.id, tag.name, key],
-            )?;
-            tag
-        };
+        let tag = find_or_create_tag(&tx, &mut self.ids, name, now)?;
         tx.execute(
             "INSERT INTO card_tags (card_id, tag_id) VALUES (?1, ?2)
              ON CONFLICT DO NOTHING",
@@ -78,6 +63,56 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(tag)
+    }
+
+    /// Every live card of deck `deck_id` in creation order, each with its
+    /// tags, read together (two queries in one read transaction, however
+    /// many cards there are).
+    ///
+    /// # Errors
+    /// [`Error::DeckNotFound`], SQLite errors.
+    pub fn list_tagged_cards(&self, deck_id: &str) -> Result<Vec<TaggedCard>> {
+        let tx = self.conn.unchecked_transaction()?;
+        ensure_live_deck(&tx, deck_id)?;
+        let cards = {
+            let mut stmt = tx.prepare(&format!(
+                "SELECT {CARD_COLUMNS} FROM cards c
+                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL ORDER BY c.seq"
+            ))?;
+            let rows = stmt.query_map([deck_id], card_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut tags: HashMap<String, Vec<Tag>> = HashMap::new();
+        {
+            let mut stmt = tx.prepare(
+                "SELECT ct.card_id, t.id, t.name
+                 FROM card_tags ct
+                 JOIN tags t ON t.id = ct.tag_id
+                 JOIN cards c ON c.id = ct.card_id
+                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL
+                 ORDER BY t.name_key, t.id",
+            )?;
+            let rows = stmt.query_map([deck_id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    Tag {
+                        id: r.get(1)?,
+                        name: r.get(2)?,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (card_id, tag) = row?;
+                tags.entry(card_id).or_default().push(tag);
+            }
+        }
+        Ok(cards
+            .into_iter()
+            .map(|card| TaggedCard {
+                tags: tags.remove(&card.id).unwrap_or_default(),
+                card,
+            })
+            .collect())
     }
 
     /// Takes tag `tag_id` off live card `card_id`. Returns whether the card
@@ -105,6 +140,78 @@ impl Store {
         tx.commit()?;
         Ok(removed > 0)
     }
+}
+
+/// The tag named `name` (already checked and trimmed): the one with its name
+/// key if there is one, else a new tag.
+fn find_or_create_tag(conn: &Connection, ids: &mut IdGen, name: &str, now: i64) -> Result<Tag> {
+    let key = name_key(name);
+    if let Some(tag) = tag_by_key(conn, &key)? {
+        return Ok(tag);
+    }
+    observe_max_id(conn, ids, "tags.id")?;
+    let tag = Tag {
+        id: ids.next(now)?,
+        name: name.to_owned(),
+    };
+    conn.execute(
+        "INSERT INTO tags (id, name, name_key) VALUES (?1, ?2, ?3)",
+        params![tag.id, tag.name, key],
+    )?;
+    Ok(tag)
+}
+
+/// Makes the tags of live card `card_id` exactly `names`, inside the caller's
+/// transaction: tags are found or created by name key, links not wanted any
+/// more are removed (the tags themselves stay, ADR 0029). Returns the card's
+/// tags, ordered by name key. Every name is checked before anything is
+/// written.
+pub(super) fn set_card_tags_in(
+    conn: &Connection,
+    ids: &mut IdGen,
+    card_id: &str,
+    names: &[String],
+    now: i64,
+) -> Result<Vec<Tag>> {
+    let names = names
+        .iter()
+        .map(|name| check_tag_name(name))
+        .collect::<Result<Vec<_>>>()?;
+    let mut wanted = Vec::with_capacity(names.len());
+    for name in names {
+        let id = find_or_create_tag(conn, ids, name, now)?.id;
+        // The same tag named twice ("x", "X") is one link.
+        if !wanted.contains(&id) {
+            wanted.push(id);
+        }
+    }
+    let mut stmt = conn.prepare("SELECT tag_id FROM card_tags WHERE card_id = ?1")?;
+    let linked = stmt
+        .query_map([card_id], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for tag_id in linked.iter().filter(|id| !wanted.contains(id)) {
+        conn.execute(
+            "DELETE FROM card_tags WHERE card_id = ?1 AND tag_id = ?2",
+            params![card_id, tag_id],
+        )?;
+    }
+    for tag_id in wanted.iter().filter(|id| !linked.contains(id)) {
+        conn.execute(
+            "INSERT INTO card_tags (card_id, tag_id) VALUES (?1, ?2)",
+            params![card_id, tag_id],
+        )?;
+    }
+    card_tags_in(conn, card_id)
+}
+
+/// The tags of `card_id`, ordered by name key.
+pub(super) fn card_tags_in(conn: &Connection, card_id: &str) -> Result<Vec<Tag>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.name FROM card_tags ct JOIN tags t ON t.id = ct.tag_id
+         WHERE ct.card_id = ?1 ORDER BY t.name_key, t.id",
+    )?;
+    let rows = stmt.query_map([card_id], tag_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 /// The tag whose name key is `key`.

@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use rappel_core::domain::{Card, CardState, Deck, DeckSummary, Grade, ReviewEvent, Settings};
+use rappel_core::domain::{
+    Card, CardState, Deck, DeckSummary, Grade, ReviewEvent, Settings, Tag, TaggedCard,
+};
 use rappel_core::interchange::{ExportSummary, ImportPlan, ImportReport};
 use rappel_core::scheduling::StudyInput;
 use rappel_core::storage::{self, BackupInfo, OpenWarning, Restored, Store};
@@ -164,15 +166,50 @@ impl AppState {
         self.0.store.borrow().list_cards(deck_id)
     }
 
-    /// Adds a card (see [`Store::add_card`]).
-    pub fn add_card(&self, deck_id: &str, front: &str, back: &str) -> rappel_core::Result<Card> {
-        self.0.store.borrow_mut().add_card(deck_id, front, back)
+    /// The live cards of a deck, oldest first, with their tags (see
+    /// [`Store::list_tagged_cards`]).
+    pub fn list_tagged_cards(&self, deck_id: &str) -> rappel_core::Result<Vec<TaggedCard>> {
+        self.0.store.borrow().list_tagged_cards(deck_id)
     }
 
-    /// Replaces a card's front and back and returns the stored card (see
-    /// [`Store::edit_card`]).
-    pub fn edit_card(&self, id: &str, front: &str, back: &str) -> rappel_core::Result<Card> {
-        self.0.store.borrow_mut().edit_card(id, front, back)
+    /// Adds a card with exactly these tags, in one write (see
+    /// [`Store::add_card_with_tags`]).
+    pub fn add_card_with_tags(
+        &self,
+        deck_id: &str,
+        front: &str,
+        back: &str,
+        tag_names: &[String],
+    ) -> rappel_core::Result<TaggedCard> {
+        self.0
+            .store
+            .borrow_mut()
+            .add_card_with_tags(deck_id, front, back, tag_names)
+    }
+
+    /// Replaces a card's front and back and, with `tag_names`, its tags, in
+    /// one write (see [`Store::edit_card_with_tags`]).
+    pub fn edit_card_with_tags(
+        &self,
+        id: &str,
+        front: &str,
+        back: &str,
+        tag_names: Option<&[String]>,
+    ) -> rappel_core::Result<TaggedCard> {
+        self.0
+            .store
+            .borrow_mut()
+            .edit_card_with_tags(id, front, back, tag_names)
+    }
+
+    /// Every tag, unused ones too (see [`Store::tags`]).
+    pub fn tags(&self) -> rappel_core::Result<Vec<Tag>> {
+        self.0.store.borrow().tags()
+    }
+
+    /// The tags of a live card (see [`Store::card_tags`]).
+    pub fn card_tags(&self, card_id: &str) -> rappel_core::Result<Vec<Tag>> {
+        self.0.store.borrow().card_tags(card_id)
     }
 
     /// Card `id` (see [`Store::card`]).

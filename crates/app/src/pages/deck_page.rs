@@ -16,7 +16,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gio, glib};
-use rappel_core::domain::{Card, Deck};
+use rappel_core::domain::{Card, Deck, TaggedCard};
 use rappel_core::scheduling::StudyInput;
 
 use crate::dialogs::card_editor::{CardEditor, Saved};
@@ -115,7 +115,7 @@ impl DeckPage {
     pub fn new(state: AppState, deck: Deck) -> rappel_core::Result<Self> {
         let page: Self = glib::Object::new();
         let imp = page.imp();
-        let cards = state.list_cards(&deck.id)?;
+        let cards = state.list_tagged_cards(&deck.id)?;
         // Deck names are untrusted; NavigationPage:title is plain text.
         page.set_title(&deck.name);
         imp.window_title.set_title(&deck.name);
@@ -280,22 +280,24 @@ impl DeckPage {
     /// review page's editor too). Returns its id.
     fn show_saved(&self, saved: Saved) -> Option<String> {
         let store = self.imp().cards.get()?;
-        let card = match saved {
-            Saved::Added(card) => {
-                insert_in_order(store, &CardObject::new(card.clone()));
-                card
+        let tagged = match saved {
+            Saved::Added(tagged) => {
+                insert_in_order(store, &CardObject::new(tagged.clone()));
+                tagged
             }
-            Saved::Edited(card) => {
-                match self.position(&card.id) {
-                    Some(position) => store.splice(position, 1, &[CardObject::new(card.clone())]),
+            Saved::Edited(tagged) => {
+                match self.position(&tagged.card.id) {
+                    Some(position) => {
+                        store.splice(position, 1, &[CardObject::new(tagged.clone())]);
+                    }
                     None => {
-                        insert_in_order(store, &CardObject::new(card.clone()));
+                        insert_in_order(store, &CardObject::new(tagged.clone()));
                     }
                 }
-                card
+                tagged
             }
         };
-        Some(card.id)
+        Some(tagged.card.id)
     }
 
     /// Deletes at once; the toast's Undo brings the card back.
@@ -373,9 +375,26 @@ impl DeckPage {
         if card.deck_id != deck.id {
             return;
         }
-        let position = match self.position(&card.id) {
-            Some(position) => position,
-            None => insert_in_order(store, &CardObject::new(card.clone())),
+        let position = if let Some(position) = self.position(&card.id) {
+            position
+        } else {
+            // A deleted card keeps its tags (ADR 0029).
+            let tags = imp
+                .state
+                .get()
+                .and_then(|state| match state.card_tags(&card.id) {
+                    Ok(tags) => Some(tags),
+                    Err(err) => {
+                        tracing::warn!("a restored card's tags could not be read: {err}");
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            let tagged = TaggedCard {
+                card: card.clone(),
+                tags,
+            };
+            insert_in_order(store, &CardObject::new(tagged))
         };
         self.focus(position);
     }
@@ -389,7 +408,7 @@ impl DeckPage {
         else {
             return;
         };
-        match state.list_cards(&deck.id) {
+        match state.list_tagged_cards(&deck.id) {
             Ok(cards) => {
                 let items: Vec<CardObject> = cards.into_iter().map(CardObject::new).collect();
                 store.splice(0, store.n_items(), &items);
@@ -583,8 +602,8 @@ fn row_factory() -> gtk::SignalListItemFactory {
             item.child().and_downcast::<CardRow>(),
         ) {
             row.bind(&card);
-            // Screen readers read the front, not "row".
-            item.set_accessible_label(&card.preview());
+            // Screen readers read the front and the tags, not "row".
+            item.set_accessible_label(&card.row_label());
         }
     });
     factory.connect_unbind(|_, item| {
@@ -644,13 +663,16 @@ mod tests {
                 let store = gio::ListStore::new::<CardObject>();
                 let items: Vec<CardObject> = (0..5_000)
                     .map(|i| {
-                        CardObject::new(Card {
-                            id: format!("card-{i:05}"),
-                            deck_id: "deck".to_owned(),
-                            front_md: "Front".to_owned(),
-                            back_md: "Back".to_owned(),
-                            created_at: i,
-                            updated_at: i,
+                        CardObject::new(TaggedCard {
+                            card: Card {
+                                id: format!("card-{i:05}"),
+                                deck_id: "deck".to_owned(),
+                                front_md: "Front".to_owned(),
+                                back_md: "Back".to_owned(),
+                                created_at: i,
+                                updated_at: i,
+                            },
+                            tags: Vec::new(),
                         })
                     })
                     .collect();
@@ -694,8 +716,9 @@ mod tests {
         let ids = (0..n)
             .map(|i| {
                 let id = state
-                    .add_card(&deck.id, &format!("front {i}"), "back")
+                    .add_card_with_tags(&deck.id, &format!("front {i}"), "back", &[])
                     .unwrap()
+                    .card
                     .id;
                 for at in [now - 60 * day, now - 60 * day + 11 * 60 * 1000] {
                     state

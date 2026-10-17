@@ -100,6 +100,28 @@ fn deck_reads_are_fast_at_five_thousand_cards() {
 }
 
 #[test]
+fn listing_five_thousand_tagged_cards_is_fast() {
+    let (mut store, deck) = scratch_store();
+    let ids: Vec<String> = store
+        .list_cards(&deck)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    for (i, id) in ids.iter().enumerate() {
+        for name in [format!("tag {}", i % 40), format!("group {}", i % 7)] {
+            store.add_tag_at(id, &name, T0).unwrap();
+        }
+    }
+    let (tagged, listed) = fastest("list_tagged_cards", 3, || {
+        store.list_tagged_cards(&deck).unwrap()
+    });
+    assert_eq!(listed.len(), CARDS);
+    assert!(listed.iter().all(|c| c.tags.len() == 2));
+    assert!(tagged < Duration::from_millis(LIST_TAGGED_MS), "{tagged:?}");
+}
+
+#[test]
 fn planning_a_five_thousand_card_import_is_fast() {
     let (store, _) = scratch_store();
     let bytes = store.export_bytes_at(NOW).unwrap().0;
@@ -120,6 +142,8 @@ fn planning_a_five_thousand_card_import_is_fast() {
 const STUDY_MS: u64 = 150;
 /// `list_cards` of 5,000 cards (measured 6 ms).
 const LIST_CARDS_MS: u64 = 100;
+/// `list_tagged_cards` of 5,000 cards with two tags each (measured 30 ms).
+const LIST_TAGGED_MS: u64 = 300;
 /// Planning the import of the 5,000-card export into an empty store
 /// (measured 80 ms).
 const PLAN_IMPORT_MS: u64 = 1_000;
