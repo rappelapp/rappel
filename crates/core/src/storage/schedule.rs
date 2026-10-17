@@ -291,7 +291,7 @@ pub(super) fn invalid(column: &'static str, value: &dyn std::fmt::Display) -> Er
 }
 
 /// A `REAL` written from an `f32` back to `f32`.
-fn to_f32(v: f64) -> f32 {
+pub(super) fn to_f32(v: f64) -> f32 {
     #[expect(
         clippy::cast_possible_truncation,
         reason = "every value in these columns was written with `f64::from(f32)`, so the \

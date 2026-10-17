@@ -3,33 +3,18 @@
 //! for a debug test build, about 10 times what was measured (ADR 0025);
 //! set `RAPPEL_TIMINGS=1` to print the measurements.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::*;
 use crate::domain::Grade;
 use crate::scheduling::STEP_MS;
-use crate::test_support::{DAY_MS, T0};
+use crate::test_support::{DAY_MS, T0, fastest};
 
 const CARDS: usize = 5_000;
 const DUE: usize = 2_000;
 
 /// "Now" in the tests: the reviews are 40 and 20 days before it.
 const NOW: i64 = T0 + 60 * DAY_MS;
-
-/// The fastest of `runs` runs of `f`, and its last result.
-fn fastest<T>(what: &str, runs: usize, mut f: impl FnMut() -> T) -> (Duration, T) {
-    let mut best = Duration::MAX;
-    let mut value = None;
-    for _ in 0..runs {
-        let start = Instant::now();
-        value = Some(f());
-        best = best.min(start.elapsed());
-    }
-    if std::env::var_os("RAPPEL_TIMINGS").is_some() {
-        eprintln!("{what}: {best:?}");
-    }
-    (best, value.unwrap())
-}
 
 /// A deck as `fill_scratch_db 5000 --due 2000` makes it: the first 2,000
 /// cards learned 40 days before [`NOW`] (every third also lapsed 20 days

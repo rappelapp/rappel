@@ -10,6 +10,7 @@ mod restore;
 mod review;
 mod schedule;
 mod settings;
+mod stats;
 mod tags;
 
 use std::fs::{self, OpenOptions, Permissions};
@@ -29,6 +30,7 @@ use migrations::{MIGRATIONS, Migration, latest, migrate};
 pub use restore::{Restored, finish_restore, restore_backup, start_fresh};
 pub(crate) use schedule::rebuild_cards;
 pub(crate) use settings::{StoredSettings, replace_settings, scheduler_in, stored_settings};
+pub use stats::Scope;
 
 /// File name of the database inside the data directory.
 pub(crate) const DB_FILE_NAME: &str = "rappel.sqlite3";

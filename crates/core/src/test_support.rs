@@ -1,7 +1,7 @@
 //! Helpers shared by the tests of several modules. Test builds only.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::domain::{CardState, Grade, ReviewEvent, Schedule};
 pub(crate) use crate::scheduling::DAY_MS;
@@ -100,4 +100,20 @@ pub(crate) fn within<T: Send + 'static>(
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!("{what} panicked"),
     }
+}
+
+/// The fastest of `runs` runs of `f`, and its last result. With
+/// `RAPPEL_TIMINGS=1` the time is printed (ADR 0025).
+pub(crate) fn fastest<T>(what: &str, runs: usize, mut f: impl FnMut() -> T) -> (Duration, T) {
+    let mut best = Duration::MAX;
+    let mut value = None;
+    for _ in 0..runs {
+        let start = Instant::now();
+        value = Some(f());
+        best = best.min(start.elapsed());
+    }
+    if std::env::var_os("RAPPEL_TIMINGS").is_some() {
+        eprintln!("{what}: {best:?}");
+    }
+    (best, value.expect("`runs` is at least 1"))
 }

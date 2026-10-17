@@ -324,6 +324,11 @@ pub enum Error {
         event_id: String,
     },
 
+    /// Day bounds for the statistics that are fewer than two or not strictly
+    /// increasing (ADR 0032).
+    #[error("day bounds must be at least two, strictly increasing timestamps")]
+    InvalidDayGrid,
+
     /// No deck with this id, or it was deleted.
     #[error("deck {0} does not exist")]
     DeckNotFound(String),

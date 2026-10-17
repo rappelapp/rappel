@@ -9,6 +9,7 @@ mod error;
 mod id;
 pub mod interchange;
 pub mod scheduling;
+pub mod stats;
 pub mod storage;
 pub mod time;
 
