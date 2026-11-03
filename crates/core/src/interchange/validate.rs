@@ -9,8 +9,8 @@
 //! first broken rule of a row is the one reported.
 
 use super::format::{
-    CardRecord, DeckRecord, EARLY_TEST_VERSION, EventRecord, FORMAT_VERSION, MediaRecord,
-    SettingsRecord, TagRecord,
+    ArchivedAt, CardRecord, DeckRecord, EARLY_TEST_VERSION, EventRecord, FORMAT_VERSION,
+    MediaRecord, SettingsRecord, TagRecord,
 };
 use super::{FieldProblem, ImportProblem, Limits};
 use crate::domain::{Grade, Settings, has_nul};
@@ -106,7 +106,21 @@ pub(super) fn deck_fields(d: &DeckRecord, limits: &Limits) -> Result<(), FieldEr
     if has_nul(&d.name) {
         return Err(("name", FieldProblem::ContainsNul));
     }
-    times(d.created_at, d.updated_at, d.deleted_at)
+    times(d.created_at, d.updated_at, d.deleted_at)?;
+    archived_at(d.archived_at)
+        .map(|_| ())
+        .map_err(|problem| ("archived_at", problem))
+}
+
+/// A deck's `archived_at`: `null` (or missing), or a timestamp in range
+/// (ADR 0068).
+pub(super) fn archived_at(value: ArchivedAt) -> Result<Option<i64>, FieldProblem> {
+    match value {
+        ArchivedAt::No => Ok(None),
+        ArchivedAt::At(at) if timestamp_ok(at) => Ok(Some(at)),
+        ArchivedAt::At(_) | ArchivedAt::TooLarge => Err(FieldProblem::TimestampOutOfRange),
+        ArchivedAt::NotATime => Err(FieldProblem::NotATimestamp),
+    }
 }
 
 /// A card's sides and times (after its id and deck).

@@ -1,0 +1,97 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The actions on the chosen cards, shared by All Cards and a deck's page
+// (ADR 0036, 0065; HIG, "Selection mode": an action bar at the bottom).
+// Revealed while cards are being chosen (ui/selection.rs). On a phone the
+// buttons keep only their icons (`compact`, widgets/selection_bar.rs); the
+// tooltips and accessible labels stay.
+template $RappelSelectionBar: Adw.Bin {
+  child: Gtk.ActionBar action_bar {
+    revealed: false;
+
+    [start]
+    Gtk.Button move_button {
+      action-name: "selection.move";
+      tooltip-text: _("Move to Deck");
+
+      accessibility {
+        label: _("Move selected cards to a deck");
+      }
+
+      child: Adw.ButtonContent move_content {
+        icon-name: "folder-symbolic";
+        label: _("Move…");
+      };
+    }
+
+    [start]
+    Gtk.MenuButton tags_button {
+      menu-model: tags_menu;
+      tooltip-text: _("Tags");
+
+      accessibility {
+        label: _("Tags of selected cards");
+      }
+
+      child: Adw.ButtonContent tags_content {
+        icon-name: "bookmark-new-symbolic";
+        label: _("Tags");
+      };
+    }
+
+    // Suspend or Unsuspend: its word, tooltip, accessible label and icon
+    // follow the chosen cards (widgets/selection_bar.rs).
+    [start]
+    Gtk.Button suspend_button {
+      action-name: "selection.suspend";
+      tooltip-text: _("Suspend");
+
+      accessibility {
+        label: _("Suspend selected cards");
+      }
+
+      child: Adw.ButtonContent suspend_content {
+        icon-name: "media-playback-pause-symbolic";
+        label: _("Suspend");
+      };
+    }
+
+    [end]
+    Gtk.Button delete_button {
+      action-name: "selection.delete";
+      tooltip-text: _("Delete");
+
+      accessibility {
+        label: _("Delete selected cards");
+      }
+
+      child: Adw.ButtonContent delete_content {
+        icon-name: "user-trash-symbolic";
+        label: _("Delete");
+      };
+    }
+
+    [end]
+    Gtk.Button reset_button {
+      action-name: "selection.reset";
+      tooltip-text: _("Reset Progress");
+
+      accessibility {
+        label: _("Reset progress of selected cards");
+      }
+
+      child: Adw.ButtonContent reset_content {
+        icon-name: "view-refresh-symbolic";
+        label: _("Reset");
+      };
+    }
+  };
+}
+
+menu tags_menu {
+  section {
+    item (_("_Add Tags…"), "selection.add-tags")
+    item (_("_Remove Tag…"), "selection.remove-tag")
+  }
+}

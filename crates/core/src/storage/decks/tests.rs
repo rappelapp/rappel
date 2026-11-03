@@ -382,7 +382,7 @@ fn deleting_a_deck_hides_it_and_its_cards_and_keeps_their_history() {
         Err(Error::DeckNotFound(_))
     ));
     assert!(matches!(
-        store.study_input(&maths.id, T0, T0),
+        store.study_input(&crate::scheduling::StudyScope::deck(&maths.id), T0, T0),
         Err(Error::DeckNotFound(_))
     ));
     assert!(matches!(store.card(&card.id), Err(Error::CardNotFound(_))));
@@ -563,7 +563,13 @@ mod study_counts {
     /// its `study_input` at the same time.
     fn assert_list_matches_study_input(store: &Store, now: i64, day_start: i64) {
         for summary in store.list_decks(now, day_start).unwrap() {
-            let input = store.study_input(&summary.deck.id, now, day_start).unwrap();
+            let input = store
+                .study_input(
+                    &crate::scheduling::StudyScope::deck(&summary.deck.id),
+                    now,
+                    day_start,
+                )
+                .unwrap();
             assert_eq!(
                 (summary.new_count as usize, summary.due_count as usize),
                 (input.new.len(), input.reviews.len() + input.steps.len()),
@@ -642,7 +648,9 @@ mod study_counts {
         for d in store.list_decks(now, DAY_START).unwrap() {
             assert_eq!(
                 d.next_change_at,
-                store.next_study_change(&d.deck.id, now).unwrap(),
+                store
+                    .next_study_change(&crate::scheduling::StudyScope::deck(&d.deck.id), now)
+                    .unwrap(),
                 "deck {}",
                 d.deck.name
             );
@@ -762,7 +770,10 @@ mod study_counts {
         let (_, cards) = deck_with_cards(&mut store, "Maths", 1);
         answer(&mut store, &cards[0], Grade::Pass, T0);
         answer(&mut store, &cards[0], Grade::Pass, T0 + 600_000);
-        let due = store.next_study_change(&cards_deck(&store), T0 + 600_000);
+        let due = store.next_study_change(
+            &crate::scheduling::StudyScope::deck(cards_deck(&store)),
+            T0 + 600_000,
+        );
         let due = due.unwrap().expect("a reviewed card becomes due");
         assert!(due > T0 + 600_000);
         assert_eq!(extra(&store, T0 + 600_000, DAY_START), (1, 0, 0, Some(due)));
@@ -935,12 +946,12 @@ mod counts_equal_study_input {
                 let now = T0 + minutes * 60_000;
                 let day_start = (now - (now - T0).rem_euclid(DAY_MS) - hours_ago * 3_600_000).min(now);
                 for deck in [&a, &b] {
-                    let input = store.study_input(deck, now, day_start).unwrap();
+                    let input = store.study_input(&crate::scheduling::StudyScope::deck(deck), now, day_start).unwrap();
                     let counts = deck_counts_in(&store.conn, deck, now, day_start).unwrap();
                     prop_assert_eq!(counts.new as usize, input.new.len());
                     prop_assert_eq!(counts.reviews as usize, input.reviews.len());
                     prop_assert_eq!(counts.steps as usize, input.steps.len());
-                    prop_assert_eq!(counts.next_change_at, store.next_study_change(deck, now).unwrap());
+                    prop_assert_eq!(counts.next_change_at, store.next_study_change(&crate::scheduling::StudyScope::deck(deck), now).unwrap());
                     if let Some(at) = counts.next_change_at {
                         prop_assert!(at > now);
                     }
@@ -955,7 +966,7 @@ mod counts_equal_study_input {
                 }
                 // And `list_decks` passes them on unchanged.
                 for s in store.list_decks(now, day_start).unwrap() {
-                    let input = store.study_input(&s.deck.id, now, day_start).unwrap();
+                    let input = store.study_input(&crate::scheduling::StudyScope::deck(&s.deck.id), now, day_start).unwrap();
                     prop_assert_eq!(s.new_count as usize, input.new.len());
                     prop_assert_eq!(s.due_count as usize, input.reviews.len() + input.steps.len());
                 }

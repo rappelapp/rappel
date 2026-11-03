@@ -201,7 +201,30 @@ pub struct Deck {
     /// When the deck was created, UTC milliseconds.
     pub created_at: i64,
     /// When the deck was last renamed (or created), UTC milliseconds.
+    /// Archiving does not change it (ADR 0068).
     pub updated_at: i64,
+    /// When the deck was archived, UTC milliseconds; `None` if it is not.
+    /// An archived deck is live, but left out of the deck list, study and
+    /// the global forecast and retention (ADR 0068).
+    pub archived_at: Option<i64>,
+}
+
+impl Deck {
+    /// Whether the deck is archived.
+    #[must_use]
+    pub fn is_archived(&self) -> bool {
+        self.archived_at.is_some()
+    }
+}
+
+/// An archived deck with its card count, for the Archived Decks page
+/// (`Store::archived_decks`, ADR 0068).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchivedDeck {
+    /// The deck; its `archived_at` is set.
+    pub deck: Deck,
+    /// Live cards in the deck, suspended ones included.
+    pub card_count: u32,
 }
 
 /// The key under which deck names must be unique (ADR 0010): the trimmed

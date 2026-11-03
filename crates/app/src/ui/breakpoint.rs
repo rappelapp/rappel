@@ -1,7 +1,10 @@
 //! Following an `AdwBreakpoint` in code, for what its setters cannot do
 //! (a property of the page that its rows follow, a style class).
 
+use std::cell::RefCell;
 use std::rc::Rc;
+
+use gtk::glib;
 
 use gtk::prelude::IsA;
 
@@ -15,6 +18,61 @@ pub fn follow(breakpoint: &adw::Breakpoint, f: impl Fn(bool) + 'static) {
     let applied = Rc::clone(&f);
     breakpoint.connect_apply(move |_| applied(true));
     breakpoint.connect_unapply(move |_| f(false));
+}
+
+/// Calls `f(true)` while the window `widget` is in is narrower than
+/// `threshold` pixels, and `f(false)` otherwise, each time that changes
+/// (and at the first layout). For what a breakpoint cannot do without
+/// shadowing the page's other ones: `AdwBreakpointBin` applies only the
+/// last matching breakpoint (its docs), so a third width on a page that has
+/// two would have to repeat their setters. The surface's `layout` signal
+/// comes with every resize (`GdkSurface` docs). A widget whose own
+/// `size_allocate` could say it cannot: one with a layout manager, like
+/// `AdwBin`, never has its vfunc called (`gtk_widget_allocate`). `f` should
+/// hold its widget weakly.
+///
+/// `threshold` is in **pixels** of the window's surface, not `sp` (a
+/// breakpoint's unit, which follows the font size): the signal gives pixels,
+/// and 400 px is what the 360 px phones in question need. The handler is
+/// on the surface a widget is realized on and is disconnected when it is
+/// unrealized, so a widget that is shown again does not add a second one.
+pub fn follow_window_width(
+    widget: &impl IsA<gtk::Widget>,
+    threshold: i32,
+    f: impl Fn(bool) + 'static,
+) {
+    use gtk::prelude::*;
+    let f = Rc::new(f);
+    // `None` until the first layout, so the first one always calls `f`.
+    let last = Rc::new(std::cell::Cell::new(None::<bool>));
+    // The surface and the handler on it, while the widget is realized.
+    let connected: Rc<RefCell<Option<(gtk::gdk::Surface, glib::SignalHandlerId)>>> = Rc::default();
+    let held = Rc::clone(&connected);
+    widget.connect_realize(move |widget| {
+        let Some(surface) = widget.native().and_then(|native| native.surface()) else {
+            return;
+        };
+        let (f, last) = (Rc::clone(&f), Rc::clone(&last));
+        let id = surface.connect_layout(move |_, width, _| {
+            let narrow = is_narrower(width, threshold);
+            if last.replace(Some(narrow)) != Some(narrow) {
+                f(narrow);
+            }
+        });
+        if let Some((old, old_id)) = held.borrow_mut().replace((surface, id)) {
+            old.disconnect(old_id);
+        }
+    });
+    widget.connect_unrealize(move |_| {
+        if let Some((surface, id)) = connected.borrow_mut().take() {
+            surface.disconnect(id);
+        }
+    });
+}
+
+/// Whether a window `width` pixels wide is narrower than `threshold`.
+fn is_narrower(width: i32, threshold: i32) -> bool {
+    width < threshold
 }
 
 /// Makes `status` `compact` (libadwaita's style class for a status page in
@@ -101,5 +159,18 @@ mod tests {
                 Some("dialog-warning-symbolic")
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod width_tests {
+    use super::is_narrower;
+
+    #[test]
+    fn narrower_means_strictly_under_the_threshold() {
+        assert!(is_narrower(360, 400));
+        assert!(is_narrower(399, 400));
+        assert!(!is_narrower(400, 400));
+        assert!(!is_narrower(1000, 400));
     }
 }

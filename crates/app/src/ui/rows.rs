@@ -39,6 +39,14 @@ pub fn label_menu_button(button: &gtk::MenuButton, name: &str) {
     button.update_property(&[gtk::accessible::Property::Label(&label)]);
 }
 
+/// `text` as a menu item's label: a menu built from a `GMenuModel` reads
+/// an underscore as a mnemonic (the `GtkPopoverMenu` docs' example,
+/// "_New Window"), so one in a name (a tag `my_tag`) is doubled to stay
+/// an underscore. Never markup: the items set no "use-markup".
+pub fn menu_text(text: &str) -> String {
+    text.replace('_', "__")
+}
+
 /// Gives `button` its menu `model` only when the menu first opens, for rows
 /// a `GtkListView` makes many of: building the popover of a six-item menu
 /// is about half the cost of making a card row, and most rows' menus are

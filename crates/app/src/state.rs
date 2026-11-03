@@ -10,16 +10,19 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use rappel_core::domain::{
-    Card, CardState, Deck, DeckSummary, Grade, ReviewEvent, SettingKey, Settings, Tag, TaggedCard,
+    ArchivedDeck, Card, CardState, Deck, DeckSummary, Grade, ReviewEvent, SettingKey, Settings,
+    Tag, TaggedCard,
 };
 use rappel_core::interchange::{
-    AnkiPlan, AnkiReport, ExportSummary, FileKind, ImportPlan, ImportReport, file_kind,
+    AnkiPlan, AnkiReport, ExportOptions, ExportSummary, FileKind, ImportPlan, ImportReport,
+    MediaTotals, file_kind,
 };
 use rappel_core::media::{CleanedUp, MediaRef, TrashTidied, UnusedMedia};
-use rappel_core::scheduling::StudyInput;
+use rappel_core::scheduling::{StudyInput, StudyScope};
 use rappel_core::stats::{CardInfo, DayGrid, Stats};
 use rappel_core::storage::{
-    self, BackupInfo, BrowseQuery, BrowseRow, Moved, OpenWarning, Restored, Scope, Store, TagsAdded,
+    self, BackupInfo, BrowseQuery, BrowseRow, Merged, Moved, OpenWarning, Restored, SameFront,
+    Scope, Store, TagsAdded,
 };
 
 use crate::clock::{local_day_bounds_ms, local_day_start_ms, local_next_day_start_ms};
@@ -161,15 +164,29 @@ impl AppState {
     /// [`Store::export_to`]). Blocking; runs on a worker thread, on its own
     /// connection ([`Store::open_concurrent`], ADR 0018), so the window's
     /// store stays on the main thread.
-    pub fn export_on_worker(data_dir: &Path, path: &Path) -> rappel_core::Result<ExportSummary> {
-        Store::open_concurrent(data_dir)?.export_to(path)
+    pub fn export_on_worker(
+        data_dir: &Path,
+        path: &Path,
+        include_media: bool,
+    ) -> rappel_core::Result<ExportSummary> {
+        Store::open_concurrent(data_dir)?.export_to_with(path, ExportOptions { include_media })
+    }
+
+    /// The media files and their sizes together (see
+    /// [`Store::media_totals`]): one query, asked before an export.
+    pub fn media_totals(&self) -> rappel_core::Result<MediaTotals> {
+        self.0.store.borrow().media_totals()
     }
 
     /// Checks the `.rappel` file `path` against the database in `data_dir`
-    /// (see [`Store::plan_import`]). Blocking; on its own connection like
-    /// [`Self::export_on_worker`].
-    pub fn plan_import_on_worker(data_dir: &Path, path: &Path) -> rappel_core::Result<ImportPlan> {
-        Store::open_concurrent(data_dir)?.plan_import(path)
+    /// (see [`Store::plan_import_cancellable`]); stops when `cancel` is
+    /// set. Blocking; on its own connection like [`Self::export_on_worker`].
+    pub fn plan_import_on_worker(
+        data_dir: &Path,
+        path: &Path,
+        cancel: &AtomicBool,
+    ) -> rappel_core::Result<ImportPlan> {
+        Store::open_concurrent(data_dir)?.plan_import_cancellable(path, cancel)
     }
 
     /// Whether `path` is a Rappel export or an Anki package, by its name,
@@ -329,13 +346,39 @@ impl AppState {
         store.list_decks(now, local_day_start_ms(now, hour))
     }
 
-    /// The live decks, without counting their cards (see [`Store::decks`]).
-    /// For names and ids; the deck list's rows use [`Self::list_decks`].
+    /// The live decks that are not archived, without counting their cards
+    /// (see [`Store::decks`]): what cards can be moved or merged into. The
+    /// deck list's rows use [`Self::list_decks`].
     pub fn decks(&self) -> rappel_core::Result<Vec<Deck>> {
         self.0.store.borrow().decks()
     }
 
-    /// Live deck `id`, without its counts (see [`Store::deck`]).
+    /// Every live deck, archived ones included (see
+    /// [`Store::decks_with_archived`]): for names (the name check, All
+    /// Cards' deck filter, import conflicts).
+    pub fn decks_with_archived(&self) -> rappel_core::Result<Vec<Deck>> {
+        self.0.store.borrow().decks_with_archived()
+    }
+
+    /// The archived decks with their card counts (see
+    /// [`Store::archived_decks`]).
+    pub fn archived_decks(&self) -> rappel_core::Result<Vec<ArchivedDeck>> {
+        self.0.store.borrow().archived_decks()
+    }
+
+    /// Archives a deck (see [`Store::archive_deck`]).
+    pub fn archive_deck(&self, id: &str) -> rappel_core::Result<Deck> {
+        self.0.store.borrow_mut().archive_deck(id)
+    }
+
+    /// Unarchives a deck, the Undo of [`Self::archive_deck`] (see
+    /// [`Store::unarchive_deck`]).
+    pub fn unarchive_deck(&self, id: &str) -> rappel_core::Result<Deck> {
+        self.0.store.borrow_mut().unarchive_deck(id)
+    }
+
+    /// Live deck `id`, archived or not, without its counts (see
+    /// [`Store::deck`]).
     pub fn deck(&self, id: &str) -> rappel_core::Result<Deck> {
         self.0.store.borrow().deck(id)
     }
@@ -358,6 +401,21 @@ impl AppState {
     /// Undoes [`Self::delete_deck`] (see [`Store::undelete_deck`]).
     pub fn undelete_deck(&self, id: &str) -> rappel_core::Result<Deck> {
         self.0.store.borrow_mut().undelete_deck(id)
+    }
+
+    /// How many live cards a deck has (see [`Store::card_count`]).
+    pub fn card_count(&self, deck_id: &str) -> rappel_core::Result<usize> {
+        self.0.store.borrow().card_count(deck_id)
+    }
+
+    /// Merges a deck into another (see [`Store::merge_deck`]).
+    pub fn merge_deck(&self, source: &str, target: &str) -> rappel_core::Result<Merged> {
+        self.0.store.borrow_mut().merge_deck(source, target)
+    }
+
+    /// Undoes [`Self::merge_deck`] (see [`Store::unmerge_deck`]).
+    pub fn unmerge_deck(&self, merged: &Merged) -> rappel_core::Result<Deck> {
+        self.0.store.borrow_mut().unmerge_deck(merged)
     }
 
     /// The live cards of a deck, oldest first (see [`Store::list_cards`]).
@@ -407,8 +465,19 @@ impl AppState {
         self.0.store.borrow().used_tags()
     }
 
+    /// The tags in use, the cards of archived decks counted only with
+    /// `include_archived` (see [`Store::used_tags_listed`], ADR 0068).
+    pub fn used_tags_listed(&self, include_archived: bool) -> rappel_core::Result<Vec<Tag>> {
+        self.0.store.borrow().used_tags_listed(include_archived)
+    }
+
+    /// Whether any live card is left, archived decks included (see
+    /// [`Store::has_live_cards`]).
+    pub fn has_live_cards(&self) -> rappel_core::Result<bool> {
+        self.0.store.borrow().has_live_cards()
+    }
+
     /// Every tag, unused ones too (see [`Store::tags`]).
-    #[cfg(test)]
     pub fn tags(&self) -> rappel_core::Result<Vec<Tag>> {
         self.0.store.borrow().tags()
     }
@@ -423,13 +492,33 @@ impl AppState {
         self.0.store.borrow().card(id)
     }
 
-    /// What a deck has to study at `now`, with the study day starting at
+    /// What `scope` (a deck or a tag) has to study at `now`, with the study day starting at
     /// the settings' day start hour, local time (`local_day_start_ms`; see
     /// [`Store::study_input`]).
-    pub fn study_input(&self, deck_id: &str, now: i64) -> rappel_core::Result<StudyInput> {
+    pub fn study_input(&self, scope: &StudyScope, now: i64) -> rappel_core::Result<StudyInput> {
         let store = self.0.store.borrow();
         let hour = store.settings()?.day_start_hour;
-        store.study_input(deck_id, now, local_day_start_ms(now, hour))
+        store.study_input(scope, now, local_day_start_ms(now, hour))
+    }
+
+    /// The cards a practice of `scope` goes over at `now`, in order (see
+    /// [`Store::practice_queue`]). A shared borrow of the store: practice
+    /// reads and never writes (ADR 0070).
+    pub fn practice_queue(&self, scope: &StudyScope, now: i64) -> rappel_core::Result<Vec<String>> {
+        self.0.store.borrow().practice_queue(scope, now)
+    }
+
+    /// The store's [`Store::total_changes`], for tests that check that a
+    /// practice wrote nothing.
+    #[cfg(test)]
+    pub fn total_changes(&self) -> u64 {
+        self.0.store.borrow().total_changes()
+    }
+
+    /// Whether a practice of `scope` would show a card (see
+    /// [`Store::has_practisable`]); a shared borrow, as `practice_queue`.
+    pub fn has_practisable(&self, scope: &StudyScope) -> rappel_core::Result<bool> {
+        self.0.store.borrow().has_practisable(scope)
     }
 
     /// When the next study day begins after `now`, UTC milliseconds (the
@@ -468,8 +557,12 @@ impl AppState {
 
     /// When what a deck has to study next changes (see
     /// [`Store::next_study_change`]).
-    pub fn next_study_change(&self, deck_id: &str, now: i64) -> rappel_core::Result<Option<i64>> {
-        self.0.store.borrow().next_study_change(deck_id, now)
+    pub fn next_study_change(
+        &self,
+        scope: &StudyScope,
+        now: i64,
+    ) -> rappel_core::Result<Option<i64>> {
+        self.0.store.borrow().next_study_change(scope, now)
     }
 
     /// Records an answer (see [`Store::record_review`]).
@@ -536,6 +629,16 @@ impl AppState {
             past_starts: past_bounds,
             ahead_starts: ahead_bounds,
         })
+    }
+
+    /// The other live cards whose front reads the same as `front_md` (see
+    /// [`Store::cards_with_front`]).
+    pub fn cards_with_front(
+        &self,
+        front_md: &str,
+        except_id: Option<&str>,
+    ) -> rappel_core::Result<Vec<SameFront>> {
+        self.0.store.borrow().cards_with_front(front_md, except_id)
     }
 
     /// A card's properties and history at `now` (see [`Store::card_info`]).

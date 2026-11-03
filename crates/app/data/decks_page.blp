@@ -61,21 +61,61 @@ template $RappelDecksPage: Adw.NavigationPage {
             condition ("max-height: 400sp")
           }
 
+          // Title and description are set in pages/decks_page.rs: they
+          // say so when every deck is archived (ADR 0068).
           child: Adw.StatusPage empty_status {
             icon-name: "accessories-dictionary-symbolic";
-            title: _("No Decks Yet");
-            description: _("Create a deck to start adding cards");
 
-            child: Gtk.Button empty_new_button {
-              label: _("_Create Deck");
-              use-underline: true;
-              action-name: "win.new-deck";
-              halign: center;
+            child: Gtk.Box {
+              orientation: vertical;
+              spacing: 24;
 
-              styles [
-                "pill",
-                "suggested-action",
-              ]
+              Gtk.Button empty_new_button {
+                label: _("_Create Deck");
+                use-underline: true;
+                action-name: "win.new-deck";
+                halign: center;
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+
+              // The way to the archived decks when every deck is archived,
+              // as at the end of the list below, at most 400 px wide under
+              // the button. Shown by pages/decks_page.rs.
+              Adw.Clamp archived_empty_clamp {
+                maximum-size: 400;
+                visible: false;
+
+                child: Gtk.ListBox archived_empty_list {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  Adw.ActionRow archived_empty_row {
+                    title: _("Archived Decks");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Label archived_empty_count {
+                      styles [
+                        "dimmed",
+                        "numeric",
+                      ]
+                    }
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      accessible-role: presentation;
+                    }
+                  }
+                };
+              }
             };
           };
         };
@@ -94,17 +134,54 @@ template $RappelDecksPage: Adw.NavigationPage {
             margin-start: 12;
             margin-end: 12;
 
-            child: Gtk.ListBox deck_list {
-              selection-mode: none;
+            child: Gtk.Box {
+              orientation: vertical;
+              spacing: 24;
               valign: start;
 
-              accessibility {
-                label: _("Decks");
+              Gtk.ListBox deck_list {
+                selection-mode: none;
+
+                accessibility {
+                  label: _("Decks");
+                }
+
+                styles [
+                  "boxed-list",
+                ]
               }
 
-              styles [
-                "boxed-list",
-              ]
+              // "Archived Decks" at the end of the list, only while a deck
+              // is archived: a row of its own, apart from the decks, that
+              // opens the Archived Decks page; its count is set in
+              // pages/decks_page.rs (ADR 0068).
+              Gtk.ListBox archived_list {
+                selection-mode: none;
+                visible: false;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                Adw.ActionRow archived_row {
+                  title: _("Archived Decks");
+                  activatable: true;
+
+                  [suffix]
+                  Gtk.Label archived_count {
+                    styles [
+                      "dimmed",
+                      "numeric",
+                    ]
+                  }
+
+                  [suffix]
+                  Gtk.Image {
+                    icon-name: "go-next-symbolic";
+                    accessible-role: presentation;
+                  }
+                }
+              }
             };
           };
         };

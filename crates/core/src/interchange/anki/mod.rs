@@ -151,6 +151,9 @@ pub struct AnkiSummary {
     pub new_decks: usize,
     /// Decks of Rappel the cards would go into (same name).
     pub existing_decks: usize,
+    /// Of those, the archived ones: their cards stay out of study until
+    /// the deck is unarchived (ADR 0068).
+    pub archived_decks: usize,
     /// Cards that would be added.
     pub cards: usize,
     /// Of those, the suspended ones.
@@ -214,6 +217,8 @@ impl AnkiPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnkiReport {
     pub new_decks: usize,
+    /// Archived decks of Rappel that got cards (ADR 0068).
+    pub archived_decks: usize,
     pub cards: usize,
     pub suspended: usize,
     pub reviews: usize,

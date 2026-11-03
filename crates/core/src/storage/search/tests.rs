@@ -282,7 +282,13 @@ fn a_suspended_card_is_not_studied_and_comes_back_unsuspended() {
     review_twice(&mut store, &due.id);
     let ids = [new.id.clone(), due.id.clone()];
     let studied = |store: &Store| {
-        let input = store.study_input(&deck, NOW, NOW - DAY_MS / 2).unwrap();
+        let input = store
+            .study_input(
+                &crate::scheduling::StudyScope::deck(&deck),
+                NOW,
+                NOW - DAY_MS / 2,
+            )
+            .unwrap();
         (input.new.len(), input.reviews.len())
     };
     assert_eq!(studied(&store), (1, 1));
@@ -295,7 +301,12 @@ fn a_suspended_card_is_not_studied_and_comes_back_unsuspended() {
     assert_eq!(store.set_suspended(&ids, true).unwrap(), ids);
     assert_eq!(studied(&store), (0, 0));
     assert_eq!(counts(&store), (0, 0));
-    assert_eq!(store.next_study_change(&deck, T0).unwrap(), None);
+    assert_eq!(
+        store
+            .next_study_change(&crate::scheduling::StudyScope::deck(&deck), T0)
+            .unwrap(),
+        None
+    );
     assert!(store.card_info(&due.id, NOW).unwrap().suspended);
     // Nothing else about the card changed.
     assert_eq!(store.card(&due.id).unwrap().updated_at, T0);
@@ -548,6 +559,51 @@ fn a_word_that_starts_another_is_left_out() {
     assert_eq!(fts_query("CARD Card card"), Some("\"card\"*".to_owned()));
     // A quote is doubled after the comparison.
     assert_eq!(fts_query("a\" a\"b"), Some("\"a\"\"b\"*".to_owned()));
+}
+
+/// A word that starts with a private-use character joined to letters is
+/// one token for FTS5's unicode61 (it keeps `Co` in tokens), so it is
+/// searched whole, not from its first letter (slice 7b's review: Rust's
+/// `is_alphanumeric` is false for `Co`, and "\u{E000}abc" was searched as
+/// "abc", which matched nothing).
+#[test]
+fn a_word_starting_with_a_private_use_character_is_found() {
+    let (mut store, deck) = store_with_deck();
+    for front in ["\u{E000}abc", "abc", "\u{F0000}x \u{10FFFD}", "\u{F8FF}"] {
+        store.add_card_at(&deck, front, "", T0).unwrap();
+    }
+    assert_eq!(
+        fts_query("\u{E000}abc"),
+        Some("\"\u{E000}abc\"*".to_owned())
+    );
+    assert_eq!(
+        fts_query("--\u{E000}ab"),
+        Some("\"\u{E000}ab\"*".to_owned())
+    );
+    assert_eq!(fronts(&store, &query("\u{E000}abc")), ["\u{E000}abc"]);
+    assert_eq!(fronts(&store, &query("\u{E000}a")), ["\u{E000}abc"]);
+    assert_eq!(fronts(&store, &query("abc")), ["abc"]);
+    // The supplementary planes, and a private-use character alone.
+    assert_eq!(
+        fronts(&store, &query("\u{F0000}")),
+        ["\u{F0000}x \u{10FFFD}"]
+    );
+    assert_eq!(
+        fronts(&store, &query("\u{10FFFD}")),
+        ["\u{F0000}x \u{10FFFD}"]
+    );
+    assert_eq!(fronts(&store, &query("\u{F8FF}")), ["\u{F8FF}"]);
+    // A private-use character starts a word, and a word of them is cut at
+    // the byte budget like any other: never inside a character (3 bytes
+    // each here, so 341 of them fit in 1,023 of the 1,024 bytes).
+    assert!(starts_token('\u{E000}') && starts_token('\u{F0000}') && starts_token('\u{10FFFD}'));
+    let long = format!("--{}", "\u{E000}".repeat(400));
+    let cut = format!("\"{}\"*", "\u{E000}".repeat(MAX_QUERY_BYTES / 3));
+    assert_eq!(fts_query(&long), Some(cut));
+    // Not punctuation, nor the noncharacters at the planes' ends.
+    for c in ['-', '\u{FFFE}', '\u{FFFFE}', '\u{10FFFF}'] {
+        assert!(!starts_token(c), "{c:?}");
+    }
 }
 
 #[test]

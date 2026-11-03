@@ -130,6 +130,49 @@ fn a_zstd_bomb_stops_at_the_cap() {
     });
 }
 
+/// A legacy package whose collection declares more than the limit is
+/// refused from the central directory, before any of it is read or written
+/// (ADR 0071): its data here is small and valid, so only the declared size
+/// can refuse it with this error (reading it would find the size differs).
+/// The current format is not checked this way: its entry holds zstd's
+/// input, whose size says nothing about what it decompresses to.
+#[test]
+fn a_collection_declaring_more_than_the_limit_is_refused_unread() {
+    let env = Env::new();
+    let mut bytes = one_basic().build(Container::Legacy);
+    let limits = AnkiLimits {
+        collection: 1 << 20,
+        ..AnkiLimits::DEFAULT
+    };
+    // The size the central record of `collection.anki21` declares.
+    let mut at = 0;
+    let mut patched = false;
+    while let Some(found) = bytes[at..].windows(4).position(|w| w == b"PK\x01\x02") {
+        let record = at + found;
+        let name_len = usize::from(u16::from_le_bytes([bytes[record + 28], bytes[record + 29]]));
+        if &bytes[record + 46..record + 46 + name_len] == b"collection.anki21" {
+            let size = u32::try_from(limits.collection + 1).unwrap();
+            bytes[record + 24..record + 28].copy_from_slice(&size.to_le_bytes());
+            patched = true;
+            break;
+        }
+        at = record + 4;
+    }
+    assert!(patched, "the package has a collection.anki21");
+    let result = env.store.plan_anki_bytes(&bytes, &limits, PLAN_NOW);
+    env.assert_no_temp();
+    assert!(
+        matches!(
+            result,
+            Err(Error::AnkiRefused(AnkiProblem::EntryTooLarge {
+                entry: "collection.anki21",
+                limit
+            })) if limit == 1 << 20
+        ),
+        "{result:?}"
+    );
+}
+
 #[test]
 fn a_window_larger_than_the_limit_is_refused() {
     let env = Env::new();

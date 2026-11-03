@@ -104,8 +104,18 @@ template $RappelDeckRow: Gtk.ListBoxRow {
 }
 
 menu deck_menu {
+  // Goes over the deck's cards without rescheduling them (ADR 0070);
+  // disabled while it has none to practise.
+  section {
+    item (_("_Practice"), "row.practice")
+  }
+
   section {
     item (_("_Rename…"), "row.rename")
+    // Disabled while there is no other deck (dialogs/merge_deck.rs).
+    item (_("_Merge Into…"), "row.merge")
+    // Undone from a toast; not destructive, so above Delete (ADR 0068).
+    item (_("_Archive"), "row.archive")
     item (_("_Delete"), "row.delete")
   }
 }

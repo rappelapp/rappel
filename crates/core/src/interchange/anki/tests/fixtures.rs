@@ -367,6 +367,29 @@ fn cards_go_into_live_decks_of_the_same_name() {
     assert_eq!(in_lang[0].front_md, "Capital of Italy?");
 }
 
+/// The Anki import never archives (ADR 0068): its new decks are not
+/// archived, and a deck whose name an archived deck has goes into that
+/// deck, which stays archived (an import never changes how a deck is
+/// studied).
+#[test]
+fn an_anki_import_never_archives_and_keeps_an_archived_deck_archived() {
+    let mut env = Env::new();
+    let lang = env.store.create_deck("lang").unwrap();
+    let archived = env.store.archive_deck(&lang.id).unwrap();
+    let plan = env.plan(&fixture("current.apkg")).unwrap();
+    assert_eq!(
+        (plan.summary().existing_decks, plan.summary().archived_decks),
+        (1, 1)
+    );
+    let report = env.import(&fixture("current.apkg")).unwrap();
+    assert_eq!(report.archived_decks, 1);
+    assert_eq!(env.store.deck(&lang.id).unwrap(), archived);
+    assert_eq!(env.store.list_cards(&lang.id).unwrap().len(), 1);
+    let decks = env.store.decks_with_archived().unwrap();
+    assert_eq!(decks.len(), 5);
+    assert!(decks.iter().all(|d| d.is_archived() == (d.id == lang.id)));
+}
+
 #[test]
 fn a_cancelled_import_writes_nothing() {
     let mut env = Env::new();

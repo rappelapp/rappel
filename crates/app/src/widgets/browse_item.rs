@@ -130,3 +130,25 @@ impl BrowseItem {
         self.imp().front.get().is_some() || self.imp().back.get().is_some()
     }
 }
+
+impl crate::ui::selection::SelectableCard for BrowseItem {
+    fn card_id(&self) -> String {
+        self.id()
+    }
+
+    fn card_suspended(&self) -> bool {
+        self.suspended()
+    }
+
+    fn card_is_new(&self) -> bool {
+        self.is_new()
+    }
+
+    fn card_tags(&self) -> Vec<rappel_core::domain::Tag> {
+        self.row().tags.clone()
+    }
+
+    fn set_chosen(&self, chosen: bool) {
+        self.set_selected(chosen);
+    }
+}

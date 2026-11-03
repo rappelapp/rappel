@@ -1,0 +1,22 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Merge Into… from a deck's menu (ADR 0066): the deck to merge into, and
+// what the merge does. The body names the decks and is set in
+// dialogs/merge_deck.rs as plain text (deck names are untrusted; the body
+// does not use markup). Cancel is the default, so Enter never merges by
+// accident; Merge is suggested, not destructive, since Undo reverses it.
+Adw.AlertDialog merge_deck_dialog {
+  heading: _("Merge Deck?");
+  close-response: "cancel";
+  default-response: "cancel";
+
+  responses [
+    cancel: _("_Cancel"),
+    merge: _("_Merge") suggested,
+  ]
+
+  extra-child: Gtk.DropDown merge_target_dropdown {
+    enable-search: true;
+  };
+}

@@ -29,13 +29,17 @@ pub enum NameCheck {
     /// Another live deck has this name, ignoring case and Unicode
     /// composition; holds that deck's name as shown.
     Duplicate(String),
+    /// An archived deck has this name: it stays taken while archived
+    /// (ADR 0068); holds that deck's name as shown.
+    Archived(String),
     /// Longer than the store accepts (and an import reads back).
     TooLong,
     Valid,
 }
 
-/// Checks `input` against `decks`, skipping the deck with id `exclude`
-/// (the deck being renamed). Same rule as the store (ADR 0010).
+/// Checks `input` against `decks` (every live deck, archived ones
+/// included), skipping the deck with id `exclude` (the deck being
+/// renamed). Same rule as the store (ADR 0010, 0068).
 pub fn check_deck_name(input: &str, decks: &[Deck], exclude: Option<&str>) -> NameCheck {
     if input.trim().is_empty() {
         return NameCheck::Empty;
@@ -49,7 +53,11 @@ pub fn check_deck_name(input: &str, decks: &[Deck], exclude: Option<&str>) -> Na
         .filter(|deck| Some(deck.id.as_str()) != exclude)
         .find(|deck| deck_name_key(&deck.name) == key)
         .map_or(NameCheck::Valid, |deck| {
-            NameCheck::Duplicate(deck.name.clone())
+            if deck.is_archived() {
+                NameCheck::Archived(deck.name.clone())
+            } else {
+                NameCheck::Duplicate(deck.name.clone())
+            }
         })
 }
 
@@ -59,6 +67,13 @@ pub fn name_error(check: &NameCheck) -> Option<String> {
         NameCheck::Duplicate(name) => Some(fill(
             // Translators: {name} is the name of one of the user's decks.
             &gettext("A deck named “{name}” already exists"),
+            &[("name", name)],
+        )),
+        NameCheck::Archived(name) => Some(fill(
+            // Translators: {name} is the name of one of the user's decks,
+            // which is archived (in Archived Decks, at the end of the deck
+            // list).
+            &gettext("An archived deck is named “{name}”"),
             &[("name", name)],
         )),
         NameCheck::TooLong => Some(fill(
@@ -85,7 +100,8 @@ pub(crate) fn layout() -> Result<(adw::AlertDialog, adw::EntryRow, gtk::Label), 
 }
 
 /// Shows the dialog over `parent` and returns the name typed, or `None`
-/// if it was cancelled. `decks` are the live decks, for the duplicate check.
+/// if it was cancelled. `decks` are the live decks, archived ones included,
+/// for the duplicate check.
 pub async fn ask(
     parent: &impl IsA<gtk::Widget>,
     purpose: Purpose,
@@ -167,6 +183,7 @@ mod tests {
             name: name.to_owned(),
             created_at: 0,
             updated_at: 0,
+            archived_at: None,
         }
     }
 
@@ -209,6 +226,28 @@ mod tests {
         assert_eq!(
             check_deck_name("économie", &decks(), Some("1")),
             NameCheck::Duplicate("\u{C9}conomie".to_owned())
+        );
+    }
+
+    /// An archived deck's name stays taken, and the error says why.
+    #[test]
+    fn an_archived_decks_name_is_taken_and_says_so() {
+        let mut decks = decks();
+        decks.push(Deck {
+            archived_at: Some(1),
+            ..deck("3", "Spanish")
+        });
+        let archived = NameCheck::Archived("Spanish".to_owned());
+        assert_eq!(check_deck_name(" spanish ", &decks, None), archived);
+        assert_eq!(check_deck_name("SPANISH", &decks, Some("1")), archived);
+        // Renaming the archived deck itself to another case is allowed.
+        assert_eq!(
+            check_deck_name("SPANISH", &decks, Some("3")),
+            NameCheck::Valid
+        );
+        assert_eq!(
+            name_error(&archived).as_deref(),
+            Some("An archived deck is named “Spanish”")
         );
     }
 

@@ -21,8 +21,8 @@ use super::media::MediaList;
 use super::notes::{Candidates, EventNote, Locate, Notes, UndoNote, name_digest, target_key};
 use super::stream::{Sink, Stopped, Table};
 use super::validate::{
-    Kind, card_fields, check_id, check_settings, check_top_level, deck_fields, event_fields,
-    invalid, reference, tag_fields,
+    Kind, archived_at, card_fields, check_id, check_settings, check_top_level, deck_fields,
+    event_fields, invalid, reference, tag_fields,
 };
 use super::{Conflict, FieldProblem, ImportProblem, ImportSummary, Limits, SettingsImport};
 use crate::domain::{deck_name_key, name_key};
@@ -77,6 +77,7 @@ struct Reads<'c> {
     deck_name: Statement<'c>,
     card: Statement<'c>,
     batch: Statement<'c>,
+    deck_live: Statement<'c>,
     tag: Statement<'c>,
     tag_by_key: Statement<'c>,
     card_tag: Statement<'c>,
@@ -178,7 +179,8 @@ impl<'c> Engine<'c> {
     ) -> crate::Result<Self> {
         let reads = Reads {
             deck: conn.prepare(
-                "SELECT id, name, created_at, updated_at, deleted_at FROM decks WHERE id = ?1",
+                "SELECT id, name, created_at, updated_at, archived_at, deleted_at
+                 FROM decks WHERE id = ?1",
             )?,
             deck_name: conn.prepare(
                 "SELECT id FROM decks WHERE name_key = ?1 AND deleted_at IS NULL AND id <> ?2",
@@ -190,6 +192,7 @@ impl<'c> Engine<'c> {
             batch: conn.prepare(
                 "SELECT id FROM cards WHERE deck_id = ?1 AND deleted_at = ?2 ORDER BY id",
             )?,
+            deck_live: conn.prepare("SELECT 1 FROM decks WHERE id = ?1 AND deleted_at IS NULL")?,
             tag: conn.prepare("SELECT name FROM tags WHERE id = ?1")?,
             tag_by_key: conn.prepare("SELECT id FROM tags WHERE name_key = ?1")?,
             card_tag: conn
@@ -204,8 +207,8 @@ impl<'c> Engine<'c> {
         let writes = if write {
             Some(Writes {
                 deck: conn.prepare(
-                    "INSERT INTO decks (id, name, name_key, created_at, updated_at, deleted_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO decks (id, name, name_key, created_at, updated_at, archived_at, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )?,
                 // `updated_at` is not touched, as deleting did not touch it.
                 revive_deck: conn.prepare(
@@ -446,7 +449,8 @@ impl<'c> Engine<'c> {
                     name: r.get(1)?,
                     created_at: r.get(2)?,
                     updated_at: r.get(3)?,
-                    deleted_at: r.get(4)?,
+                    archived_at: r.get::<_, Option<i64>>(4)?.into(),
+                    deleted_at: r.get(5)?,
                 })
             })
             .optional()?;
@@ -454,20 +458,28 @@ impl<'c> Engine<'c> {
             self.summary.decks.new += 1;
             record(&mut self.digest, code::DECK, index, code::NEW, &[]);
             if let Some(w) = &mut self.writes {
+                // A new deck keeps the file's flag (ADR 0068), checked by
+                // `deck_fields` before.
+                let archived_at = archived_at(d.archived_at).ok().flatten();
                 w.deck.execute(params![
                     d.id,
                     d.name,
                     deck_name_key(&d.name),
                     d.created_at,
                     d.updated_at,
+                    archived_at,
                     d.deleted_at
                 ])?;
             }
             return Ok(());
         };
         let stored_deleted = s.deleted_at;
+        // The database keeps its own `archived_at`: an import never
+        // changes how a live deck is studied (ADR 0068), as for a card's
+        // `suspended` (ADR 0035).
         let rest_equal = DeckRecord {
             deleted_at: d.deleted_at,
+            archived_at: d.archived_at,
             ..s
         } == *d;
         match compare(rest_equal, stored_deleted, d.deleted_at) {
@@ -554,14 +566,34 @@ impl<'c> Engine<'c> {
             return Ok(());
         };
         let stored_deleted = s.deleted_at;
+        let stored_deck = s.deck_id.clone();
+        let moved = stored_deck != c.deck_id;
         // The database keeps its own `suspended`: an import never changes
-        // how a live card is studied (ADR 0035).
+        // how a live card is studied (ADR 0035). It keeps its own deck too:
+        // an import never reorganises cards, so a file from before a Move to
+        // Deck or a merge is already present (ADR 0067).
         let rest_equal = CardRecord {
             deleted_at: c.deleted_at,
             suspended: c.suspended,
+            deck_id: c.deck_id.clone(),
             ..s
         } == *c;
-        match compare(rest_equal, stored_deleted, c.deleted_at) {
+        let mut outcome = compare(rest_equal, stored_deleted, c.deleted_at);
+        if moved && matches!(outcome, Outcome::Revive(_)) && !self.live_after(&stored_deck)? {
+            // Revived, it would be a live card in a deleted deck: its deck
+            // in the database was deleted, and this import does not bring
+            // that deck back. It stays deleted, as the database has it.
+            outcome = Outcome::Present;
+        }
+        let live_after = match outcome {
+            Outcome::Revive(_) => true,
+            Outcome::Present => stored_deleted.is_none(),
+            Outcome::Conflict => false,
+        };
+        if moved && live_after {
+            self.summary.cards_kept_in_their_deck += 1;
+        }
+        match outcome {
             Outcome::Present => {
                 self.summary.cards.present += 1;
                 record(&mut self.digest, code::CARD, index, code::PRESENT, &[]);
@@ -580,6 +612,13 @@ impl<'c> Engine<'c> {
             }
         }
         Ok(())
+    }
+
+    /// Whether deck `id` of the database is live once this import is
+    /// written: live now, or revived by it (the decks are read before the
+    /// cards, so `batches` is complete by then).
+    fn live_after(&mut self, id: &str) -> Result<bool, Stop> {
+        Ok(self.reads.deck_live.exists([id])? || self.batches.iter().any(|(d, _)| d == id))
     }
 
     /// The cards deleted with each revived deck (same deck, same stamp, as

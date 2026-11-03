@@ -80,14 +80,20 @@ fn deck_reads_are_fast_at_five_thousand_cards() {
     );
     assert_eq!(
         decks[0].next_change_at,
-        store.next_study_change(&deck, NOW).unwrap()
+        store
+            .next_study_change(&crate::scheduling::StudyScope::deck(&deck), NOW)
+            .unwrap()
     );
     let (input, study) = fastest("study_input", 3, || {
-        store.study_input(&deck, NOW, day_start).unwrap()
+        store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, day_start)
+            .unwrap()
     });
     assert_eq!(study.reviews.len(), DUE);
     let (next, _) = fastest("next_study_change", 3, || {
-        store.next_study_change(&deck, NOW).unwrap()
+        store
+            .next_study_change(&crate::scheduling::StudyScope::deck(&deck), NOW)
+            .unwrap()
     });
     let (cards, listed) = fastest("list_cards", 3, || store.list_cards(&deck).unwrap());
     assert_eq!(listed.len(), CARDS);
@@ -140,6 +146,146 @@ fn listing_five_thousand_tagged_cards_is_fast() {
     assert_eq!(listed.len(), CARDS);
     assert!(listed.iter().all(|c| c.tags.len() == 2));
     assert_cpu_within(tagged, ms(LIST_TAGGED_MS), "list_tagged_cards");
+}
+
+/// A tag session over the scratch deck with the tag on every card (ADR
+/// 0069): every candidate is read and cut in Rust, not by SQL's `LIMIT`,
+/// so it is held to the deck session's bound.
+#[test]
+fn studying_a_tag_on_five_thousand_cards_is_fast() {
+    let (mut store, deck) = scratch_store();
+    let ids: Vec<String> = store
+        .list_cards(&deck)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    store
+        .add_tags_to_cards(&ids, &["all".to_owned()], usize::MAX)
+        .unwrap();
+    let tag_id = store.tags().unwrap()[0].id.clone();
+    let scope = crate::scheduling::StudyScope::tag(&tag_id);
+    let day_start = NOW - DAY_MS / 2;
+    let (input, study) = fastest("study_input (tag)", 3, || {
+        store.study_input(&scope, NOW, day_start).unwrap()
+    });
+    assert_eq!(study.reviews.len(), DUE);
+    assert_eq!(study.new.len(), 20);
+    let (next, _) = fastest("next_study_change (tag)", 3, || {
+        store.next_study_change(&scope, NOW).unwrap()
+    });
+    assert_cpu_within(
+        input + next,
+        ms(STUDY_MS),
+        "study_input + next_study_change of a tag",
+    );
+}
+
+/// Hardening round 4 (ADR 0073): a tag on 10,000 cards across 100 decks,
+/// each deck with its due reviews and new cards, plus an archived deck and
+/// a deleted card carrying it. The tag session respects every deck's own
+/// limits (5 reviews and 3 new cards a day here; a deck that reviewed two
+/// cards today has 3 reviews left), leaves out the archived deck and the
+/// deleted card, and is built within the deck session's bound.
+#[test]
+fn studying_a_tag_across_a_hundred_decks_respects_each_decks_limits() {
+    const DECKS: usize = 100;
+    const PER_DECK: usize = 100;
+    const DUE_PER_DECK: usize = 10;
+    let mut store = Store::in_memory();
+    store.set_max_reviews_per_day(5).unwrap();
+    store.set_max_new_per_day(3).unwrap();
+    let mut decks = Vec::new();
+    let mut ids = Vec::new();
+    let learned = NOW - 40 * DAY_MS;
+    for d in 0..DECKS {
+        let deck = store.create_deck_at(&format!("Deck {d}"), T0).unwrap().id;
+        for i in 0..PER_DECK {
+            let card = store
+                .add_card_at(&deck, &format!("Card {d}.{i}"), "back", T0)
+                .unwrap()
+                .id;
+            if i < DUE_PER_DECK {
+                for at in [learned, learned + STEP_MS] {
+                    store
+                        .record_review(&card, Grade::Pass, Duration::from_secs(8), at)
+                        .unwrap();
+                }
+            }
+            ids.push(card);
+        }
+        decks.push(deck);
+    }
+    let archived = store.create_deck_at("Archived", T0).unwrap().id;
+    let mut hidden = Vec::new();
+    for i in 0..50 {
+        hidden.push(
+            store
+                .add_card_at(&archived, &format!("Hidden {i}"), "back", T0)
+                .unwrap()
+                .id,
+        );
+    }
+    let deleted = store
+        .add_card_at(&decks[1], "Deleted", "back", T0)
+        .unwrap()
+        .id;
+    let mut tagged = ids.clone();
+    tagged.extend(hidden.iter().cloned());
+    tagged.push(deleted.clone());
+    store
+        .add_tags_to_cards(&tagged, &["verbs".to_owned()], usize::MAX)
+        .unwrap();
+    store.archive_deck_at(&archived, T0).unwrap();
+    store.delete_card_at(&deleted, T0).unwrap();
+    // Deck 0 already reviewed two of its due cards today.
+    let day_start = NOW - DAY_MS / 2;
+    for card in &ids[..2] {
+        store
+            .record_review(card, Grade::Pass, Duration::from_secs(8), NOW - 60_000)
+            .unwrap();
+    }
+    let tag = store.tags().unwrap()[0].id.clone();
+    let scope = crate::scheduling::StudyScope::tag(&tag);
+    let (input, study) = fastest("study_input (tag, 100 decks)", 3, || {
+        store.study_input(&scope, NOW, day_start).unwrap()
+    });
+    let (next, _) = fastest("next_study_change (tag, 100 decks)", 3, || {
+        store.next_study_change(&scope, NOW).unwrap()
+    });
+    // Every deck's own session, and the tag's part of each.
+    let deck_of = |card: &str| -> usize {
+        ids.iter()
+            .position(|id| id == card)
+            .expect("a card of the decks")
+            / PER_DECK
+    };
+    let mut reviews = vec![0usize; DECKS];
+    let mut new = vec![0usize; DECKS];
+    for due in &study.reviews {
+        reviews[deck_of(&due.card_id)] += 1;
+    }
+    for card in &study.new {
+        new[deck_of(card)] += 1;
+    }
+    for (d, deck) in decks.iter().enumerate() {
+        let own = store
+            .study_input(&crate::scheduling::StudyScope::deck(deck), NOW, day_start)
+            .unwrap();
+        assert_eq!(reviews[d], own.reviews.len(), "deck {d}");
+        assert_eq!(new[d], own.new.len(), "deck {d}");
+        assert_eq!(reviews[d], if d == 0 { 3 } else { 5 }, "deck {d}");
+        assert_eq!(new[d], 3, "deck {d}");
+    }
+    assert_eq!(study.reviews.len(), 99 * 5 + 3);
+    assert_eq!(study.new.len(), DECKS * 3);
+    assert_eq!(study.steps.len(), 0);
+    assert_eq!(study.reviews_today, 2);
+    assert_cpu_within(
+        input + next,
+        ms(TAG_100_DECKS_MS),
+        "study_input + next_study_change of a tag across 100 decks",
+    );
 }
 
 #[test]
@@ -409,6 +555,301 @@ fn bulk_writes_on_five_thousand_cards_are_fast() {
     }
 }
 
+/// Practice of a deck of 10,000 cards, 4,000 of them reviewed: the queue
+/// reads every card and orders them by retrievability in Rust, and
+/// `has_practisable` is one `EXISTS` (ADR 0070).
+#[test]
+fn practising_ten_thousand_cards_is_fast() {
+    let (mut store, deck) = scratch_store();
+    // A second scratch deck's worth in the same deck: 10,000 cards.
+    for i in CARDS..2 * CARDS {
+        let card = store
+            .add_card_at(&deck, &format!("Card {i}"), "back", T0)
+            .unwrap()
+            .id;
+        if i < CARDS + DUE {
+            let learned = NOW - 30 * DAY_MS;
+            for (grade, at) in [(Grade::Pass, learned), (Grade::Pass, learned + STEP_MS)] {
+                store
+                    .record_review(&card, grade, Duration::from_secs(8), at)
+                    .unwrap();
+            }
+        }
+    }
+    let scope = crate::scheduling::StudyScope::deck(&deck);
+    let (queue, cards) = fastest("practice_queue (10,000)", 3, || {
+        store.practice_queue(&scope, NOW).unwrap()
+    });
+    assert_eq!(cards.len(), crate::scheduling::PRACTICE_LIMIT);
+    let (exists, any) = fastest("has_practisable (10,000)", 3, || {
+        store.has_practisable(&scope).unwrap()
+    });
+    assert!(any);
+    assert_cpu_within(queue, ms(PRACTICE_MS), "practice_queue (10,000)");
+    assert_cpu_within(exists, ms(PRACTICE_MS), "has_practisable (10,000)");
+}
+
+/// Merge Into… on a deck of 10,000 cards, a tenth of them deleted, and its
+/// Undo: one statement each for the cards (ADR 0066), so well under a
+/// second even in a debug build.
+#[test]
+fn merging_a_deck_of_ten_thousand_cards_is_fast() {
+    const MERGED: usize = 10_000;
+    let mut store = Store::in_memory();
+    let source = store.create_deck_at("Source", T0).unwrap().id;
+    let target = store.create_deck_at("Target", T0).unwrap().id;
+    let mut deleted = Vec::new();
+    for i in 0..MERGED {
+        let card = store
+            .add_card_at(&source, &format!("Card {i}"), "back", T0)
+            .unwrap()
+            .id;
+        if i % 10 == 0 {
+            deleted.push(card);
+        }
+    }
+    store.delete_cards_at(&deleted, T0 + 1).unwrap();
+    store.add_card_at(&target, "Own", "back", T0).unwrap();
+    let (merge, merged) = fastest("merge_deck (10,000)", 1, || {
+        store.merge_deck_at(&source, &target, NOW).unwrap()
+    });
+    assert_eq!(
+        (merged.cards.len(), merged.live),
+        (MERGED, MERGED - deleted.len())
+    );
+    assert_eq!(
+        store.card_count(&target).unwrap(),
+        MERGED - deleted.len() + 1
+    );
+    let (unmerge, _) = fastest("unmerge_deck (10,000)", 1, || {
+        store.unmerge_deck(&merged).unwrap()
+    });
+    assert_eq!(store.card_count(&source).unwrap(), MERGED - deleted.len());
+    assert_eq!(store.card_count(&target).unwrap(), 1);
+    assert_cpu_within(merge, ms(MERGE_MS), "merge_deck (10,000)");
+    assert_cpu_within(unmerge, ms(MERGE_MS), "unmerge_deck (10,000)");
+}
+
+/// Hardening round 4 (ADR 0073): Merge Into… of a deck of 20,000 cards,
+/// a quarter of them deleted, a tenth reviewed, every third tagged and
+/// every seventh suspended, and its Undo: the database is exactly as it
+/// was (`test_support::dump`, every row of every table), each within a
+/// time bound. Then merge again, edit and delete some of the merged cards
+/// and move others away, and undo: the edited and deleted ones go back
+/// with their changes, the moved ones stay where they went (ADR 0066).
+#[test]
+fn merging_twenty_thousand_cards_and_undoing_it_restores_the_database() {
+    const MERGED: usize = 20_000;
+    let mut store = Store::in_memory();
+    let source = store.create_deck_at("Source", T0).unwrap().id;
+    let target = store.create_deck_at("Target", T0).unwrap().id;
+    let third = store.create_deck_at("Third", T0).unwrap().id;
+    let mut ids = Vec::with_capacity(MERGED);
+    for i in 0..MERGED {
+        ids.push(
+            store
+                .add_card_at(&source, &format!("Card {i}"), "back", T0)
+                .unwrap()
+                .id,
+        );
+    }
+    for id in ids.iter().step_by(10) {
+        crate::test_support::answer(&mut store, id, Grade::Pass, T0 + DAY_MS);
+    }
+    let tagged: Vec<String> = ids.iter().step_by(3).cloned().collect();
+    store
+        .add_tags_to_cards_at(&tagged, &["verbs".to_owned(), "b1".to_owned()], 100, T0 + 2)
+        .unwrap();
+    let suspended: Vec<String> = ids.iter().step_by(7).cloned().collect();
+    store.set_suspended(&suspended, true).unwrap();
+    let deleted: Vec<String> = ids.iter().skip(1).step_by(4).cloned().collect();
+    store.delete_cards_at(&deleted, T0 + 3).unwrap();
+    store.add_card_at(&target, "Own", "back", T0).unwrap();
+    let before = crate::test_support::dump(&store);
+
+    let (merge, merged) = fastest("merge_deck (20,000)", 1, || {
+        store.merge_deck_at(&source, &target, NOW).unwrap()
+    });
+    assert_eq!(
+        (merged.cards.len(), merged.live),
+        (MERGED, MERGED - deleted.len())
+    );
+    let (unmerge, _) = fastest("unmerge_deck (20,000)", 1, || {
+        store.unmerge_deck(&merged).unwrap()
+    });
+    assert_eq!(crate::test_support::dump(&store), before);
+    assert_cpu_within(merge, ms(MERGE_20K_MS), "merge_deck (20,000)");
+    assert_cpu_within(unmerge, ms(MERGE_20K_MS), "unmerge_deck (20,000)");
+
+    // Merge, then change some of the merged cards, then undo.
+    let merged = store.merge_deck_at(&source, &target, NOW).unwrap();
+    let edited: Vec<&String> = ids.iter().skip(2).step_by(4).take(500).collect();
+    for id in &edited {
+        store.edit_card_at(id, "edited", "back", NOW + 1).unwrap();
+    }
+    let gone: Vec<String> = ids.iter().skip(3).step_by(4).take(500).cloned().collect();
+    store.delete_cards_at(&gone, NOW + 2).unwrap();
+    let moved: Vec<String> = ids
+        .iter()
+        .skip(3)
+        .step_by(4)
+        .skip(500)
+        .take(500)
+        .cloned()
+        .collect();
+    store.move_cards(&moved, &third).unwrap();
+    let (unmerge, _) = fastest("unmerge_deck after changes (20,000)", 1, || {
+        store.unmerge_deck(&merged).unwrap()
+    });
+    assert_cpu_within(unmerge, ms(MERGE_20K_MS), "unmerge_deck after changes");
+    let deck_of = |id: &str| -> String {
+        store
+            .conn
+            .query_row("SELECT deck_id FROM cards WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    };
+    for id in &edited {
+        assert_eq!(deck_of(id), source);
+        assert_eq!(store.card(id).unwrap().front_md, "edited");
+    }
+    for id in &gone {
+        assert_eq!(
+            deck_of(id),
+            source,
+            "a card deleted since goes back, still deleted"
+        );
+    }
+    for id in &moved {
+        assert_eq!(deck_of(id), third, "a card moved away since stays");
+    }
+    assert_eq!(
+        store.card_count(&source).unwrap(),
+        MERGED - deleted.len() - gone.len() - moved.len()
+    );
+    assert_eq!(store.card_count(&target).unwrap(), 1);
+    // Every card the merge recorded but those moved away is in the source.
+    let in_source: i64 = store
+        .conn
+        .query_row(
+            "SELECT count(*) FROM cards WHERE deck_id = ?1",
+            [&source],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(usize::try_from(in_source).unwrap(), MERGED - moved.len());
+}
+
+/// The card editor's same-front lookup (#119, ADR 0072) on 10,000 cards
+/// whose fronts all hold the word "card", and 2,000 more with one front:
+/// a word every front holds (each read and compared, none kept), a front
+/// one card has, a front 2,000 cards share, pasted fronts of 64 KiB (the
+/// longest looked up), words or dense Markdown (their phrase cut to 256
+/// bytes), and one of 1 MiB, which is not even parsed.
+#[test]
+fn finding_the_same_front_in_ten_thousand_cards_is_fast() {
+    let mut store = Store::in_memory();
+    let deck = store.create_deck_at("Big", T0).unwrap().id;
+    let other = store.create_deck_at("Other", T0).unwrap().id;
+    for i in 0..10_000 {
+        store
+            .add_card_at(&deck, &format!("Card {i}"), "back", T0)
+            .unwrap();
+    }
+    for _ in 0..2_000 {
+        store.add_card_at(&other, "**Hola**", "back", T0).unwrap();
+    }
+    let pasted = "card ".repeat(crate::storage::MAX_SAME_FRONT_BYTES / 5);
+    let unit = "**a** _b_ $x^2$ `c` [d](e) ";
+    let markdown = unit.repeat(crate::storage::MAX_SAME_FRONT_BYTES / unit.len());
+    let huge = unit.repeat((1 << 20) / unit.len());
+    let cases: [(&str, &str, usize, u64); 6] = [
+        ("a word every front holds", "card", 0, SAME_FRONT_MS),
+        ("a front one card has", "CARD 9999", 1, SAME_FRONT_MS),
+        ("a front 2,000 cards share", "hola", 2_000, SAME_FRONT_MS),
+        (
+            "a pasted front of 64 KiB of words",
+            &pasted,
+            0,
+            PASTED_FRONT_MS,
+        ),
+        (
+            "a pasted front of 64 KiB of Markdown",
+            &markdown,
+            0,
+            PASTED_FRONT_MS,
+        ),
+        ("a pasted front of 1 MiB", &huge, 0, SAME_FRONT_MS),
+    ];
+    for (what, front, expected, bound) in cases {
+        let (t, same) = fastest(what, 3, || store.cards_with_front(front, None).unwrap());
+        assert_eq!(same.len(), expected, "{what}");
+        assert_cpu_within(t, ms(bound), what);
+    }
+}
+
+/// Hardening round 4 (ADR 0073): stored fronts built against the
+/// same-front lookup. An import may hold 256 cards whose fronts are 1 MiB
+/// (`cards.json` is at most 256 MiB): their index rows all start with the
+/// word typed, so the anchored phrase matches each, and each is read and
+/// compared; one of them differs from the key only in its last word, so
+/// the comparison runs to its end. Also 1 MiB of whitespace between two
+/// words, and a stored front of private-use characters.
+#[test]
+fn hostile_stored_fronts_keep_the_same_front_lookup_fast() {
+    let mut store = Store::in_memory();
+    let deck = store.create_deck_at("Imported", T0).unwrap().id;
+    let words = "card ".repeat((1 << 20) / 5);
+    // Each front is made just before it is written, so at most one is in
+    // memory besides the database (256 of them would be 256 MiB).
+    let front = |i: usize| -> std::borrow::Cow<'_, str> {
+        match i {
+            254 => format!("{}x", words.trim_end()).into(),
+            255 => format!("card{}card", " ".repeat(1 << 20)).into(),
+            _ => words.as_str().into(),
+        }
+    };
+    for i in 0..256 {
+        let front = front(i);
+        let card = store.add_card_at(&deck, "card", "back", T0).unwrap().id;
+        // The index row as an import of that front would write it (parsing
+        // 256 MiB of Markdown here would only slow the test down).
+        store
+            .conn
+            .execute(
+                "UPDATE cards_fts SET front = ?1
+                 WHERE rowid = (SELECT seq FROM cards WHERE id = ?2)",
+                rusqlite::params![front.as_ref(), card],
+            )
+            .unwrap();
+    }
+    let pua = store
+        .add_card_at(&deck, "\u{E000}x", "back", T0)
+        .unwrap()
+        .id;
+    let typed_long = words.trim_end().to_owned();
+    let cases: [(&str, &str, usize); 4] = [
+        ("one word every hostile front starts with", "card", 0),
+        (
+            "two words, 1 MiB of spaces apart in one front",
+            "card card",
+            1,
+        ),
+        ("a private-use front", "\u{E000}X", 1),
+        ("a typed front over 64 KiB, not looked up", &typed_long, 0),
+    ];
+    for (what, front, expected) in cases {
+        let (t, same) = fastest(what, 3, || store.cards_with_front(front, None).unwrap());
+        assert_eq!(same.len(), expected, "{what}");
+        assert_cpu_within(t, ms(HOSTILE_FRONTS_MS), what);
+    }
+    assert_eq!(
+        store.cards_with_front("\u{E000}x", None).unwrap()[0].card_id,
+        pua
+    );
+}
+
 /// Entries in the log of `a_card_with_a_long_log_is_fast`'s card.
 const LONG_LOG: usize = 20_000;
 
@@ -479,7 +920,9 @@ fn a_card_with_a_long_log_is_fast() {
     });
     assert_eq!(decks[0].card_count, 1);
     let (study, _) = fastest("study_input (long log)", 3, || {
-        store.study_input(&deck, now, day_start).unwrap()
+        store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), now, day_start)
+            .unwrap()
     });
     let (info, card_info) = fastest("card_info (long log)", 3, || {
         store.card_info(&card, now).unwrap()
@@ -627,6 +1070,9 @@ fn rebuilding_the_search_index_of_five_thousand_cards_is_fast() {
     assert_cpu_within(t, ms(REBUILD_INDEX_MS), "rebuild_search_index");
 }
 
+/// `practice_queue` of 10,000 cards, 4,000 of them reviewed (measured
+/// 14 ms), and `has_practisable`, one `EXISTS` (under 1 ms), ADR 0070.
+const PRACTICE_MS: u64 = 150;
 /// `study_input` + `next_study_change`, and `list_decks`, each. Measured
 /// side by side on one loaded machine (debug build): `study_input` 27 ms,
 /// `next_study_change` 3 ms, `list_decks` 28 ms. `list_decks` counts
@@ -634,6 +1080,10 @@ fn rebuilding_the_search_index_of_five_thousand_cards_is_fast() {
 /// took 42 ms there, and 52 to 56 ms with a separate count and next-change
 /// query per deck.
 const STUDY_MS: u64 = 150;
+/// A tag session over 10,000 cards in 100 decks, each deck's allowance
+/// read with the deck path's own counts (hardening round 4, ADR 0073;
+/// measured 63 ms and 9 ms in a debug build).
+const TAG_100_DECKS_MS: u64 = 750;
 /// `list_cards` of 5,000 cards (measured 6 ms).
 const LIST_CARDS_MS: u64 = 100;
 /// `list_tagged_cards` of 5,000 cards with two tags each (measured 30 ms).
@@ -653,6 +1103,12 @@ const HOSTILE_SEARCH_MS: u64 = 600;
 /// 420 ms (`add_tags_to_cards` of three tags 85 ms, `release_tags` of their
 /// 15,000 links 64 ms, in a debug build).
 const BULK_MS: u64 = 9_000;
+/// A merge or its undo of 10,000 cards (measured about 50 ms each in a
+/// debug build, ADR 0066).
+const MERGE_MS: u64 = 500;
+/// A merge or its undo of 20,000 cards with reviews, tags and deletions
+/// (hardening round 4, ADR 0073; measured 106 to 115 ms in a debug build).
+const MERGE_20K_MS: u64 = 1_000;
 /// Each read or write of the card with a 20,000-entry log other than the
 /// deck reads, which keep `STUDY_MS` (measured 36 ms; the others at most
 /// 153 ms, for an undo, which replays the log).
@@ -662,5 +1118,20 @@ const LONG_LOG_IMPORT_MS: u64 = 6_000;
 /// Parsing, setting or replacing 5,000 tags on one card (measured 15 ms,
 /// 185 ms and 209 ms).
 const TAGS_MS: u64 = 2_000;
+/// Each same-front lookup of `hostile_stored_fronts_keep_the_same_front_lookup_fast`
+/// (hardening round 4, ADR 0073): measured 470 ms for the word every
+/// front starts with and 917 ms for the two words, in a debug build, where
+/// FTS5 decodes the 52 million positions of the anchored phrase (806 ms
+/// and 1.2 s before the lookup stopped sorting whole fronts). The bound
+/// catches a blow-up, not the accepted cost.
+const HOSTILE_FRONTS_MS: u64 = 6_000;
+/// Each same-front lookup of `finding_the_same_front_in_ten_thousand_cards_is_fast`
+/// but the pasted one (measured 25 ms at most, for the word every front
+/// holds: 10,000 fronts read and compared).
+const SAME_FRONT_MS: u64 = 250;
+/// The pasted fronts of 64 KiB (measured 34 ms for the words, which every
+/// front starts with, and 20 ms for the Markdown, in a debug build; 1 MiB
+/// of that Markdown took 330 ms before the cap, 87 ms in release).
+const PASTED_FRONT_MS: u64 = 400;
 /// The migration's index backfill of 5,000 cards (measured 87 ms).
 const REBUILD_INDEX_MS: u64 = 1_000;

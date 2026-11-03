@@ -22,8 +22,14 @@
 //! `storage::record_review` observes the log's largest id first).
 
 pub(crate) mod fuzz;
+pub(crate) mod practice;
+pub(crate) mod scope;
 pub(crate) mod session;
 
+#[cfg(test)]
+pub(crate) use practice::PRACTICE_LIMIT;
+pub use practice::{Practice, RELEARN_GAP};
+pub use scope::StudyScope;
 pub use session::{Due, Session, StudyInput, Summary, capped};
 
 use std::collections::HashSet;

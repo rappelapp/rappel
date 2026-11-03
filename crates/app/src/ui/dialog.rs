@@ -87,12 +87,32 @@ fn response_button(alert: &adw::AlertDialog, id: &str) -> Option<gtk::Button> {
 /// queued never reaches the destructive button, and after whatever the
 /// dialog does when it is shown.
 pub fn focus_default_when_shown(alert: &adw::AlertDialog) {
-    alert.connect_map(|alert| {
-        focus_default(alert);
+    on_each_show(alert, focus_default);
+}
+
+/// Puts the keyboard focus of `alert` on `widget`, one of its children
+/// (a choice to make first), each time it is shown, at the same moments as
+/// [`focus_default_when_shown`] and for the same reason: in a small window
+/// libadwaita would otherwise focus the last response.
+pub fn focus_when_shown(alert: &adw::AlertDialog, widget: &impl IsA<gtk::Widget>) {
+    let widget = widget.upcast_ref::<gtk::Widget>().downgrade();
+    on_each_show(alert, move |alert| {
+        if let Some(widget) = widget.upgrade() {
+            alert.set_focus(Some(&widget));
+        }
+    });
+}
+
+/// Runs `focus` on `alert` when it is mapped, and again from an idle at
+/// `G_PRIORITY_HIGH` (see [`focus_default_when_shown`]).
+fn on_each_show(alert: &adw::AlertDialog, focus: impl Fn(&adw::AlertDialog) + Clone + 'static) {
+    alert.connect_map(move |alert| {
+        focus(alert);
         let alert = alert.downgrade();
+        let focus = focus.clone();
         glib::idle_add_local_full(glib::Priority::HIGH, move || {
             if let Some(alert) = alert.upgrade() {
-                focus_default(&alert);
+                focus(&alert);
             }
             glib::ControlFlow::Break
         });
@@ -142,6 +162,12 @@ pub const DELETE_CARD: Alert = Alert {
     id: "delete_card_dialog",
 };
 
+/// "Export Without Media?" of Export… (ADR 0071; its body is set in code).
+pub const EXPORT_WITHOUT_MEDIA: Alert = Alert {
+    file: "export_media_dialog.ui",
+    id: "export_media_dialog",
+};
+
 #[cfg(test)]
 mod focus_tests {
     use std::time::Duration;
@@ -162,6 +188,7 @@ mod focus_tests {
                 for alert in [
                     CLEAN_UP_MEDIA,
                     DELETE_CARD,
+                    EXPORT_WITHOUT_MEDIA,
                     START_FRESH,
                     DISCARD_CHANGES,
                     RESTORE_BACKUP,

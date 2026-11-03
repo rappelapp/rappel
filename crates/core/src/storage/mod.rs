@@ -6,9 +6,12 @@ mod backup;
 mod bulk;
 mod cards;
 mod decks;
+mod merge;
 mod migrations;
+mod practice;
 mod restore;
 mod review;
+mod same_front;
 mod schedule;
 mod search;
 mod settings;
@@ -30,8 +33,10 @@ pub use backup::{BackupInfo, list_backups};
 use backup::{check_rows, has_backup_for_day};
 pub(crate) use backup::{create_backup, prune_backups};
 pub use bulk::{Moved, TagsAdded};
+pub use merge::Merged;
 use migrations::{MIGRATIONS, Migration, latest, migrate};
 pub use restore::{Restored, finish_restore, is_unusable_copy, restore_backup, start_fresh};
+pub use same_front::{MAX_SAME_FRONT_BYTES, SameFront};
 pub(crate) use schedule::rebuild_cards;
 pub(crate) use search::index_card_in;
 pub use search::{BrowseQuery, BrowseRow, CardStatus, MAX_QUERY_BYTES, StateFilter};
@@ -279,6 +284,16 @@ impl Store {
             media_dir: None,
             open_warnings: Vec::new(),
         }
+    }
+
+    /// How many rows this store's connection has changed since it was
+    /// opened (`sqlite3_total_changes64`). It exists for tests, which check
+    /// that a read such as a practice wrote nothing (ADR 0070); it is
+    /// public because the app's tests, in another crate, need it too. The
+    /// app itself does not call it.
+    #[must_use]
+    pub fn total_changes(&self) -> u64 {
+        self.conn.total_changes()
     }
 
     /// Takes the warnings from opening this store (empty after the first

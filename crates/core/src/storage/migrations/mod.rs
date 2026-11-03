@@ -127,6 +127,13 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         rebuild_schedule: false,
         backfill: None,
     },
+    Migration {
+        version: 12,
+        name: "archived decks",
+        sql: include_str!("0012_archived_decks.sql"),
+        rebuild_schedule: false,
+        backfill: None,
+    },
 ];
 
 /// Migration 0010: the search index of every card, deleted ones included.
@@ -263,6 +270,7 @@ mod tests {
             (9, 1_539_123_956_118_822_870),
             (10, 15_621_161_985_399_297_379),
             (11, 8_376_656_448_889_747_473),
+            (12, 2_917_419_879_571_411_764),
         ];
         assert_eq!(
             MIGRATIONS.len(),

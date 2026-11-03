@@ -13,6 +13,8 @@ use crate::ui::toast::log_failure;
 pub(super) enum Lookup {
     /// The deck's name, or the card's front on one line.
     Found(String),
+    /// The name of a deck that is archived (ADR 0068).
+    Archived(String),
     /// Not among the live rows: deleted.
     Deleted,
     /// The database could not be read; say nothing about it.
@@ -23,15 +25,25 @@ pub(super) enum Lookup {
 /// Only the database is read, never the file, and only for the conflicts
 /// that are shown.
 pub(super) struct Names {
-    /// `None` if the decks could not be read.
-    decks: Option<Vec<(String, String)>>,
+    /// `None` if the decks could not be read. Each deck's id, name and
+    /// whether it is archived.
+    decks: Option<Vec<(String, String, bool)>>,
     cards: Vec<(String, Lookup)>,
 }
 
 impl Names {
     pub(super) fn read(state: &AppState, conflicts: &[Conflict]) -> Self {
-        let decks = match state.decks() {
-            Ok(decks) => Some(decks.into_iter().map(|d| (d.id, d.name)).collect()),
+        // Archived decks are live, and an import conflict may name one.
+        let decks = match state.decks_with_archived() {
+            Ok(decks) => Some(
+                decks
+                    .into_iter()
+                    .map(|d| {
+                        let archived = d.is_archived();
+                        (d.id, d.name, archived)
+                    })
+                    .collect(),
+            ),
             Err(err) => {
                 log_failure("reading deck names for import conflicts", &err.to_string());
                 None
@@ -54,8 +66,14 @@ impl Names {
         };
         decks
             .iter()
-            .find(|(i, _)| i == id)
-            .map_or(Lookup::Deleted, |(_, name)| Lookup::Found(name.clone()))
+            .find(|(i, _, _)| i == id)
+            .map_or(Lookup::Deleted, |(_, name, archived)| {
+                if *archived {
+                    Lookup::Archived(name.clone())
+                } else {
+                    Lookup::Found(name.clone())
+                }
+            })
     }
 
     pub(super) fn card(&self, id: &str) -> Lookup {

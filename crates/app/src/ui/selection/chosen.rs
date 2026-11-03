@@ -1,8 +1,8 @@
-//! The cards chosen on the All Cards page. Pure: a set of card ids and
-//! whether the page is in selection mode. The page owns it (and not a
-//! `GtkMultiSelection`) because a click opens the editor outside selection
-//! mode, and a list view with a selection model selects on a click instead
-//! (ADR 0036).
+//! The cards chosen on a page that lists cards (All Cards, a deck's page).
+//! Pure: a set of card ids and whether the page is in selection mode. The
+//! selection mode (`ui::selection`) owns it, and not a `GtkMultiSelection`,
+//! because a click opens the editor outside selection mode, and a list view
+//! with a selection model selects on a click instead (ADR 0036).
 
 use std::collections::HashSet;
 

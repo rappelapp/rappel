@@ -1,4 +1,5 @@
 # Files with messages for translators. Made by the tests (README.md).
+crates/app/data/archived_page.blp
 crates/app/data/backup_row.blp
 crates/app/data/browser_dialogs.blp
 crates/app/data/browser_page.blp
@@ -13,12 +14,16 @@ crates/app/data/deck_row.blp
 crates/app/data/decks_page.blp
 crates/app/data/delete_card_dialog.blp
 crates/app/data/discard_dialog.blp
+crates/app/data/export_media_dialog.blp
 crates/app/data/import_dialog.blp
+crates/app/data/merge_deck_dialog.blp
 crates/app/data/preferences_dialog.blp
 crates/app/data/recovery_page.blp
 crates/app/data/restore_dialog.blp
 crates/app/data/retention_dialog.blp
 crates/app/data/review_page.blp
+crates/app/data/selection_bar.blp
+crates/app/data/selection_header.blp
 crates/app/data/setting_page.blp
 crates/app/data/shortcuts-dialog.blp
 crates/app/data/start_fresh_dialog.blp
@@ -29,11 +34,16 @@ crates/app/src/dialogs/about.rs
 crates/app/src/dialogs/card_editor/insert.rs
 crates/app/src/dialogs/card_editor/media.rs
 crates/app/src/dialogs/card_editor/mod.rs
+crates/app/src/dialogs/card_editor/same_front.rs
 crates/app/src/dialogs/card_info.rs
 crates/app/src/dialogs/card_info/text.rs
 crates/app/src/dialogs/clean_up.rs
 crates/app/src/dialogs/deck_name_dialog.rs
+crates/app/src/dialogs/merge_deck.rs
+crates/app/src/dialogs/move_card.rs
 crates/app/src/dialogs/preferences.rs
+crates/app/src/pages/archived_page.rs
+crates/app/src/pages/archived_page/text.rs
 crates/app/src/pages/browser_page.rs
 crates/app/src/pages/browser_page/text.rs
 crates/app/src/pages/deck_page.rs
@@ -50,8 +60,12 @@ crates/app/src/startup.rs
 crates/app/src/transfer/anki.rs
 crates/app/src/transfer/anki_text.rs
 crates/app/src/transfer/mod.rs
+crates/app/src/transfer/progress.rs
 crates/app/src/transfer/text.rs
+crates/app/src/ui/keys.rs
 crates/app/src/ui/rows.rs
+crates/app/src/ui/selection.rs
+crates/app/src/ui/selection/text.rs
 crates/app/src/ui/text.rs
 crates/app/src/ui/time.rs
 crates/app/src/ui/toast.rs

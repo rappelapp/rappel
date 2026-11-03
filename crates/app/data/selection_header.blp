@@ -1,0 +1,39 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The header of selection mode, shared by All Cards and a deck's page
+// (ADR 0036, 0065; HIG, "Selection mode": a cancel button, and the heading
+// says how many items are selected). The page shows it in place of its own
+// header while cards are being chosen (ui/selection.rs); the page cannot be
+// popped then, so Back hides and Escape leaves the mode. The title is set
+// in widgets/selection_header.rs (ui/selection/text.rs).
+template $RappelSelectionHeader: Adw.Bin {
+  child: Adw.HeaderBar {
+    title-widget: Adw.WindowTitle title {};
+
+    [start]
+    Gtk.Button select_all_button {
+      action-name: "selection.select-all";
+      tooltip-text: _("Select All");
+
+      accessibility {
+        label: _("Select All");
+      }
+
+      // On a phone it keeps only its icon (`compact`); the tooltip and the
+      // accessible label stay.
+      child: Adw.ButtonContent select_all_content {
+        icon-name: "edit-select-all-symbolic";
+        label: _("Select _All");
+        use-underline: true;
+      };
+    }
+
+    [end]
+    Gtk.Button cancel_button {
+      label: _("_Cancel");
+      use-underline: true;
+      action-name: "selection.cancel";
+    }
+  };
+}

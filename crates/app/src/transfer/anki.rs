@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 use adw::prelude::*;
 use rappel_core::Error;
@@ -16,36 +16,13 @@ use super::anki_text::{
     reading_text,
 };
 use super::confirm_layout;
+use super::progress::Progress;
 use super::text::{check_failed_text, import_failed_text};
 use crate::i18n::gettext;
 use crate::state::AppState;
 use crate::ui::toast::{info_toast, report_toast, show_error};
 use crate::ui::worker;
 use crate::window::RappelWindow;
-
-/// A toast that stays while work runs, with a Cancel button that sets
-/// `cancel`. Dismissed by the caller when the work ends. The title fits
-/// beside its button at 360 px (`anki_text` tests).
-fn progress_toast(title: &str, cancel: &Arc<AtomicBool>) -> adw::Toast {
-    let toast = adw::Toast::builder()
-        .title(title)
-        .use_markup(false)
-        .timeout(0)
-        .button_label(gettext("_Cancel"))
-        // Shown at once, even over a toast that stays until dismissed
-        // (`ADW_TOAST_PRIORITY_HIGH` pushes the shown toast into the queue,
-        // Adw-1.gir).
-        .priority(adw::ToastPriority::High)
-        .build();
-    let cancel = Arc::clone(cancel);
-    // `button-clicked` is emitted after the button is pressed (Adw-1.gir);
-    // `adw_toast_dismiss` does nothing on a toast already dismissed.
-    toast.connect_button_clicked(move |toast| {
-        cancel.store(true, Ordering::Relaxed);
-        toast.dismiss();
-    });
-    toast
-}
 
 /// Reads the Anki package `path`, shows what importing it would do and
 /// imports it if the user confirms.
@@ -61,15 +38,14 @@ pub(super) async fn import(window: &RappelWindow, data_dir: PathBuf, path: PathB
 
 async fn plan(window: &RappelWindow, data_dir: &Path, path: PathBuf) -> Option<AnkiPlan> {
     let cancel = Arc::new(AtomicBool::new(false));
-    let toast = progress_toast(&reading_text(), &cancel);
-    window.add_toast(toast.clone());
+    let progress = Progress::start(window, &reading_text(), &cancel);
     let worker_dir = data_dir.to_path_buf();
     let worker_cancel = Arc::clone(&cancel);
     let result = worker::run(window, move || {
         AppState::plan_anki_import_on_worker(&worker_dir, &path, &worker_cancel)
     })
     .await;
-    toast.dismiss();
+    progress.finish();
     match result {
         Ok(Ok(plan)) => Some(plan),
         Ok(Err(Error::ImportCancelled)) => {
@@ -119,15 +95,14 @@ async fn confirm(window: &RappelWindow, summary: &AnkiSummary) -> bool {
 
 async fn apply(window: &RappelWindow, data_dir: &Path, plan: AnkiPlan) {
     let cancel = Arc::new(AtomicBool::new(false));
-    let toast = progress_toast(&importing_text(), &cancel);
-    window.add_toast(toast.clone());
+    let progress = Progress::start(window, &importing_text(), &cancel);
     let worker_dir = data_dir.to_path_buf();
     let worker_cancel = Arc::clone(&cancel);
     let result = worker::run(window, move || {
         AppState::apply_anki_import_on_worker(&worker_dir, &plan, &worker_cancel)
     })
     .await;
-    toast.dismiss();
+    progress.finish();
     match result {
         Ok(Ok(report)) => {
             let done = anki_done(&report);

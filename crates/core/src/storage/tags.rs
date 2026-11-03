@@ -34,6 +34,16 @@ impl Store {
     /// # Errors
     /// SQLite errors.
     pub fn used_tags(&self) -> Result<Vec<Tag>> {
+        self.used_tags_listed(true)
+    }
+
+    /// [`Self::used_tags`], counting the cards of archived decks only with
+    /// `include_archived`: All Cards' tag filter while archived decks are
+    /// hidden offers no tag that only hidden cards have (ADR 0068).
+    ///
+    /// # Errors
+    /// SQLite errors.
+    pub fn used_tags_listed(&self, include_archived: bool) -> Result<Vec<Tag>> {
         let mut stmt = self.conn.prepare(
             "SELECT t.id, t.name FROM tags t
              WHERE EXISTS (
@@ -41,10 +51,11 @@ impl Store {
                  JOIN cards c ON c.id = ct.card_id
                  JOIN decks d ON d.id = c.deck_id
                  WHERE ct.tag_id = t.id AND c.deleted_at IS NULL AND d.deleted_at IS NULL
+                   AND (?1 OR d.archived_at IS NULL)
              )
              ORDER BY t.name_key, t.id",
         )?;
-        let rows = stmt.query_map([], tag_from_row)?;
+        let rows = stmt.query_map([include_archived], tag_from_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 

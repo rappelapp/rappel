@@ -28,3 +28,15 @@ No test caught it, because no test could start GTK: CI has no display.
 - Short inline formulas sit in the text with normal spacing, at any text scale.
 - The test fails on a headless machine without `xvfb-run`. README says so.
 - If the missing scrollbar on wide inline formulas proves too subtle on the checklist, the next step is the one ADR 0023 point 2 mentions: wrap only the formulas wider than their box. That needs a layout pass to decide which ones those are.
+
+## Amendment (2026-11-02, phase 3a slice 4): the tests' GTK draws on X11
+
+`xvfb-run` sets `DISPLAY` but keeps the session's `WAYLAND_DISPLAY`, and GTK prefers Wayland. So in a Wayland desktop session, `xvfb-run -a scripts/check.sh` did not use Xvfb at all. The GTK tests ran on the desktop's compositor, and the windows they present showed on the maintainer's screen. There, the app's test binary died now and then with SIGSEGV or SIGABRT: 2 runs in 23 in one review, and before that in slice 3 and in phase 2 (#93, #96). CI never saw it: it has no Wayland.
+
+A backtrace under gdb (one abort in the first 3 runs of the window, deck page, All Cards and archive tests, while the whole binary ran in a loop beside them) showed the cause:
+- A Wayland text-input event came for an input-method context that was already freed: "instance of invalid non-instantiatable type", then `Gtk:ERROR:gtkimcontextwayland.c:541:translate_purpose: code should not be reached`.
+- It was dispatched from `wl_display_dispatch_queue_pending` inside a test's `settle_until` (GTK 4.20 on the machine).
+
+Holding GTK to X11 alone made it worse: then every run crashed (SIGSEGV in `gdk_x11_surface_get_xid`, called from IBus's input-method module, `libim-ibus.so`, on a D-Bus reply). Both crashes have the same cause: the session's input method (IBus over D-Bus, or Wayland's text input) answers asynchronously after a test has destroyed the window its text field was in.
+
+**Decision.** Two guards in `testing::with_gtk`. First, after GTK starts, the `gtk-im-module` setting is `gtk-im-context-simple`, GTK's own input method, which talks to no other process. It applies to every text widget made after it (GtkSettings docs). CI has neither IBus nor Wayland, so the tests now see what CI sees. A test checks the setting (`the_tests_use_gtks_own_input_method`). Second, `testing::with_gtk` calls `gdk_set_allowed_backends("x11")` before GTK starts whenever `DISPLAY` names an X display (Xvfb, CI, or a desktop's Xwayland). The function must be called before a display is opened. Through gtk4-rs it is a safe call, so no environment variable has to be changed in the multi-threaded test process. A test checks that the tests' display is X11 whenever `DISPLAY` is set (`the_tests_draw_on_x11_when_an_x_display_is_named`). The app itself still uses Wayland. Only the tests are held to X11, which is also what CI runs.

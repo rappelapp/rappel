@@ -64,3 +64,7 @@ Only the signature is checked: a truncated or damaged file of a kind is that kin
 - An apply with many new files syncs each one: about as long again as the copy on a slow disk.
 - A file present in the database but lost from the folder is not restored by importing an export that has it (the database already has the row). Slice 5 can offer that.
 - `fill_scratch_db --media` adds a "Media" deck: three PNGs drawn by the example itself (square, wide, tall), a one-second WAV tone, a reference to a file that is not there, and a remote image, shown as text.
+
+## Amended in phase 3a (slice 7)
+
+The last consequence above, "an export whose media are larger than the import's 2 GiB limit cannot be imported", no longer happens silently. Export… adds up the media first and, if the archive would exceed the limit, offers to export without them (same format, no media record, no media entry) or cancel; a file that still comes out too large is not kept (ADR 0071). The limit itself is unchanged.

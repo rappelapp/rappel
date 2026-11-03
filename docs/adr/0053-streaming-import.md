@@ -50,3 +50,7 @@ The notes are what grows with the file: measured, about 0.4 bytes per byte of JS
 - The apply takes as long again as the plan for the reading, on top of the writes; the backup is made before the file's content is checked again, so a file changed in a way its stamp does not show leaves one more backup.
 - `media/` entries are still refused, and `media` must still be empty: no format change. Slice 2 adds a role for `media/<sha256>.<ext>` to the directory walk (checked as the name is read, so names are still never kept), and copies each with `copy_entry` and its cap; the entries the walk keeps are about 80 bytes each, 8 MB at 100,000.
 - `id::is_uuid_v7` and `uuid_v7_ms` are test-only now; `parse_id` no longer allocates.
+
+## Amended in phase 3a (slice 7)
+
+A `cards.json` that declares more than its limit is refused from the central directory, before any of it is read, and the plan of an import can be cancelled (ADR 0071). The limits and the checks while reading are unchanged.

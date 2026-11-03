@@ -3,7 +3,7 @@
 //! try studying without waiting days (ADR 0014).
 //!
 //! ```text
-//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--anki PACKAGE]
+//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--anki PACKAGE] [--archived N]
 //! RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 //! ```
 //!
@@ -36,6 +36,9 @@
 //! `.colpkg`) as Import… does (ADR 0061), last; `fill_scratch_db -- <dir>
 //! 0 --anki crates/core/src/interchange/anki/fixtures/current.apkg` imports
 //! only the test package Anki made.
+//! With `--archived N`, the first N decks in the deck list's order are
+//! archived last (ADR 0068), for the Archived Decks page and All Cards'
+//! filter.
 //! The directory
 //! must be absolute and is never one of the
 //! app's own data directories, release or debug: this is for throwaway
@@ -71,7 +74,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<String, String> {
-    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--anki PACKAGE]";
+    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--anki PACKAGE] [--archived N]";
     let number = |arg: Option<std::ffi::OsString>| {
         arg.as_ref()
             .and_then(|n| n.to_str())
@@ -82,7 +85,7 @@ fn run() -> Result<String, String> {
     let dir = PathBuf::from(args.next().ok_or(usage)?);
     let (mut count, mut due, mut markdown, mut math, mut tags) = (None, 0, false, false, false);
     let (mut suspended, mut media, mut unused_media, mut demo) = (0, false, false, false);
-    let mut anki: Option<PathBuf> = None;
+    let (mut anki, mut archived): (Option<PathBuf>, usize) = (None, 0);
     while let Some(arg) = args.next() {
         if arg == "--due" {
             due = number(args.next())?;
@@ -100,6 +103,8 @@ fn run() -> Result<String, String> {
             unused_media = true;
         } else if arg == "--demo" {
             demo = true;
+        } else if arg == "--archived" {
+            archived = number(args.next())?;
         } else if arg == "--anki" {
             anki = Some(PathBuf::from(args.next().ok_or(usage)?));
         } else if count.is_none() {
@@ -162,11 +167,24 @@ fn run() -> Result<String, String> {
     if let Some(package) = anki {
         added.push(import_anki(&mut store, &package)?);
     }
+    if archived > 0 {
+        added.push(archive_first(&mut store, archived)?);
+    }
     Ok(format!(
         "Added {} in {}",
         added.join(" and "),
         dir.display()
     ))
+}
+
+/// `--archived N`: archives the first `n` decks in the deck list's order.
+/// Returns what to report, read as "Added … and archived 2 decks".
+fn archive_first(store: &mut Store, n: usize) -> Result<String, String> {
+    let decks = store.decks().map_err(|e| e.to_string())?;
+    for deck in decks.iter().take(n) {
+        store.archive_deck(&deck.id).map_err(|e| e.to_string())?;
+    }
+    Ok(format!("archived {} decks", n.min(decks.len())))
 }
 
 /// `--due` and `--suspended` fit in `count` cards.

@@ -137,6 +137,9 @@ menu card_menu {
     }
 
     item (_("_Reset Progress"), "row.reset")
+    // Disabled when there is no other deck to move the card to
+    // (`dialogs::move_card::offered`).
+    item (_("_Move to Deck…"), "row.move")
     item (_("_Delete"), "row.delete")
   }
 }

@@ -131,6 +131,7 @@ fn export_to_writes_a_private_file_that_plan_import_reads() {
             tags: 3,
             review_events: 8,
             media: 0,
+            media_left_out: 0,
             missing_media: 0,
         }
     );
@@ -141,7 +142,7 @@ fn export_to_writes_a_private_file_that_plan_import_reads() {
     assert_eq!(plan.summary().cards.new, 4);
 }
 
-fn partial(path: &Path) -> PathBuf {
+pub(super) fn partial(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".partial");
     PathBuf::from(name)

@@ -287,6 +287,12 @@ pub enum Error {
     #[error("a deck named {0:?} already exists")]
     DuplicateDeckName(String),
 
+    /// An archived deck has this name, ignoring case and Unicode
+    /// composition: an archived deck keeps its name taken (ADR 0068).
+    /// Nothing was written.
+    #[error("an archived deck is named {0:?}")]
+    ArchivedDeckName(String),
+
     /// [`Store::open_concurrent`](crate::storage::Store::open_concurrent)
     /// found a database that [`Store::open`](crate::storage::Store::open)
     /// has not migrated yet.
@@ -371,6 +377,15 @@ pub enum Error {
     #[error("deck {0} does not exist")]
     DeckNotFound(String),
 
+    /// The deck is archived, so it cannot be studied, archived again or
+    /// merged into (ADR 0068). Nothing was written.
+    #[error("deck {0} is archived")]
+    DeckArchived(String),
+
+    /// A deck cannot be merged into itself (ADR 0066). Nothing was written.
+    #[error("deck {0} cannot be merged into itself")]
+    MergeIntoItself(String),
+
     /// No card with this id, or it was deleted.
     #[error("card {0} does not exist")]
     CardNotFound(String),
@@ -384,6 +399,17 @@ pub enum Error {
     /// crates stay out of this API (ADR 0015).
     #[error("cannot write the export: {0}")]
     ExportFailed(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    /// The export came out larger than an import reads
+    /// (`MAX_ARCHIVE_BYTES`, 2 GiB), so it
+    /// could not be imported again. The file was not kept (ADR 0071).
+    #[error("the export is {bytes} bytes, more than the {limit} bytes an import reads")]
+    ExportTooLarge {
+        /// The size it came to.
+        bytes: u64,
+        /// The most an import reads.
+        limit: u64,
+    },
 
     /// The file is not a valid Rappel export (ADR 0017). Nothing was
     /// written.

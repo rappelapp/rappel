@@ -364,15 +364,16 @@ const NOT_FOR_THE_USER: [&str; 21] = [
     "resources_register_include",
 ];
 
-/// Arguments that only go to the log: the "what" of `ui::toast::show_error`,
-/// `log_failure`, `ErrorSlot::show` and `show_in_preferences` ("an export
+/// Arguments that only go to the log: the "what" of `ui::toast::show_error`
+/// and `show_error_message`, `log_failure`, `ErrorSlot::show` and `show_in_preferences` ("an export
 /// failed" is logged; the message after it is shown). (callee, argument
 /// index from 0).
 /// A method is named with a leading "." (`errors.show(widget, what, text)`).
-const LOGGED_ARGUMENTS: [(&str, usize); 6] = [
+const LOGGED_ARGUMENTS: [(&str, usize); 7] = [
     // `preferences::saved(ctx, dialog, what, result)`.
     ("saved", 2),
     ("show_error", 1),
+    ("show_error_message", 1),
     ("log_failure", 0),
     (".show", 1),
     (".show_in_preferences", 1),

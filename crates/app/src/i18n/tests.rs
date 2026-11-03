@@ -1261,9 +1261,13 @@ const NOT_TOASTS: &[&str] = &[
     "A deck is different in the file",
     "A tag has another name in the file",
     "Add a card to start learning",
+    // The name dialog's error, under its entry.
+    "An archived deck is named “{name}”",
     "_Clear Search and Filters",
     "{count} older entry not shown",
     "Database File Is Missing",
+    // The Archived Decks page's empty state.
+    "Decks you archive show up here",
     "{date} · {time} · next in {interval}",
     "Looking for files no card uses…",
     "Move selected cards to a deck",
@@ -1272,6 +1276,8 @@ const NOT_TOASTS: &[&str] = &[
     "Nothing due in the next 14 days",
     "On a tag’s remove button",
     "Pass rate, last 30 days",
+    // The review page's banner during a practice (ADR 0070).
+    "Practice — nothing is rescheduled",
     "Reset progress of selected cards",
     "Restore Copy Cannot Be Used",
     "Save and Add Another",
@@ -1279,12 +1285,16 @@ const NOT_TOASTS: &[&str] = &[
     "Select or Deselect Card",
     "Start With an Empty Database?",
     "Stop Selecting or Clear the Search",
+    // A menu entry, and the tooltip of All Cards' Study button (ADR 0069).
+    "Study Cards Tagged “{tag}”",
+    "Study Cards Tagged “{tag}” in Every Deck",
+    // The last entry of the Deck Menu's list of tags (ADR 0069).
+    "{count} More Tag in All Cards…",
     "Tags of selected cards",
     "The database could not be opened.",
     "The data folder could not be used.",
     "This adds {count} media file.",
     "This puts {count} tag on cards.",
-    "Undo Last Answer (Ctrl+Z)",
     "Unused files could not be counted",
     "Update Rappel to Continue",
     "While tags are suggested",
@@ -1306,7 +1316,9 @@ const UNDO_TITLES: &[&str] = &[
     "Card deleted",
     "Card suspended",
     "Card unsuspended",
+    "Deck archived",
     "Deck deleted",
+    "Deck unarchived",
 ];
 
 /// A sample value for a placeholder, as long as such a value usually is.

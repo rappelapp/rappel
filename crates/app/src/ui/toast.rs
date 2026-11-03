@@ -57,23 +57,56 @@ const CLAUSE_ENDS: [&str; 7] = [
 
 /// What a toast shows for `text`: the whole text if it has at most
 /// [`TOAST_FITS`] characters; else its first clause (up to the first ". ",
-/// ": " or "; ", whichever comes first; not ", ", which can end a title
-/// half way through a list) if that has at most
+/// ": " or "; ", whichever comes first, outside quotation marks; not ", ",
+/// which can end a title half way through a list) if that has at most
 /// [`TOAST_FITS_WITH_BUTTON`], else [`fallback_title`], with the whole text
 /// as the details (without the first clause, which the details' heading
 /// already says).
+///
+/// A clause end between “ and ” or « and » is in a quoted name, not the
+/// text's own, so it never ends the title. A text whose name comes before
+/// its first clause end should go through [`Message::from_template`],
+/// which decides on the template and so cannot be misled by a name at all.
 pub fn toast_text(text: &str) -> ToastText {
     if text.chars().count() <= TOAST_FITS {
         return ToastText::Whole(text.to_owned());
     }
-    let lead = CLAUSE_ENDS
+    split_at_first_clause(text, first_clause_end(text, true))
+}
+
+/// The first clause end of `text`: its byte index and the separator,
+/// outside quotation marks when `skip_quoted`.
+fn first_clause_end(text: &str, skip_quoted: bool) -> Option<(usize, &'static str)> {
+    CLAUSE_ENDS
         .iter()
-        .filter_map(|end| text.find(end).map(|at| (at, *end)))
+        .flat_map(|end| text.match_indices(end).map(move |(at, _)| (at, *end)))
+        .filter(|(at, _)| !skip_quoted || !quoted_at(text, *at))
         .min()
-        .filter(|(at, _)| {
-            let lead = &text[..*at];
-            !lead.trim().is_empty() && lead.chars().count() <= TOAST_FITS_WITH_BUTTON
-        });
+}
+
+/// Whether byte `at` of `text` is inside quotation marks (“…” or « … »),
+/// counting the marks before it. A guard for texts built elsewhere, not
+/// proof against a name holding a quotation mark: a text that starts with
+/// a name must be made with [`Message::from_template`].
+fn quoted_at(text: &str, at: usize) -> bool {
+    let mut depth = 0_usize;
+    for c in text[..at].chars() {
+        match c {
+            '“' | '«' => depth += 1,
+            '”' | '»' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth > 0
+}
+
+/// `text` split at `end` (its first clause end, if any) as [`toast_text`]
+/// shows it once it is too long for the title.
+fn split_at_first_clause(text: &str, end: Option<(usize, &str)>) -> ToastText {
+    let lead = end.filter(|(at, _)| {
+        let lead = &text[..*at];
+        !lead.trim().is_empty() && lead.chars().count() <= TOAST_FITS_WITH_BUTTON
+    });
     match lead {
         // The first clause is the alert's heading: its body is the rest,
         // as a sentence of its own.
@@ -85,6 +118,45 @@ pub fn toast_text(text: &str) -> ToastText {
             title: fallback_title(),
             details: text.to_owned(),
         },
+    }
+}
+
+/// A toast's text filled in from a translated template, with what it
+/// shows decided on the template: its first clause end is the template's
+/// own, found before any name is filled in, so a deck named "Spanish:
+/// verbs" (or holding ". ", a quote mark, anything) never splits the title.
+/// For a text whose user-supplied name comes before its first clause end
+/// ("“{name}” could not be restored: {error}").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    /// The whole text, for the log.
+    pub text: String,
+    /// What the toast shows.
+    pub shown: ToastText,
+}
+
+impl Message {
+    /// `template` filled with `args` (`i18n::fill`), shown as
+    /// [`toast_text`] would show it, except that the title ends at the
+    /// template's first clause end ([`CLAUSE_ENDS`], quoted or not: the
+    /// template's quotation marks hold placeholders, not separators).
+    pub fn from_template(template: &str, args: &[(&str, &str)]) -> Self {
+        let text = fill(template, args);
+        let shown = if text.chars().count() <= TOAST_FITS {
+            ToastText::Whole(text.clone())
+        } else {
+            // `fill` is one pass over the template, so the filled lead is
+            // the start of the filled text, followed by the separator
+            // (checked: a placeholder cut by the separator would not be).
+            let end = first_clause_end(template, false).and_then(|(at, end)| {
+                let filled_at = fill(&template[..at], args).len();
+                text.get(filled_at..)
+                    .is_some_and(|rest| rest.starts_with(end))
+                    .then_some((filled_at, end))
+            });
+            split_at_first_clause(&text, end)
+        };
+        Self { text, shown }
     }
 }
 
@@ -114,11 +186,10 @@ fn capitalized(text: &str) -> String {
     })
 }
 
-/// A toast showing `text` as [`toast_text`] decides, with `timeout`
-/// seconds (0: until dismissed). Plain text: paths and errors may hold `<`
-/// or `&`.
-fn fitted_toast(text: &str, timeout: u32) -> adw::Toast {
-    match toast_text(text) {
+/// A toast showing `shown`, with `timeout` seconds (0: until dismissed).
+/// Plain text: paths and errors may hold `<` or `&`.
+fn fitted_toast(shown: ToastText, timeout: u32) -> adw::Toast {
+    match shown {
         ToastText::Whole(title) => adw::Toast::builder()
             .title(title)
             .use_markup(false)
@@ -206,7 +277,7 @@ pub fn report_label(lines: &str) -> gtk::Label {
 /// stays until dismissed, so the user cannot miss it. A long text gets a
 /// short title and a Details button ([`toast_text`]).
 pub fn persistent_toast(text: &str) -> adw::Toast {
-    fitted_toast(text, 0)
+    fitted_toast(toast_text(text), 0)
 }
 
 /// A toast with plain text that goes away by itself, for a notice such as
@@ -215,8 +286,8 @@ pub fn persistent_toast(text: &str) -> adw::Toast {
 /// reached.
 pub fn info_toast(text: &str) -> adw::Toast {
     match toast_text(text) {
-        ToastText::Whole(_) => fitted_toast(text, 5),
-        ToastText::Detailed { .. } => fitted_toast(text, 0),
+        shown @ ToastText::Whole(_) => fitted_toast(shown, 5),
+        shown @ ToastText::Detailed { .. } => fitted_toast(shown, 0),
     }
 }
 
@@ -250,6 +321,13 @@ pub fn log_failure(what: &str, message: &str) {
 pub fn show_error(widget: &impl IsA<gtk::Widget>, what: &str, message: &str) {
     log_failure(what, message);
     show_toast_from(widget, persistent_toast(message));
+}
+
+/// [`show_error`] for a [`Message`], whose title was decided on its
+/// template.
+pub fn show_error_message(widget: &impl IsA<gtk::Widget>, what: &str, message: &Message) {
+    log_failure(what, &message.text);
+    show_toast_from(widget, fitted_toast(message.shown.clone(), 0));
 }
 
 /// The error toast a page shows last. A new error dismisses it first, so a
@@ -416,6 +494,78 @@ mod tests {
         assert!(
             matches!(toast_text(&text), ToastText::Detailed { title, .. } if title == "Export done")
         );
+    }
+
+    /// A name with a clause end in it never splits the title: from its
+    /// template, the title is the template's first clause whatever the
+    /// name holds; from the text alone, a separator inside quotation marks
+    /// is not one (a deck named "Spanish: verbs" cut "could not be
+    /// restored" in the wrong place before).
+    #[test]
+    fn a_name_never_splits_a_title() {
+        let error = "the deck merged into was deleted since";
+        for name in ["a: b", "a. b", "x; y", "a” : b", "« c » : d", "ab"] {
+            let message = Message::from_template(
+                "“{name}” failed: {error}",
+                &[("name", name), ("error", error)],
+            );
+            assert_eq!(message.text, format!("“{name}” failed: {error}"));
+            assert_eq!(
+                message.shown,
+                ToastText::Detailed {
+                    title: format!("“{name}” failed"),
+                    details: "The deck merged into was deleted since".into(),
+                },
+                "{name}"
+            );
+        }
+        // The real message: its title with any name is too long for the
+        // room beside Details, so it is the fallback and the whole text
+        // is the details, never a piece of the name.
+        for name in ["Spanish: verbs", "Spanish", "a. b"] {
+            let message =
+                crate::ui::text::not_restored(name, &rappel_core::Error::DeckNotFound("x".into()));
+            assert_eq!(
+                message.shown,
+                ToastText::Detailed {
+                    title: fallback_title(),
+                    details: message.text.clone(),
+                }
+            );
+            assert!(
+                message
+                    .text
+                    .starts_with(&format!("“{name}” could not be restored: "))
+            );
+        }
+        // A text that fits is whole.
+        assert_eq!(
+            Message::from_template("“{name}” archived", &[("name", "a: b")]).shown,
+            ToastText::Whole("“a: b” archived".into())
+        );
+        // The text alone: a separator between quotation marks is part of
+        // a name.
+        let text = "“Spanish: verbs” could not be restored: another deck has its name now.";
+        assert_eq!(
+            toast_text(text),
+            ToastText::Detailed {
+                title: fallback_title(),
+                details: text.into(),
+            }
+        );
+        let text =
+            "« Espagnol : verbes » n’a pas pu être restauré : un autre paquet porte son nom.";
+        assert!(
+            matches!(toast_text(text), ToastText::Detailed { title, .. } if title == fallback_title())
+        );
+        let text = "“a: b” is gone: the deck it went into was deleted since then";
+        assert!(
+            matches!(toast_text(text), ToastText::Detailed { title, .. } if title == "“a: b” is gone")
+        );
+        // A placeholder that a separator would cut leaves the text's own
+        // reading.
+        let message = Message::from_template("{a: b} and more words to be long enough", &[]);
+        assert_eq!(message.shown, toast_text(&message.text));
     }
 
     #[test]

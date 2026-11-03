@@ -42,7 +42,12 @@ template $RappelCardEditor: Adw.Dialog {
         label: _("_Save");
         use-underline: true;
         action-name: "editor.save";
-        tooltip-text: _("Save (Ctrl+Enter)");
+
+        // Its tooltip, "Save (Ctrl+Enter)", is set in the code from the
+        // keys the editor binds (dialogs/card_editor/mod.rs).
+        accessibility {
+          description: _("Press Ctrl+Enter");
+        }
 
         styles [
           "suggested-action",
@@ -140,10 +145,50 @@ template $RappelCardEditor: Adw.Dialog {
 
                       accessibility {
                         label: _("Front");
-                        described-by: front_error;
+                        described-by: [
+                          front_error,
+                          front_same_label,
+                        ];
                       }
                     };
                   };
+                }
+
+                // Shown when other cards have the same front (#119, ADR
+                // 0072): a quiet note that never blocks saving, and a
+                // button that opens the first of them in Card Information.
+                // The text is set in dialogs/card_editor/mod.rs, without
+                // markup since it holds a deck's name.
+                Gtk.Box front_same {
+                  visible: false;
+                  spacing: 6;
+                  margin-top: 6;
+
+                  Gtk.Label front_same_label {
+                    use-markup: false;
+                    wrap: true;
+                    wrap-mode: word_char;
+                    xalign: 0;
+                    hexpand: true;
+
+                    styles [
+                      "dimmed",
+                      "caption",
+                    ]
+                  }
+
+                  Gtk.Button front_same_button {
+                    label: _("Show Card");
+                    valign: center;
+
+                    accessibility {
+                      described-by: front_same_label;
+                    }
+
+                    styles [
+                      "flat",
+                    ]
+                  }
                 }
 
                 Gtk.Label front_error {
@@ -241,34 +286,6 @@ template $RappelCardEditor: Adw.Dialog {
                 description: _("Press Enter or type a comma after each tag");
 
                 $RappelTagEntry tag_entry {}
-              }
-
-              // A quiet reminder of the save key, after the fields: it
-              // scrolls with them, so it never takes room from them on a
-              // small screen. The Save button's tooltip says it too.
-              Gtk.Box save_hint {
-                halign: start;
-                spacing: 6;
-
-                styles [
-                  "dimmed",
-                ]
-
-                Adw.ShortcutLabel {
-                  accelerator: "<Control>Return";
-
-                  styles [
-                    "caption",
-                  ]
-                }
-
-                Gtk.Label {
-                  label: _("to save");
-
-                  styles [
-                    "caption",
-                  ]
-                }
               }
             };
           };

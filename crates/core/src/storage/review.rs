@@ -2,16 +2,18 @@
 
 use std::time::Duration;
 
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use super::cards::live_card;
-use super::decks::ensure_live_deck;
+use super::decks::{ensure_active_deck, ensure_live_deck};
 use super::schedule::{insert_event, read_card_state, read_log, rebuild_cards, write_card_state};
 use super::settings::{scheduler_in, settings_in};
 use super::{Store, observe_max_id};
 use crate::domain::{CardState, EventKind, Grade, Phase, ReviewEvent};
 use crate::error::{Error, Result};
 use crate::id::IdGen;
+use crate::scheduling::StudyScope;
+use crate::scheduling::scope::{Candidate, DeckAllowance, Stage, allocate};
 use crate::scheduling::session::{Due, EARLY_MS, StudyInput, allowance};
 use crate::scheduling::{Scheduler, surviving};
 
@@ -103,11 +105,13 @@ impl Store {
         Ok(event)
     }
 
-    /// What deck `deck_id` has to study at `now`, for a
+    /// What `scope` has to study at `now`, for a
     /// [`Session`](crate::scheduling::session::Session). `day_start` is
     /// when "today" began (UTC milliseconds; the app computes the day start
     /// hour of the settings in local time). Read in one transaction, so the
-    /// parts agree (ADR 0014):
+    /// parts agree (ADR 0014).
+    ///
+    /// For a deck ([`StudyScope::Deck`]):
     /// - due cards in review, most overdue first, at most
     ///   `max_reviews_per_day` less the older cards already reviewed today;
     /// - cards in the 10-minute step due within
@@ -123,29 +127,51 @@ impl Store {
     /// The limits are per deck and read from the settings in the same
     /// transaction (ADR 0027).
     ///
+    /// For a tag ([`StudyScope::Tag`], ADR 0069): the same, over the live
+    /// cards carrying the tag in every live deck that is not archived, each
+    /// deck giving at most what is left of *its own* limits today; the
+    /// parts are merged in the same order (`scope::allocate`), and
+    /// `new_today` and `reviews_today` are summed over the decks that gave
+    /// a card. A tag on no such card gives nothing to study.
+    ///
     /// # Errors
-    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound), SQLite errors.
-    pub fn study_input(&self, deck_id: &str, now: i64, day_start: i64) -> Result<StudyInput> {
+    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound),
+    /// [`Error::DeckArchived`](crate::Error::DeckArchived) (an archived
+    /// deck is not studied, ADR 0068),
+    /// [`Error::TagNotFound`](crate::Error::TagNotFound), SQLite errors.
+    pub fn study_input(&self, scope: &StudyScope, now: i64, day_start: i64) -> Result<StudyInput> {
         let tx = self.conn.unchecked_transaction()?;
-        let input = study_input_in(&tx, deck_id, now, day_start)?;
+        let input = match scope {
+            StudyScope::Deck(deck_id) => study_input_in(&tx, deck_id, now, day_start)?,
+            StudyScope::Tag(tag_id) => tag_study_input_in(&tx, tag_id, now, day_start)?,
+        };
         // Read only: ending it commits nothing.
         tx.finish()?;
         Ok(input)
     }
 
     /// The first time after `now` (UTC milliseconds) at which
-    /// [`Self::study_input`] for deck `deck_id` would offer one more
+    /// [`Self::study_input`] for `scope` would offer one more
     /// reviewed card: a review card's `due_at`, or a step card's `due_at`
-    /// minus `EARLY_MS`. `None` if no live card of the deck will become
+    /// minus `EARLY_MS`. `None` if no live card of the scope will become
     /// due. The day start, which renews the new-card budget, is the
     /// caller's to add.
     ///
     /// # Errors
-    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound), SQLite errors.
-    pub fn next_study_change(&self, deck_id: &str, now: i64) -> Result<Option<i64>> {
+    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound),
+    /// [`Error::TagNotFound`](crate::Error::TagNotFound), SQLite errors.
+    pub fn next_study_change(&self, scope: &StudyScope, now: i64) -> Result<Option<i64>> {
         let tx = self.conn.unchecked_transaction()?;
-        ensure_live_deck(&tx, deck_id)?;
-        let next = next_study_change_in(&tx, deck_id, now)?;
+        let next = match scope {
+            StudyScope::Deck(deck_id) => {
+                ensure_live_deck(&tx, deck_id)?;
+                next_study_change_in(&tx, deck_id, now)?
+            }
+            StudyScope::Tag(tag_id) => {
+                ensure_tag(&tx, tag_id)?;
+                tag_next_study_change_in(&tx, tag_id, now)?
+            }
+        };
         tx.finish()?;
         Ok(next)
     }
@@ -285,7 +311,7 @@ pub(super) fn study_input_in(
     now: i64,
     day_start: i64,
 ) -> Result<StudyInput> {
-    ensure_live_deck(conn, deck_id)?;
+    ensure_active_deck(conn, deck_id)?;
     let limits = settings_in(conn)?;
     // `limit` -1 is no limit in SQLite.
     let due = |phases: &str, until: i64, limit: i64| -> Result<Vec<Due>> {
@@ -360,6 +386,120 @@ fn today_counts_in(conn: &Connection, deck_id: &str, day_start: i64) -> Result<(
     )?;
     let count = |n: i64| u32::try_from(n.max(0)).unwrap_or(u32::MAX);
     Ok((count(reviews_today), count(new_today)))
+}
+
+/// [`Error::TagNotFound`] unless tag `tag_id` exists. Tags are never
+/// deleted (ADR 0029), so this fails only for an id that never was one.
+pub(super) fn ensure_tag(conn: &Connection, tag_id: &str) -> Result<()> {
+    conn.query_row("SELECT 1 FROM tags WHERE id = ?1", [tag_id], |_| Ok(()))
+        .optional()?
+        .ok_or_else(|| Error::TagNotFound(tag_id.to_owned()))
+}
+
+/// The tables of a tag session's cards: `ct` (the card tags), `c` (the
+/// cards) and `d` (their decks), to be filtered by [`TAGGED_IN_SCOPE`].
+pub(super) const TAGGED_FROM: &str = "card_tags ct
+    JOIN cards c ON c.id = ct.card_id
+    JOIN decks d ON d.id = c.deck_id";
+
+/// The cards carrying tag `?1` in every live deck that is not archived
+/// (ADR 0068: the tag scope leaves archived decks out), deleted and
+/// suspended cards included. Shared by the queries of a tag session, so
+/// they cannot disagree on its decks.
+pub(super) const TAGGED_IN_SCOPE: &str =
+    "ct.tag_id = ?1 AND d.deleted_at IS NULL AND d.archived_at IS NULL";
+
+/// [`Store::study_input`] of tag `tag_id`, inside the caller's read
+/// transaction: each deck that has a live card with the tag gives its
+/// allowance left today (as [`study_input_in`] computes it), every card
+/// with the tag is a candidate, and `scope::allocate` cuts and merges them
+/// (ADR 0069).
+fn tag_study_input_in(
+    conn: &Connection,
+    tag_id: &str,
+    now: i64,
+    day_start: i64,
+) -> Result<StudyInput> {
+    ensure_tag(conn, tag_id)?;
+    let limits = settings_in(conn)?;
+    let deck_ids: Vec<String> = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT DISTINCT c.deck_id FROM {TAGGED_FROM}
+             WHERE {TAGGED_IN_SCOPE} AND c.deleted_at IS NULL
+             ORDER BY c.deck_id"
+        ))?;
+        let rows = stmt.query_map([tag_id], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let mut allowances = Vec::with_capacity(deck_ids.len());
+    for deck_id in deck_ids {
+        let (reviews_today, new_today) = today_counts_in(conn, &deck_id, day_start)?;
+        allowances.push(DeckAllowance {
+            deck_id,
+            new: allowance(limits.max_new_per_day, new_today),
+            reviews: allowance(limits.max_reviews_per_day, reviews_today),
+            new_today,
+            reviews_today,
+        });
+    }
+    // Phases are our own constant strings, never user input. A phase
+    // that is none of them (the schema allows none) is not studied.
+    let mut stmt = conn.prepare(&format!(
+        "SELECT c.id, c.deck_id, c.seq, c.suspended <> 0, c.deleted_at IS NOT NULL,
+                CASE WHEN s.card_id IS NULL THEN 0
+                     WHEN s.phase = '{review}' THEN 1
+                     WHEN s.phase IN ('{learning}', '{relearning}') THEN 2 END,
+                s.due_at
+         FROM {TAGGED_FROM} LEFT JOIN card_schedule s ON s.card_id = c.id
+         WHERE {TAGGED_IN_SCOPE}",
+        review = Phase::Review.as_str(),
+        learning = Phase::Learning.as_str(),
+        relearning = Phase::Relearning.as_str(),
+    ))?;
+    let rows = stmt.query_map([tag_id], |r| {
+        let stage = match (r.get::<_, Option<i64>>(5)?, r.get::<_, Option<i64>>(6)?) {
+            (Some(0), _) => Some(Stage::New),
+            (Some(1), Some(due_at)) => Some(Stage::Review(due_at)),
+            (Some(2), Some(due_at)) => Some(Stage::Step(due_at)),
+            _ => None,
+        };
+        let Some(stage) = stage else {
+            return Ok(None);
+        };
+        Ok(Some(Candidate {
+            card_id: r.get(0)?,
+            deck_id: r.get(1)?,
+            seq: r.get(2)?,
+            suspended: r.get(3)?,
+            deleted: r.get(4)?,
+            stage,
+        }))
+    })?;
+    let mut candidates = Vec::new();
+    for row in rows {
+        candidates.extend(row?);
+    }
+    Ok(allocate(&allowances, candidates, now))
+}
+
+/// [`Store::next_study_change`] of tag `tag_id`, inside the caller's read
+/// transaction: [`next_study_change_in`]'s rule over the live cards with
+/// the tag that are not suspended, in the decks of a tag session.
+fn tag_next_study_change_in(conn: &Connection, tag_id: &str, now: i64) -> Result<Option<i64>> {
+    // Phases are our own constant strings, never user input.
+    Ok(conn.query_row(
+        &format!(
+            "SELECT min(CASE WHEN s.phase = '{review}' THEN s.due_at
+                             ELSE s.due_at - ?3 END)
+             FROM {TAGGED_FROM} JOIN card_schedule s ON s.card_id = c.id
+             WHERE {TAGGED_IN_SCOPE} AND c.deleted_at IS NULL AND c.suspended = 0
+               AND (CASE WHEN s.phase = '{review}' THEN s.due_at
+                         ELSE s.due_at - ?3 END) > ?2",
+            review = Phase::Review.as_str()
+        ),
+        params![tag_id, now, EARLY_MS],
+        |r| r.get(0),
+    )?)
 }
 
 /// What [`Store::list_decks`] shows of deck `deck_id`: the lengths of its
@@ -454,3 +594,6 @@ pub(super) fn deck_counts_in(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tag_tests;

@@ -21,6 +21,34 @@ type Job = Box<dyn FnOnce() + Send>;
 thread_local! {
     /// Whether this thread is the one that owns the default main context.
     static ON_WORKER: Cell<bool> = const { Cell::new(false) };
+    /// Where the last panic on this thread happened, as the panic hook
+    /// saw it (set on the main-context thread only).
+    static PANICKED_AT: Cell<Option<String>> = const { Cell::new(None) };
+}
+
+/// Keeps the location of a panic on the main-context thread for
+/// [`on_main_context`], then calls the hook that was there before (which
+/// prints the message). That print goes to the output capture of the test
+/// that started the thread, long finished, so it never showed: a body that
+/// failed there printed nothing (`ui::dropdown`'s flaky test, ADR 0073).
+fn keep_panic_locations() {
+    let previous = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        if ON_WORKER.get() {
+            PANICKED_AT.set(info.location().map(ToString::to_string));
+        }
+        previous(info);
+    }));
+}
+
+/// The text of a panic's payload (`panic!` with a message gives a `String`
+/// or a `&str`).
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("a panic without a message")
 }
 
 /// The queue of the thread that owns the default main context, started on
@@ -28,6 +56,7 @@ thread_local! {
 fn queue() -> &'static mpsc::Sender<Job> {
     static QUEUE: OnceLock<mpsc::Sender<Job>> = OnceLock::new();
     QUEUE.get_or_init(|| {
+        keep_panic_locations();
         let (sender, jobs) = mpsc::channel::<Job>();
         thread::Builder::new()
             .name("main-context".to_owned())
@@ -47,7 +76,8 @@ fn queue() -> &'static mpsc::Sender<Job> {
 }
 
 /// Runs `f` on the thread that owns the default main context and returns
-/// its result. A panic in `f` fails the calling test (a panic inside a C
+/// its result. A panic in `f` fails the calling test, with its message and
+/// place (a panic inside a C
 /// callback that `f` runs aborts the test binary instead: it cannot unwind
 /// through C). Called from that thread, it runs `f` directly: queueing it
 /// would wait for itself.
@@ -57,8 +87,20 @@ pub fn on_main_context<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static
     }
     let (sender, answer) = mpsc::channel();
     let job: Job = Box::new(move || {
+        PANICKED_AT.set(None);
+        // A panic's message and place are sent back to the caller, whose
+        // test prints them.
+        let result = panic::catch_unwind(AssertUnwindSafe(f)).map_err(|payload| {
+            let at = PANICKED_AT
+                .take()
+                .unwrap_or_else(|| "an unknown place".to_owned());
+            format!(
+                "{} (on the main-context thread, at {at})",
+                panic_text(&*payload)
+            )
+        });
         // The caller may have stopped waiting; nothing to do then.
-        let _ = sender.send(panic::catch_unwind(AssertUnwindSafe(f)));
+        let _ = sender.send(result);
     });
     queue()
         .send(job)
@@ -68,7 +110,9 @@ pub fn on_main_context<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static
         .expect("the main-context thread answers every job")
     {
         Ok(value) => value,
-        Err(payload) => panic::resume_unwind(payload),
+        // A new panic on the test's own thread, not `resume_unwind`, which
+        // calls no hook: the test's output then says what failed and where.
+        Err(message) => panic!("{message}"),
     }
 }
 
@@ -85,9 +129,45 @@ pub fn with_gtk<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T 
         if !gtk::is_initialized() && !crate::i18n::tests::real_gettext() {
             gtk::disable_setlocale();
         }
+        if !gtk::is_initialized() && x11_only(std::env::var_os("DISPLAY").as_deref()) {
+            // `xvfb-run` sets DISPLAY but leaves WAYLAND_DISPLAY, and GTK
+            // prefers Wayland: the tests then ran on the desktop's
+            // compositor (their windows on the maintainer's screen), where
+            // a text-input event for an input method context already
+            // freed aborts the binary (`gtkimcontextwayland.c`,
+            // `translate_purpose`: "code should not be reached", seen in
+            // GTK 4.20; earlier SIGSEGVs, ADR 0024). Before GDK opens a
+            // display, it is told to use X11 only
+            // (`gdk_set_allowed_backends`, "must be called before
+            // gdk_display_open()").
+            gtk::gdk::set_allowed_backends("x11");
+        }
         gtk::init().expect("GTK needs a display for this test; run it under `xvfb-run -a`");
+        // The input method is GTK's own, never the session's (IBus over
+        // D-Bus, or Wayland's text input): their replies come back after a
+        // test has destroyed its window, and IBus then reads the freed
+        // surface (`gdk_x11_surface_get_xid` from `libim-ibus.so`, a
+        // SIGSEGV in every run once the tests drew on X11). The
+        // `gtk-im-module` setting picks the module for every text widget
+        // made after it (GtkSettings docs); CI has neither, so the tests
+        // see what CI sees (ADR 0024, amended).
+        if let Some(settings) = gtk::Settings::default()
+            && settings.gtk_im_module().as_deref() != Some(SIMPLE_IM)
+        {
+            settings.set_gtk_im_module(Some(SIMPLE_IM));
+        }
         f()
     })
+}
+
+/// GTK's own input method, which talks to no other process.
+const SIMPLE_IM: &str = "gtk-im-context-simple";
+
+/// Whether the tests' GTK is held to X11: whenever an X display is named
+/// (`xvfb-run`, CI, or a desktop's Xwayland), so they never run on a
+/// Wayland compositor (see [`with_gtk`], ADR 0024).
+fn x11_only(display: Option<&std::ffi::OsStr>) -> bool {
+    display.is_some_and(|d| !d.is_empty())
 }
 
 /// Like [`with_gtk`], with libadwaita started and the app's resources (the
@@ -112,6 +192,117 @@ pub fn temporary_state() -> (tempfile::TempDir, crate::state::AppState) {
     let state =
         crate::state::AppState::open(tmp.path().join("data")).expect("a new database opens");
     (tmp, state)
+}
+
+/// A new database with a deck "Many" of `n` new cards ("Card 0", …), and
+/// their ids in creation order. The cards are written in one transaction
+/// straight into the database file, as an import would write them (rows
+/// and search index), because adding them one by one through the store
+/// waits for the disk at every card (`synchronous=FULL`): 5,000 took most
+/// of a minute. For tests at scale (ADR 0073).
+pub fn state_with_many_cards(
+    n: usize,
+) -> (
+    tempfile::TempDir,
+    crate::state::AppState,
+    rappel_core::domain::Deck,
+    Vec<String>,
+) {
+    let (tmp, state) = temporary_state();
+    let deck = state.create_deck("Many").expect("a deck is created");
+    let mut conn = rusqlite::Connection::open(state.data_dir().join("rappel.sqlite3"))
+        .expect("the database opens");
+    let tx = conn.transaction().expect("a transaction starts");
+    let now = rappel_core::time::now_ms();
+    let mut ids = Vec::with_capacity(n);
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'back', ?4, ?4)",
+            )
+            .expect("the insert is prepared");
+        for i in 0..n {
+            // A lowercase UUIDv7 after every id the store issued so far.
+            let id = format!("0fff0000-0000-7000-8000-{i:012x}");
+            let at = now - i64::try_from(n - i).unwrap_or(i64::MAX);
+            insert
+                .execute(rusqlite::params![id, deck.id, format!("Card {i}"), at])
+                .expect("a card is inserted");
+            ids.push(id);
+        }
+    }
+    // The fronts are plain ASCII: lower case is their folded text.
+    tx.execute(
+        "INSERT INTO cards_fts (rowid, front, back)
+         SELECT seq, lower(front_md), lower(back_md) FROM cards WHERE deck_id = ?1",
+        [&deck.id],
+    )
+    .expect("the index is written");
+    tx.commit().expect("the cards are written");
+    (tmp, state, deck, ids)
+}
+
+/// Every widget of type `T` at or under `widget`, depth first, in order
+/// (the rows a list built, the labels of a page as drawn).
+pub fn descendants<T: gtk::prelude::IsA<gtk::Widget>>(widget: &gtk::Widget) -> Vec<T> {
+    use gtk::prelude::*;
+    let mut found: Vec<T> = widget.clone().downcast().into_iter().collect();
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        found.extend(descendants::<T>(&c));
+        child = c.next_sibling();
+    }
+    found
+}
+
+/// The texts of the labels at or under `widget`, as drawn.
+pub fn label_texts(widget: &gtk::Widget) -> Vec<String> {
+    descendants::<gtk::Label>(widget)
+        .iter()
+        .map(|label| label.text().to_string())
+        .collect()
+}
+
+/// Runs the default main context while it has something to do, at most
+/// 200 iterations: lets a window map and a list build its rows.
+pub fn settle() {
+    let context = glib::MainContext::default();
+    for _ in 0..200 {
+        if !context.iteration(false) {
+            break;
+        }
+    }
+}
+
+/// Whether the item `text` of `button`'s menu can be pressed, as drawn in
+/// its open popover (the menu's `GtkModelButton`s, found by type name, as
+/// GTK offers no public way to read a menu item's state). The button must
+/// be in a window.
+pub fn menu_item_sensitive(button: &gtk::MenuButton, text: &str) -> bool {
+    use gtk::prelude::*;
+    button.popup();
+    let mut todo = vec![
+        button
+            .popover()
+            .expect("the menu is open")
+            .upcast::<gtk::Widget>(),
+    ];
+    let mut found = None;
+    while let Some(widget) = todo.pop() {
+        if widget.type_().name() == "GtkModelButton"
+            && widget.property::<Option<String>>("text").as_deref() == Some(text)
+        {
+            found = Some(widget.is_sensitive());
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            child = c.next_sibling();
+            todo.push(c);
+        }
+    }
+    button.popdown();
+    found.unwrap_or_else(|| panic!("the menu has no item {text:?}"))
 }
 
 /// A real WAV of `samples` samples of 8 kHz, 8-bit mono silence (one
@@ -549,4 +740,64 @@ fn a_cpu_clock_that_does_not_move_is_not_trusted() {
         cpu_time_between(at(None, None), at(None, None), ms(7)),
         ms(7)
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use gtk::prelude::*;
+
+    use super::*;
+
+    #[test]
+    fn an_x_display_holds_gtk_to_x11() {
+        assert!(x11_only(Some(std::ffi::OsStr::new(":99"))));
+        assert!(!x11_only(Some(std::ffi::OsStr::new(""))));
+        assert!(!x11_only(None));
+    }
+
+    /// Under `xvfb-run` (or CI) the tests draw on X11, even when the
+    /// session around them has a Wayland compositor (ADR 0024).
+    #[test]
+    fn the_tests_draw_on_x11_when_an_x_display_is_named() {
+        let named = x11_only(std::env::var_os("DISPLAY").as_deref());
+        let backend = with_gtk(|| {
+            gtk::gdk::Display::default()
+                .map(|display| display.type_().name().to_owned())
+                .unwrap_or_default()
+        });
+        if named {
+            assert_eq!(backend, "GdkX11Display");
+        }
+    }
+
+    /// Text widgets in the tests use GTK's own input method (ADR 0024).
+    #[test]
+    fn the_tests_use_gtks_own_input_method() {
+        let module = with_gtk(|| {
+            gtk::Settings::default()
+                .and_then(|settings| settings.gtk_im_module())
+                .map(|m| m.to_string())
+        });
+        assert_eq!(module.as_deref(), Some(SIMPLE_IM));
+    }
+
+    /// A body that fails on the main-context thread fails the calling
+    /// test with its message and place, which the test's output shows
+    /// (before, nothing was printed: ADR 0073).
+    #[test]
+    fn a_failure_on_the_main_context_says_what_and_where() {
+        let caught = panic::catch_unwind(|| {
+            on_main_context(|| {
+                let width = 7;
+                assert!(width < 5, "the rows are {width} px wide");
+            });
+        });
+        let payload = caught.expect_err("the body failed");
+        let text = panic_text(&*payload);
+        assert!(text.contains("the rows are 7 px wide"), "{text}");
+        assert!(text.contains("main-context thread, at "), "{text}");
+        assert!(text.contains("testing.rs:"), "{text}");
+        // The thread still runs the next body.
+        assert_eq!(on_main_context(|| 2 + 2), 4);
+    }
 }

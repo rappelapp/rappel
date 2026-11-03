@@ -14,9 +14,13 @@ use crate::stats::{ActivityReview, CardInfo, DayGrid, ScheduledCard, Stats, card
 /// count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope<'a> {
-    /// Every live deck.
+    /// Every live deck. The activity (reviews, time, pass rate) counts
+    /// archived decks too, since it is history; the forecast and the
+    /// expected retention leave them out, since they are not studied
+    /// (ADR 0068).
     All,
-    /// One live deck.
+    /// One live deck, archived or not: an archived deck's own statistics
+    /// stay whole (the app does not show them).
     Deck(&'a str),
 }
 
@@ -34,7 +38,8 @@ impl Store {
     /// transaction. Reviews per day, time and pass rate cover the days of
     /// `past`; the forecast covers the days of `ahead` (day 0 takes the
     /// overdue cards too). The expected retention is the mean recall
-    /// probability of every live scheduled card at `now`. All counts use
+    /// probability of every live scheduled card at `now` (with
+    /// [`Scope::All`], of decks that are not archived). All counts use
     /// surviving entries only (ADR 0028, 0032): the activity counts every
     /// review no undo cancels, a reset only restarts the memory side.
     ///
@@ -107,14 +112,16 @@ fn activity_in_window(
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// The schedules of live cards in live decks (of `deck`, if given).
+/// The schedules of live, unsuspended cards in live decks: of `deck` if
+/// given (archived or not), else of every deck that is not archived
+/// (ADR 0068).
 fn scheduled_cards(conn: &Connection, deck: Option<&str>) -> Result<Vec<ScheduledCard>> {
     let mut stmt = conn.prepare(
         "SELECT s.due_at, s.stability, s.difficulty, s.last_review_at
          FROM card_schedule s
          JOIN cards c ON c.id = s.card_id JOIN decks d ON d.id = c.deck_id
          WHERE c.deleted_at IS NULL AND d.deleted_at IS NULL AND c.suspended = 0
-           AND (?1 IS NULL OR c.deck_id = ?1)",
+           AND (c.deck_id = ?1 OR (?1 IS NULL AND d.archived_at IS NULL))",
     )?;
     let rows = stmt.query_map([deck], |r| {
         Ok(ScheduledCard {

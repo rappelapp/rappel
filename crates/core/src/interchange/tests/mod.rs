@@ -157,6 +157,7 @@ const FIXTURE: &str = r#"{
       "name": "Maths",
       "created_at": 1792067696789,
       "updated_at": 1792067696789,
+      "archived_at": null,
       "deleted_at": null
     },
     {
@@ -164,6 +165,7 @@ const FIXTURE: &str = r#"{
       "name": "Old",
       "created_at": 1792067696789,
       "updated_at": 1792067696789,
+      "archived_at": 1792067699000,
       "deleted_at": 1792067700000
     }
   ],
@@ -279,6 +281,7 @@ fn diverged() -> (Env, Env, String, String) {
 }
 
 mod archive_reader;
+mod archived;
 mod concurrent;
 mod conflicts;
 mod format;
@@ -287,6 +290,7 @@ mod large;
 mod limits;
 mod log_and_tags;
 mod media;
+mod merged;
 mod oracle;
 mod property;
 mod refused;

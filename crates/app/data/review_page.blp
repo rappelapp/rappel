@@ -1,9 +1,10 @@
 using Gtk 4.0;
 using Adw 1;
 
-// A study session of one deck. Texts are set in pages/review_page.rs; the
-// front and back boxes are filled by render/ (ADR 0019), which escapes the
-// untrusted card content.
+// A study session of a deck or a tag, or a practice of one (ADR 0070: the
+// banner shows, nothing is written). Texts are set in pages/review_page.rs;
+// the front and back boxes are filled by render/ (ADR 0019), which escapes
+// the untrusted card content.
 template $RappelReviewPage: Adw.NavigationPage {
   title: C_("page title", "Study");
 
@@ -23,7 +24,7 @@ template $RappelReviewPage: Adw.NavigationPage {
     }
 
     // A short window (a phone held sideways) keeps the room for the card:
-    // the key hints go and the bar's margins shrink. The summary is then
+    // the bar's margins shrink. The summary is then
     // `compact` (less spacing) without its icon, so its figures and Back to
     // Deck fit at 360 × 294. A setter can neither add a style class nor
     // unset the icon, so the page does both on `apply` and undoes them on
@@ -34,9 +35,6 @@ template $RappelReviewPage: Adw.NavigationPage {
       condition ("max-height: 400sp")
 
       setters {
-        reveal_hint.visible: false;
-        fail_hint.visible: false;
-        pass_hint.visible: false;
         bottom_bar.margin-top: 6;
         bottom_bar.margin-bottom: 6;
         summary_box.spacing: 24;
@@ -52,7 +50,6 @@ template $RappelReviewPage: Adw.NavigationPage {
         Gtk.Button undo_button {
           icon-name: "edit-undo-symbolic";
           action-name: "review.undo";
-          tooltip-text: _("Undo Last Answer (Ctrl+Z)");
 
           accessibility {
             label: _("Undo Last Answer");
@@ -76,12 +73,21 @@ template $RappelReviewPage: Adw.NavigationPage {
           visible: false;
           icon-name: "document-edit-symbolic";
           action-name: "review.edit";
-          tooltip-text: _("Edit Card (E)");
 
           accessibility {
             label: _("Edit Card");
           }
         }
+      }
+
+      // Only in a practice: what makes it unmistakable that the answers
+      // schedule nothing. A banner, as the HIG has for a persistent state
+      // of the view; no button, since there is nothing to do about it.
+      [top]
+      Adw.Banner banner {
+        title: _("Practice — nothing is rescheduled");
+        // The title is plain text (AdwBanner:use-markup defaults to true).
+        use-markup: false;
       }
 
       // No transitions (AdwViewStack's default): the card and the summary
@@ -257,7 +263,9 @@ template $RappelReviewPage: Adw.NavigationPage {
                     }
                   }
 
-                  Gtk.Box {
+                  // Not in a practice's summary, which gives the cards
+                  // practised and the pass rate (ADR 0070).
+                  Gtk.Box time_tile {
                     orientation: vertical;
                     spacing: 2;
 
@@ -294,16 +302,38 @@ template $RappelReviewPage: Adw.NavigationPage {
                 };
               }
 
-              Gtk.Button done_button {
-                label: _("_Back to Deck");
-                use-underline: true;
-                action-name: "review.done";
-                halign: center;
+              // Back, and beside it Practice (secondary, after a session
+              // only, `practice_button_shown`; ADR 0070). A wrap box puts
+              // Practice under Back when a line cannot hold both (a phone
+              // with a long translation), so neither is ever cut; it is a
+              // group for screen readers (AdwWrapBox docs).
+              Adw.WrapBox {
+                child-spacing: 12;
+                line-spacing: 12;
+                align: 0.5;
 
-                styles [
-                  "pill",
-                  "suggested-action",
-                ]
+                Gtk.Button done_button {
+                  label: _("_Back to Deck");
+                  use-underline: true;
+                  action-name: "review.done";
+
+                  styles [
+                    "pill",
+                    "suggested-action",
+                  ]
+                }
+
+                Gtk.Button practice_button {
+                  visible: false;
+                  label: _("_Practice");
+                  use-underline: true;
+                  action-name: "review.practice";
+                  tooltip-text: _("Go over the cards again without rescheduling them");
+
+                  styles [
+                    "pill",
+                  ]
+                }
               }
             };
           };
@@ -311,9 +341,9 @@ template $RappelReviewPage: Adw.NavigationPage {
       };
 
       // Show Answer, then Fail and Pass, in the same place, so the thumb
-      // stays where it is. Each button has its key in small dimmed text
-      // under it. The hint is hidden from screen readers, which hear the
-      // key in the button's description instead.
+      // stays where it is. Each button's key is in its tooltip, set in the
+      // page (`ui::keys::tooltip`; #105), and in its accessible description, which
+      // screen readers hear.
       [bottom]
       Adw.Clamp bottom_bar {
         maximum-size: 420;
@@ -328,36 +358,20 @@ template $RappelReviewPage: Adw.NavigationPage {
           Adw.ViewStackPage {
             name: "reveal";
 
-            child: Gtk.Box {
-              orientation: vertical;
-              spacing: 6;
+            child: Gtk.Button reveal_button {
+              label: _("_Show Answer");
+              use-underline: true;
+              action-name: "review.reveal";
 
-              Gtk.Button {
-                label: _("_Show Answer");
-                use-underline: true;
-                action-name: "review.reveal";
-
-                accessibility {
-                  description: _("Press Space");
-                }
-
-                styles [
-                  "pill",
-                  "suggested-action",
-                  "review-button",
-                ]
+              accessibility {
+                description: _("Press Space");
               }
 
-              Gtk.Label reveal_hint {
-                // Translators: the name of the Space key, shown under Show Answer.
-                label: _("Space");
-                accessible-role: presentation;
-
-                styles [
-                  "caption",
-                  "dimmed",
-                ]
-              }
+              styles [
+                "pill",
+                "suggested-action",
+                "review-button",
+              ]
             };
           }
 
@@ -368,69 +382,35 @@ template $RappelReviewPage: Adw.NavigationPage {
               spacing: 12;
               homogeneous: true;
 
-              Gtk.Box {
-                orientation: vertical;
-                spacing: 6;
+              Gtk.Button fail_button {
+                label: _("_Fail");
+                use-underline: true;
+                action-name: "review.fail";
 
-                Gtk.Button {
-                  label: _("_Fail");
-                  use-underline: true;
-                  action-name: "review.fail";
-
-                  accessibility {
-                    description: _("Press 1");
-                  }
-
-                  styles [
-                    "pill",
-                    "review-button",
-                  ]
+                accessibility {
+                  description: _("Press 1");
                 }
 
-                Gtk.Label fail_hint {
-                  // Translators: the key that answers Fail; keep it as it is.
-                  label: _("1");
-                  accessible-role: presentation;
-
-                  styles [
-                    "caption",
-                    "dimmed",
-                    "numeric",
-                  ]
-                }
+                styles [
+                  "pill",
+                  "review-button",
+                ]
               }
 
-              Gtk.Box {
-                orientation: vertical;
-                spacing: 6;
+              Gtk.Button pass_button {
+                label: _("_Pass");
+                use-underline: true;
+                action-name: "review.pass";
 
-                Gtk.Button {
-                  label: _("_Pass");
-                  use-underline: true;
-                  action-name: "review.pass";
-
-                  accessibility {
-                    description: _("Press 2 or Space");
-                  }
-
-                  styles [
-                    "pill",
-                    "suggested-action",
-                    "review-button",
-                  ]
+                accessibility {
+                  description: _("Press 2 or Space");
                 }
 
-                Gtk.Label pass_hint {
-                  // Translators: the key that answers Pass; keep it as it is.
-                  label: _("2");
-                  accessible-role: presentation;
-
-                  styles [
-                    "caption",
-                    "dimmed",
-                    "numeric",
-                  ]
-                }
+                styles [
+                  "pill",
+                  "suggested-action",
+                  "review-button",
+                ]
               }
             };
           }
@@ -447,7 +427,15 @@ template $RappelReviewPage: Adw.NavigationPage {
 // the key press the item, but in managed scope, so only while the menu is
 // open (gtkmodelbutton.c, update_accel), where it acts like a click.
 menu card_menu {
+  // Edit Card is here too, for the window too narrow for its header button
+  // (pages/review_page.rs, `edit_button_shown`).
   section {
+    item {
+      label: _("_Edit Card");
+      accel: "e";
+      action: "review.edit";
+    }
+
     item {
       label: _("Card _Information");
       accel: "i";
@@ -460,6 +448,13 @@ menu card_menu {
       label: _("_Suspend Card");
       accel: "s";
       action: "review.suspend";
+    }
+
+    // Leaves the session like Suspend (ADR 0064); disabled when there is
+    // no other deck (`dialogs::move_card::offered`).
+    item {
+      label: _("_Move to Deck…");
+      action: "review.move";
     }
 
     item {

@@ -43,13 +43,19 @@ pub(crate) fn add_tags_layout() -> Result<(adw::AlertDialog, TagEntry), &'static
 
 /// Shows a list of `labels` over `parent` and returns the index chosen, or
 /// `None` if cancelled. `labels` are the user's own names: the dropdown
-/// shows them as plain text.
-pub async fn choose(
+/// shows them as plain text. `on_closed` is called once the dialog has
+/// closed:
+/// `AdwDialog` gives the keyboard focus back to the widget that had it
+/// when it closes, which undoes a grab made on the response (the
+/// response is emitted before the dialog closes): a caller that moves the
+/// focus because of the answer does it again in `on_closed`.
+pub async fn choose_closing(
     parent: &impl IsA<gtk::Widget>,
     heading: &str,
     body: &str,
     confirm_label: &str,
     labels: &[String],
+    on_closed: impl Fn() + 'static,
 ) -> Option<usize> {
     let (dialog, dropdown) = choose_layout().ok()?;
     dialog.set_heading(Some(heading));
@@ -58,6 +64,7 @@ pub async fn choose(
     dropdown::set_labels(&dropdown, labels);
     dropdown.update_property(&[gtk::accessible::Property::Label(heading)]);
     dialog.set_focus(Some(&dropdown));
+    dialog.connect_closed(move |_| on_closed());
 
     let response = dialog.choose_future(Some(parent)).await;
     (response == "confirm")

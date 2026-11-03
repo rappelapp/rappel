@@ -1,0 +1,18 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Asked before an export whose media would make it more than an import
+// reads (2 GiB or 100,000 entries, ADR 0071), before anything is written,
+// or after a file came out too large. Cancel is the default: Enter never
+// exports. The body, which says why, is set in transfer/mod.rs
+// (`text::without_media_body`).
+Adw.AlertDialog export_media_dialog {
+  heading: _("Export Without Media?");
+  close-response: "cancel";
+  default-response: "cancel";
+
+  responses [
+    cancel: _("_Cancel"),
+    without_media: _("_Export Without Media"),
+  ]
+}

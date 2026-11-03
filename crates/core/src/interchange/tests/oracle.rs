@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::super::format::{
-    CardRecord, DeckRecord, Document, EARLY_TEST_VERSION, EventRecord, FORMAT_VERSION, Header,
-    SettingsRecord,
+    ArchivedAt, CardRecord, DeckRecord, Document, EARLY_TEST_VERSION, EventRecord, FORMAT_VERSION,
+    Header, SettingsRecord,
 };
 use super::super::import::{Outcome, compare, stored_of};
 use super::super::{Conflict, FieldProblem, ImportProblem, ImportSummary, Limits, SettingsImport};
@@ -149,6 +149,15 @@ fn check_decks<'d>(
         }
         check_times(d.created_at, d.updated_at, d.deleted_at)
             .map_err(|f| at(f, FieldProblem::TimestampOutOfRange))?;
+        // Optional; null, or a time in range like the others (ADR 0068).
+        match d.archived_at {
+            ArchivedAt::No => {}
+            ArchivedAt::At(ms) if timestamp_ok(ms) => {}
+            ArchivedAt::At(_) | ArchivedAt::TooLarge => {
+                return Err(at("archived_at", FieldProblem::TimestampOutOfRange));
+            }
+            ArchivedAt::NotATime => return Err(at("archived_at", FieldProblem::NotATimestamp)),
+        }
         if d.deleted_at.is_none() && !live_names.insert(deck_name_key(&d.name)) {
             return Err(at("name", FieldProblem::DuplicateDeckName));
         }
@@ -461,7 +470,7 @@ impl Classified {
 fn classify(conn: &Connection, doc: &Document) -> DbResult<Classified> {
     let mut rows = Classified::default();
     let batches = classify_decks(conn, doc, &mut rows)?;
-    classify_cards(conn, doc, &mut rows)?;
+    classify_cards(conn, doc, &batches, &mut rows)?;
     add_batch_cards(conn, doc, &batches, &mut rows)?;
     classify_tags(conn, doc, &mut rows)?;
     classify_card_tags(conn, doc, &mut rows)?;
@@ -546,8 +555,9 @@ fn classify_decks<'d>(
     rows: &mut Classified,
 ) -> DbResult<Vec<(&'d str, i64)>> {
     let mut batches = Vec::new();
-    let mut stmt = conn
-        .prepare("SELECT id, name, created_at, updated_at, deleted_at FROM decks WHERE id = ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, created_at, updated_at, archived_at, deleted_at FROM decks WHERE id = ?1",
+    )?;
     for (i, d) in doc.decks.iter().enumerate() {
         let stored = stmt
             .query_row([&d.id], |r| {
@@ -556,7 +566,11 @@ fn classify_decks<'d>(
                     name: r.get(1)?,
                     created_at: r.get(2)?,
                     updated_at: r.get(3)?,
-                    deleted_at: r.get(4)?,
+                    archived_at: match r.get::<_, Option<i64>>(4)? {
+                        Some(ms) => ArchivedAt::At(ms),
+                        None => ArchivedAt::No,
+                    },
+                    deleted_at: r.get(5)?,
                 })
             })
             .optional()?;
@@ -566,8 +580,11 @@ fn classify_decks<'d>(
             continue;
         };
         let stored_deleted = s.deleted_at;
+        // Compared without `archived_at`: the database keeps its own flag,
+        // whichever way the file has it (ADR 0068).
         let rest_equal = DeckRecord {
             deleted_at: d.deleted_at,
+            archived_at: d.archived_at,
             ..s
         } == *d;
         match compare(rest_equal, stored_deleted, d.deleted_at) {
@@ -586,7 +603,18 @@ fn classify_decks<'d>(
     Ok(batches)
 }
 
-fn classify_cards(conn: &Connection, doc: &Document, rows: &mut Classified) -> DbResult<()> {
+/// A card is compared without its deck, `suspended` and `deleted_at`
+/// (ADR 0035, 0067). One that the file has in another deck keeps the
+/// database's deck; brought back, it would be live in that deck, so it is
+/// brought back only if that deck is live here or among the decks this
+/// file revives (`batches`), and is left as it is otherwise.
+fn classify_cards(
+    conn: &Connection,
+    doc: &Document,
+    batches: &[(&str, i64)],
+    rows: &mut Classified,
+) -> DbResult<()> {
+    let mut deck_deleted = conn.prepare("SELECT deleted_at FROM decks WHERE id = ?1")?;
     let mut stmt = conn.prepare(
         "SELECT id, deck_id, front_md, back_md, created_at, updated_at, suspended, deleted_at
          FROM cards WHERE id = ?1",
@@ -612,14 +640,31 @@ fn classify_cards(conn: &Connection, doc: &Document, rows: &mut Classified) -> D
             continue;
         };
         let stored_deleted = s.deleted_at;
-        // The database keeps its own `suspended`: an import never changes
-        // how a live card is studied (ADR 0035).
+        let elsewhere = s.deck_id != c.deck_id;
+        let home = s.deck_id.clone();
         let rest_equal = CardRecord {
             deleted_at: c.deleted_at,
             suspended: c.suspended,
+            deck_id: c.deck_id.clone(),
             ..s
         } == *c;
-        match compare(rest_equal, stored_deleted, c.deleted_at) {
+        let mut outcome = compare(rest_equal, stored_deleted, c.deleted_at);
+        if elsewhere && let Outcome::Revive(_) = outcome {
+            let home_deleted: Option<i64> = deck_deleted.query_row([&home], |r| r.get(0))?;
+            let revived_now = batches.iter().any(|&(d, _)| d == home);
+            if home_deleted.is_some() && !revived_now {
+                outcome = Outcome::Present;
+            }
+        }
+        if elsewhere {
+            let stays_live = match outcome {
+                Outcome::Revive(_) => true,
+                Outcome::Present => stored_deleted.is_none(),
+                Outcome::Conflict => false,
+            };
+            rows.summary.cards_kept_in_their_deck += usize::from(stays_live);
+        }
+        match outcome {
             Outcome::Present => rows.summary.cards.present += 1,
             // The stamp matters only for a deck, where it marks the batch.
             Outcome::Revive(_) => {
@@ -755,16 +800,22 @@ fn insert_rows<'d>(
     rows: &Classified,
 ) -> DbResult<BTreeSet<&'d str>> {
     let mut deck = conn.prepare(
-        "INSERT INTO decks (id, name, name_key, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO decks (id, name, name_key, created_at, updated_at, archived_at, deleted_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     for d in rows.new_decks.iter().map(|&i| &doc.decks[i]) {
+        // A new deck comes in archived as the file has it (checked above).
+        let archived_at = match d.archived_at {
+            ArchivedAt::At(ms) => Some(ms),
+            ArchivedAt::No | ArchivedAt::TooLarge | ArchivedAt::NotATime => None,
+        };
         deck.execute(params![
             d.id,
             d.name,
             deck_name_key(&d.name),
             d.created_at,
             d.updated_at,
+            archived_at,
             d.deleted_at
         ])?;
     }

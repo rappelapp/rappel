@@ -17,6 +17,7 @@ use std::io::{Read, Seek};
 use std::path::Path;
 #[cfg(test)]
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::{Connection, TransactionBehavior};
 
@@ -24,7 +25,7 @@ use super::archive::Archive;
 use super::engine::{Engine, Found, Stop};
 use super::format::SettingsRecord;
 use super::media::{check_contents, check_entries, store_new_media};
-use super::source::Source;
+use super::source::{Cancellable, Source};
 use super::stream::{Focus, ReadEnd, Table, read_document, read_header};
 use super::validate::version_problem;
 use super::{ImportPlan, ImportProblem, ImportReport, Limits, Mode, SettingsImport};
@@ -62,24 +63,67 @@ impl Store {
     /// [`Error::ImportRefused`], [`Error::ImportFileChanged`] (the file
     /// changed while it was read), IO errors reading `path`, SQLite errors.
     pub fn plan_import(&self, path: &Path) -> Result<ImportPlan> {
-        self.plan_import_with(path, &Limits::DEFAULT)
+        self.plan_import_cancellable(path, &AtomicBool::new(false))
+    }
+
+    /// [`Self::plan_import`] that stops when `cancel` is set (ADR 0071): at
+    /// the next read of the file, so within moments, with nothing written
+    /// (a plan never writes).
+    ///
+    /// # Errors
+    /// [`Error::ImportCancelled`] if `cancel` became true, else those of
+    /// [`Self::plan_import`].
+    pub fn plan_import_cancellable(&self, path: &Path, cancel: &AtomicBool) -> Result<ImportPlan> {
+        self.plan_source(Source::File(path.to_path_buf()), &Limits::DEFAULT, cancel)
     }
 
     /// [`Self::plan_import`] with explicit limits, for tests.
+    #[cfg(test)]
     pub(crate) fn plan_import_with(&self, path: &Path, limits: &Limits) -> Result<ImportPlan> {
-        self.plan_source(Source::File(path.to_path_buf()), limits)
+        self.plan_source(
+            Source::File(path.to_path_buf()),
+            limits,
+            &AtomicBool::new(false),
+        )
     }
 
     /// [`Self::plan_import`] on archive bytes in memory.
     #[cfg(test)]
     pub(crate) fn plan_import_bytes(&self, bytes: &[u8], limits: &Limits) -> Result<ImportPlan> {
-        self.plan_source(Source::Bytes(Arc::from(bytes)), limits)
+        self.plan_source(
+            Source::Bytes(Arc::from(bytes)),
+            limits,
+            &AtomicBool::new(false),
+        )
     }
 
-    fn plan_source(&self, source: Source, limits: &Limits) -> Result<ImportPlan> {
+    fn plan_source(
+        &self,
+        source: Source,
+        limits: &Limits,
+        cancel: &AtomicBool,
+    ) -> Result<ImportPlan> {
+        // Whatever stopped the read, a flag that is set means cancelled: a
+        // refusal that only the cut-off reading caused must not be shown.
+        let cancelled = |result: Result<ImportPlan>| {
+            if cancel.load(Ordering::Relaxed) {
+                Err(Error::ImportCancelled)
+            } else {
+                result
+            }
+        };
+        cancelled(self.plan_source_inner(source, limits, cancel))
+    }
+
+    fn plan_source_inner(
+        &self,
+        source: Source,
+        limits: &Limits,
+        cancel: &AtomicBool,
+    ) -> Result<ImportPlan> {
         let opened = source.open()?;
-        let mut archive =
-            Archive::open(opened.input, opened.len, limits).map_err(Error::ImportRefused)?;
+        let mut archive = Archive::open(Cancellable::new(opened.input, cancel), opened.len, limits)
+            .map_err(Error::ImportRefused)?;
         let tx = self.conn.unchecked_transaction()?;
         let (mode, sha256, found) =
             if let Some((sha256, found)) = read_in_one_pass(&tx, &mut archive, limits, None)? {

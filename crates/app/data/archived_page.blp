@@ -1,0 +1,70 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The archived decks, each with its card count and an Unarchive button
+// (ADR 0068). Opened from the "Archived Decks" row at the end of the deck
+// list. The rows are made in pages/archived_page.rs: deck names are
+// untrusted and shown as plain text.
+template $RappelArchivedPage: Adw.NavigationPage {
+  title: _("Archived Decks");
+  tag: "archived";
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Gtk.Stack content_stack {
+      Gtk.StackPage {
+        name: "empty";
+
+        // Only seen if the last archived deck went while the page was
+        // open (another window, an Undo); the page goes back to the deck
+        // list itself after its own last Unarchive. Compact when short
+        // (ADR 0058; `ui::breakpoint`).
+        child: Adw.BreakpointBin {
+          width-request: 300;
+          height-request: 200;
+
+          Adw.Breakpoint empty_short {
+            condition ("max-height: 400sp")
+          }
+
+          child: Adw.StatusPage empty_status {
+            icon-name: "folder-symbolic";
+            title: _("No Archived Decks");
+            description: _("Decks you archive show up here");
+          };
+        };
+      }
+
+      Gtk.StackPage {
+        name: "list";
+
+        child: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 600;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 12;
+            margin-end: 12;
+
+            child: Gtk.ListBox archived_list {
+              selection-mode: none;
+              valign: start;
+
+              accessibility {
+                label: _("Archived Decks");
+              }
+
+              styles [
+                "boxed-list",
+              ]
+            };
+          };
+        };
+      }
+    };
+  };
+}

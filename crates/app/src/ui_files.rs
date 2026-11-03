@@ -20,19 +20,26 @@ use std::path::Path;
 use adw::prelude::*;
 use gtk::{gio, glib};
 
-use crate::dialogs::{browser_dialogs, card_editor, card_info, deck_name_dialog, preferences};
+use crate::dialogs::{
+    browser_dialogs, card_editor, card_info, deck_name_dialog, merge_deck, preferences,
+};
 use crate::pages::{
-    BrowserPage, DeckPage, DecksPage, RecoveryPage, ReviewPage, SettingPage, StatsPage,
+    ArchivedPage, BrowserPage, DeckPage, DecksPage, RecoveryPage, ReviewPage, SettingPage,
+    StatsPage,
 };
 use crate::ui::dialog;
 use crate::widgets::{
-    BackupRow, CardRow, DeckRow, HistoryRow, TagEntry, TagPills, TagSuggestions,
-    chart_card::ChartCard,
+    BackupRow, CardRow, DeckRow, HistoryRow, SelectionBar, SelectionHeader, TagEntry, TagPills,
+    TagSuggestions, chart_card::ChartCard,
 };
 use crate::window::RappelWindow;
 
 /// Each `data/*.blp` file with how this test loads it.
 const CHECKS: &[(&str, Load)] = &[
+    (
+        "archived_page.blp",
+        Load::Template(template::<ArchivedPage>),
+    ),
     ("backup_row.blp", Load::Template(template::<BackupRow>)),
     (
         "browser_dialogs.blp",
@@ -81,6 +88,15 @@ const CHECKS: &[(&str, Load)] = &[
             loads("discard_dialog", dialog::DISCARD_CHANGES.load().err());
         }),
     ),
+    (
+        "export_media_dialog.blp",
+        Load::Plain(|| {
+            loads(
+                "export_media_dialog",
+                dialog::EXPORT_WITHOUT_MEDIA.load().err(),
+            );
+        }),
+    ),
     ("history_row.blp", Load::Template(template::<HistoryRow>)),
     (
         "image_dialog.blp",
@@ -92,6 +108,12 @@ const CHECKS: &[(&str, Load)] = &[
         "import_dialog.blp",
         Load::Plain(|| {
             loads("import_dialog", crate::transfer::confirm_layout().err());
+        }),
+    ),
+    (
+        "merge_deck_dialog.blp",
+        Load::Plain(|| {
+            loads("merge_deck_dialog", merge_deck::layout().err());
         }),
     ),
     (
@@ -117,6 +139,14 @@ const CHECKS: &[(&str, Load)] = &[
         }),
     ),
     ("review_page.blp", Load::Template(template::<ReviewPage>)),
+    (
+        "selection_bar.blp",
+        Load::Template(template::<SelectionBar>),
+    ),
+    (
+        "selection_header.blp",
+        Load::Template(template::<SelectionHeader>),
+    ),
     ("setting_page.blp", Load::Template(template::<SettingPage>)),
     (
         "shortcuts-dialog.blp",

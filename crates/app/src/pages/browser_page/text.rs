@@ -1,12 +1,15 @@
 //! Every text and small decision of the All Cards page that needs no GTK:
-//! row captions and labels, counts, toast texts, which empty state to show
-//! and what it says, and what Escape, Space and typing in the list do. Pure, so it is unit-tested (SPEC §4.6, ADR 0036).
+//! row captions and labels, counts, which empty state to show and what it
+//! says, and what Escape and typing in the list do. Pure, so it is
+//! unit-tested (SPEC §4.6, ADR 0036). The texts of selection mode (its
+//! title, the action bar, the dialogs, the Undo toasts, Space) are shared
+//! with a deck's page, in `ui::selection::text`.
 
-use rappel_core::domain::{Tag, name_key};
+use rappel_core::domain::{Deck, Tag, name_key};
 use rappel_core::storage::{BrowseQuery, CardStatus, StateFilter};
 
 use crate::i18n::{fill, gettext, ngettext};
-use crate::ui::text::{counted, group_digits, isolate, one_line};
+use crate::ui::text::{counted, isolate, one_line};
 use crate::ui::time::relative_due;
 
 /// A card's status as a short phrase: "New", "Learning", "Due now",
@@ -63,15 +66,7 @@ pub fn row_label(card: &str, deck: &str, status: &str, selected: Option<bool>) -
             ("status", status),
         ],
     );
-    match selected {
-        // Translators: {row} is a card as a screen reader says it, while
-        // cards are being chosen.
-        Some(true) => fill(&gettext("{row}, selected"), &[("row", &base)]),
-        // Translators: {row} is a card as a screen reader says it, while
-        // cards are being chosen.
-        Some(false) => fill(&gettext("{row}, not selected"), &[("row", &base)]),
-        None => base,
-    }
+    crate::ui::selection::text::with_selected(base, selected)
 }
 
 /// "1,234 cards", "1 card", "No cards".
@@ -81,58 +76,6 @@ pub fn count_text(n: usize) -> String {
     } else {
         cards(n)
     }
-}
-
-/// The header's title in selection mode (HIG, "Selection mode": the
-/// heading says how many items are chosen): "3 Selected", or "Select
-/// Cards" before the first.
-pub fn selection_title(n: usize) -> String {
-    if n == 0 {
-        gettext("Select Cards")
-    } else {
-        // Translators: the title while cards are being chosen; {count} is
-        // how many are.
-        counted(&ngettext("{count} Selected", "{count} Selected", n), n)
-    }
-}
-
-/// Which way the Suspend button of the action bar goes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SuspendChoice {
-    Suspend,
-    Unsuspend,
-}
-
-/// Unsuspend only when every chosen card is suspended; otherwise Suspend,
-/// which leaves the suspended ones as they are.
-pub fn suspend_choice(suspended: impl IntoIterator<Item = bool>) -> SuspendChoice {
-    let mut any = false;
-    for flag in suspended {
-        if !flag {
-            return SuspendChoice::Suspend;
-        }
-        any = true;
-    }
-    if any {
-        SuspendChoice::Unsuspend
-    } else {
-        SuspendChoice::Suspend
-    }
-}
-
-/// Reset Progress is offered while a chosen card has progress (not every
-/// one is new); the reset leaves the new ones alone.
-pub fn reset_offered(is_new: impl IntoIterator<Item = bool>) -> bool {
-    is_new.into_iter().any(|new| !new)
-}
-
-/// The note when a reset of `n` cards found them all new already.
-pub fn no_progress_text(n: usize) -> String {
-    ngettext(
-        "This card has no progress to reset",
-        "These cards have no progress to reset",
-        n,
-    )
 }
 
 /// What the list area shows when it has no row.
@@ -145,6 +88,8 @@ pub enum Empty {
     NoCards,
     /// A search or filter matches nothing.
     NoResults,
+    /// Every card is in an archived deck, and those are hidden (ADR 0068).
+    OnlyArchived,
 }
 
 /// The status page of an [`Empty`] state: icon, title and its one
@@ -162,7 +107,17 @@ pub fn empty_page(empty: Empty) -> Option<(&'static str, String, String)> {
             gettext("No Results Found"),
             gettext("Try a different search or other filters"),
         )),
+        Empty::OnlyArchived => Some((
+            "edit-find-symbolic",
+            gettext("Only Archived Cards"),
+            gettext("The cards of archived decks are hidden"),
+        )),
     }
+}
+
+/// The button of the "Only Archived Cards" state: shows them.
+pub fn show_archived_label() -> String {
+    gettext("_Show Archived Decks")
 }
 
 /// The button of the "No Cards Yet" state: back to the deck list, where
@@ -192,16 +147,21 @@ pub fn searched_and_filtered(query: &BrowseQuery) -> (bool, bool) {
 
 /// `shown` rows came back; `filtered` says whether a search text or a filter
 /// was set, `collection_empty` whether there is no live card at all
-/// (whatever the filters). An empty collection is "No Cards Yet" even with
-/// a filter set (opened from an empty deck), so the page does not say "No
-/// Results Found" first and then change its mind.
+/// (whatever the filters, archived decks included). An empty collection is
+/// "No Cards Yet" even with a filter set (opened from an empty deck), so
+/// the page does not say "No Results Found" first and then change its
+/// mind. No row without a search or filter while there are cards means
+/// they are all in archived decks, which are hidden (the archived filter is
+/// not a filter here: Escape and Clear Filters leave it, ADR 0068).
 pub fn empty_state(shown: usize, filtered: bool, collection_empty: bool) -> Empty {
     if shown > 0 {
         Empty::No
-    } else if collection_empty || !filtered {
+    } else if collection_empty {
         Empty::NoCards
-    } else {
+    } else if filtered {
         Empty::NoResults
+    } else {
+        Empty::OnlyArchived
     }
 }
 
@@ -211,62 +171,60 @@ pub fn filters_shown(empty: Empty) -> bool {
     empty != Empty::NoCards
 }
 
-/// A key of the card list's own (besides Escape, [`ESCAPE_KEY`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ListKey {
-    /// Ctrl+A: choose every card shown.
-    SelectAll,
-    /// Space, as [`space_action`] decides.
-    Space,
+/// The entries of the "Archived Decks" drop-down, in order: hidden (the
+/// default), then shown (ADR 0068).
+pub fn archived_entries() -> [String; 2] {
+    [
+        // Translators: All Cards' filter of archived decks: their cards
+        // are not listed. Short: it shares a phone's width with three
+        // other filters.
+        gettext("Archived Hidden"),
+        // Translators: All Cards' filter of archived decks: their cards
+        // are listed too.
+        gettext("Archived Shown"),
+    ]
 }
 
-/// The card list's keys: a key, whether it is taken only with Ctrl (`true`)
-/// or only without it (`false`), and what it is. Other modifiers do not
-/// matter. The Keyboard Shortcuts dialog lists them (a test checks it).
-pub const LIST_KEYS: [(gtk::gdk::Key, bool, ListKey); 3] = [
-    (gtk::gdk::Key::a, true, ListKey::SelectAll),
-    (gtk::gdk::Key::A, true, ListKey::SelectAll),
-    (gtk::gdk::Key::space, false, ListKey::Space),
-];
+/// Whether the cards of archived decks are listed: the drop-down shows
+/// (some deck is archived) and says "Archived Shown" (entry 1).
+pub fn archived_shown(filter_visible: bool, selected: u32) -> bool {
+    filter_visible && selected == 1
+}
+
+/// The decks the deck filter lists: every live deck when archived decks
+/// are shown, else those that are not archived, in the order given.
+pub fn filter_decks(decks: &[Deck], show_archived: bool) -> Vec<Deck> {
+    decks
+        .iter()
+        .filter(|deck| show_archived || !deck.is_archived())
+        .cloned()
+        .collect()
+}
+
+/// A deck's entry in the deck filter, on one line: its name, marked when
+/// it is archived ("Spanish (archived)"; the name isolated, so a
+/// right-to-left name cannot reorder the mark).
+pub fn deck_filter_label(deck: &Deck) -> String {
+    let name = one_line(&deck.name);
+    if deck.is_archived() {
+        fill(
+            // Translators: an archived deck in All Cards' deck filter;
+            // {name} is the deck's name.
+            &gettext("{name} (archived)"),
+            &[("name", &isolate(&name))],
+        )
+    } else {
+        name
+    }
+}
 
 /// The key that moves from the search field to the list, whatever the
 /// modifiers.
 pub const TO_LIST_KEY: gtk::gdk::Key = gtk::gdk::Key::Down;
 
-/// The key [`escape_action`] is about, whatever the modifiers.
+/// The key `ui::selection::text::escape_action` is about, whatever the
+/// modifiers.
 pub const ESCAPE_KEY: gtk::gdk::Key = gtk::gdk::Key::Escape;
-
-/// Which of [`LIST_KEYS`] `key` with `modifiers` is, if any.
-pub fn list_key(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) -> Option<ListKey> {
-    let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
-    LIST_KEYS
-        .iter()
-        .find(|&&(bound, needs_ctrl, _)| bound == key && needs_ctrl == ctrl)
-        .map(|&(_, _, which)| which)
-}
-
-/// What Space does on the card list (capture phase, before the list's own
-/// keys).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpaceAction {
-    /// Choose or drop the focused card.
-    Toggle,
-    /// Leave it to the focused widget (a row's menu button opens its menu;
-    /// a row outside selection mode does nothing). Space never starts a
-    /// search: the page's key capture leaves it (`types_into_search`), as
-    /// GTK's own does (gtksearchentry.c, `capture_widget_key_handled`).
-    Pass,
-}
-
-/// Space chooses the focused card in selection mode when the row itself
-/// (not its menu button) has the focus.
-pub fn space_action(selecting: bool, row_focused: bool) -> SpaceAction {
-    if selecting && row_focused {
-        SpaceAction::Toggle
-    } else {
-        SpaceAction::Pass
-    }
-}
 
 /// Whether a key pressed in the list or the status page goes into the
 /// search field (`search_empty`: the field has no text yet):
@@ -313,27 +271,6 @@ pub fn types_into_search(
     key.to_unicode().is_some_and(|c| !c.is_control())
 }
 
-/// What Escape does while the focus is in the list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EscapeAction {
-    LeaveSelection,
-    ClearSearch,
-    Nothing,
-}
-
-/// Escape first leaves the selection mode (the mode you are in), then
-/// clears the search and filters. In the search entry, the entry's own
-/// `stop-search` clears the text first.
-pub fn escape_action(selecting: bool, filtered: bool) -> EscapeAction {
-    if selecting {
-        EscapeAction::LeaveSelection
-    } else if filtered {
-        EscapeAction::ClearSearch
-    } else {
-        EscapeAction::Nothing
-    }
-}
-
 /// Which entry of a filter drop-down (entry 0 is "All …") names an item:
 /// the index into the `len` items, or `None` for "All …" or no selection.
 pub fn filter_choice(selected: u32, len: usize) -> Option<usize> {
@@ -375,11 +312,6 @@ pub fn is_filtered(query: &BrowseQuery) -> bool {
     searched || filtered
 }
 
-/// The note after an action found that a card of the list was gone.
-pub fn stale_text() -> String {
-    gettext("The list was out of date; nothing was changed")
-}
-
 /// The first entry of the deck drop-down.
 pub fn all_decks() -> String {
     gettext("All Decks")
@@ -390,183 +322,10 @@ pub fn all_tags() -> String {
     gettext("All Tags")
 }
 
-/// The Suspend button's word (also its tooltip, like the other action
-/// buttons') and accessible label for `choice`.
-pub fn suspend_labels(choice: SuspendChoice) -> (String, String) {
-    match choice {
-        SuspendChoice::Suspend => (gettext("Suspend"), gettext("Suspend selected cards")),
-        SuspendChoice::Unsuspend => (gettext("Unsuspend"), gettext("Unsuspend selected cards")),
-    }
-}
-
-/// The body of the Move dialog.
-pub fn move_body(n: usize) -> String {
-    counted(
-        // Translators: {count} is the number of cards chosen.
-        &ngettext(
-            "Choose the deck to move {count} card to.",
-            "Choose the deck to move {count} cards to.",
-            n,
-        ),
-        n,
-    )
-}
-
-/// The body of the Add Tags dialog: what it does, and how a tag is ended
-/// (the card editor's Tags group says the same).
-pub fn add_tags_body(n: usize) -> String {
-    counted(
-        // Translators: {count} is the number of cards chosen.
-        &ngettext(
-            "Choose the tags to put on {count} card. Press Enter or type a comma after each one.",
-            "Choose the tags to put on {count} cards. Press Enter or type a comma after each one.",
-            n,
-        ),
-        n,
-    )
-}
-
-/// The body of the Remove Tag dialog.
-pub fn remove_tag_body(n: usize) -> String {
-    counted(
-        // Translators: {count} is the number of cards chosen.
-        &ngettext(
-            "Choose the tag to take off {count} card.",
-            "Choose the tag to take off {count} cards.",
-            n,
-        ),
-        n,
-    )
-}
-
-/// The notice when the chosen cards have no tag to take off.
-pub fn no_tags_text() -> String {
-    gettext("The chosen cards have no tags")
-}
-
 /// "3 cards" / "1 card".
 fn cards(n: usize) -> String {
     // Translators: {count} is a number of cards.
     counted(&ngettext("{count} card", "{count} cards", n), n)
-}
-
-pub fn moved_text(n: usize) -> String {
-    // The deck was just chosen; short, so it fits beside Undo (ADR 0058).
-    // Translators: an Undo toast, at most 24 characters with 99,999 cards
-    // (it must fit beside Undo on a phone); {count} is a number of cards.
-    counted(&ngettext("{count} card moved", "{count} cards moved", n), n)
-}
-
-/// The Undo toast after Add Tags put tags on `n` cards. Short, so it fits
-/// beside Undo at 360 px (ADR 0058): the names were just typed.
-pub fn tags_added_text(n: usize) -> String {
-    // Translators: an Undo toast, at most 24 characters with 99,999 cards
-    // (it must fit beside Undo on a phone); {count} is a number of cards.
-    counted(
-        &ngettext("{count} card tagged", "{count} cards tagged", n),
-        n,
-    )
-}
-
-/// The note after Add Tags left out `full` cards that would have had more
-/// than `limit` tags, or `None`.
-pub fn tags_left_out_text(full: usize, limit: usize) -> Option<String> {
-    (full > 0).then(|| {
-        fill(
-            // Translators: a toast: its first sentence is its title, the
-            // rest is behind Details. {count} is a number of cards,
-            // {limit} the most tags a card can have (100).
-            &ngettext(
-                "{count} card left out. A card can have at most {limit} tags",
-                "{count} cards left out. A card can have at most {limit} tags",
-                full,
-            ),
-            &[
-                ("count", &group_digits(full)),
-                ("limit", &group_digits(limit)),
-            ],
-        )
-    })
-}
-
-/// The notice when Add Tags changed no card because each would have had
-/// more than `limit` tags.
-pub fn no_room_text(limit: usize) -> String {
-    fill(
-        // Translators: a toast: what is before ";" is its title, the rest
-        // is behind Details. {limit} is the most tags a card can have (100).
-        &gettext("No tags added; a card can have at most {limit} tags"),
-        &[("limit", &group_digits(limit))],
-    )
-}
-
-pub fn tag_removed_text(n: usize) -> String {
-    // The tag was just chosen; short, so it fits beside Undo (ADR 0058).
-    // Translators: an Undo toast, at most 24 characters with 99,999 cards
-    // (it must fit beside Undo on a phone); {count} is a number of cards.
-    counted(
-        &ngettext("{count} card untagged", "{count} cards untagged", n),
-        n,
-    )
-}
-
-pub fn suspended_text(n: usize, suspended: bool) -> String {
-    if suspended {
-        // Translators: an Undo toast, at most 24 characters with 99,999
-        // cards (it must fit beside Undo on a phone).
-        counted(
-            &ngettext("{count} card suspended", "{count} cards suspended", n),
-            n,
-        )
-    } else {
-        // Translators: an Undo toast, at most 24 characters with 99,999
-        // cards (it must fit beside Undo on a phone).
-        counted(
-            &ngettext("{count} card unsuspended", "{count} cards unsuspended", n),
-            n,
-        )
-    }
-}
-
-pub fn reset_text(n: usize) -> String {
-    // Short, so it fits beside Undo at 360 px (ADR 0058).
-    // Translators: an Undo toast after Reset Progress, at most 24
-    // characters with 99,999 cards (it must fit beside Undo on a phone).
-    counted(&ngettext("{count} card reset", "{count} cards reset", n), n)
-}
-
-pub fn deleted_text(n: usize) -> String {
-    // Translators: an Undo toast, at most 24 characters with 99,999 cards
-    // (it must fit beside Undo on a phone).
-    counted(
-        &ngettext("{count} card deleted", "{count} cards deleted", n),
-        n,
-    )
-}
-
-/// What an action did when every card was already as asked.
-pub fn unchanged_text() -> String {
-    gettext("Nothing changed; the cards were already like that")
-}
-
-/// The note after an Undo that could not change every card (`done` of
-/// `total`), or `None` if it did.
-pub fn partial_undo_text(done: usize, total: usize) -> Option<String> {
-    (done < total).then(|| {
-        fill(
-            // Translators: a toast: what is before ";" is its title, the
-            // rest is behind Details. {done} of {count} cards came back.
-            &ngettext(
-                "{done} of {count} card restored; the others changed since",
-                "{done} of {count} cards restored; the others changed since",
-                total,
-            ),
-            &[
-                ("done", &group_digits(done)),
-                ("count", &group_digits(total)),
-            ],
-        )
-    })
 }
 
 #[cfg(test)]
@@ -597,30 +356,6 @@ mod tests {
 
     const NOW: i64 = 1_000_000_000_000;
     const DAY: i64 = crate::ui::time::DAY_MS;
-
-    #[test]
-    fn the_list_keys() {
-        use gtk::gdk::{Key, ModifierType};
-        let ctrl = ModifierType::CONTROL_MASK;
-        let none = ModifierType::empty();
-        assert_eq!(list_key(Key::a, ctrl), Some(ListKey::SelectAll));
-        assert_eq!(
-            list_key(Key::A, ctrl | ModifierType::SHIFT_MASK),
-            Some(ListKey::SelectAll)
-        );
-        assert_eq!(
-            list_key(Key::a, none),
-            None,
-            "a plain a types into the search"
-        );
-        assert_eq!(list_key(Key::space, none), Some(ListKey::Space));
-        assert_eq!(
-            list_key(Key::space, ModifierType::SHIFT_MASK),
-            Some(ListKey::Space)
-        );
-        assert_eq!(list_key(Key::space, ctrl), None);
-        assert_eq!(list_key(Key::Return, none), None);
-    }
 
     #[test]
     fn a_status_reads_as_a_phrase() {
@@ -699,34 +434,25 @@ mod tests {
         assert_eq!(count_text(0), "No cards");
         assert_eq!(count_text(1), "1 card");
         assert_eq!(count_text(5_000), "5,000 cards");
-        assert_eq!(selection_title(0), "Select Cards");
-        assert_eq!(selection_title(3), "3 Selected");
-        assert_eq!(selection_title(1_200), "1,200 Selected");
-    }
-
-    #[test]
-    fn unsuspend_is_offered_only_when_every_card_is_suspended() {
-        use SuspendChoice::{Suspend, Unsuspend};
-        assert_eq!(suspend_choice([true, true]), Unsuspend);
-        assert_eq!(suspend_choice([true, false]), Suspend);
-        assert_eq!(suspend_choice([false]), Suspend);
-        assert_eq!(suspend_choice([]), Suspend);
-    }
-
-    #[test]
-    fn reset_is_offered_while_a_chosen_card_has_progress() {
-        assert!(reset_offered([true, false]));
-        assert!(reset_offered([false]));
-        assert!(!reset_offered([true, true]));
-        assert!(!reset_offered([]));
-        assert_eq!(no_progress_text(1), "This card has no progress to reset");
-        assert_eq!(no_progress_text(3), "These cards have no progress to reset");
+        assert_eq!(
+            crate::ui::selection::text::selection_title(0),
+            "Select Cards"
+        );
+        assert_eq!(crate::ui::selection::text::selection_title(3), "3 Selected");
+        assert_eq!(
+            crate::ui::selection::text::selection_title(1_200),
+            "1,200 Selected"
+        );
     }
 
     #[test]
     fn the_empty_state_depends_on_the_collection_then_on_what_was_asked() {
         assert_eq!(empty_state(0, false, true), Empty::NoCards);
         assert_eq!(empty_state(0, true, false), Empty::NoResults);
+        // Cards, but none listed and nothing asked for: they are all in
+        // hidden archived decks.
+        assert_eq!(empty_state(0, false, false), Empty::OnlyArchived);
+        assert!(filters_shown(Empty::OnlyArchived));
         // Opened from an empty deck in an empty collection: the deck
         // filter is set, but there is nothing to find anywhere.
         assert_eq!(empty_state(0, true, true), Empty::NoCards);
@@ -735,14 +461,6 @@ mod tests {
         assert!(!filters_shown(Empty::NoCards));
         assert!(filters_shown(Empty::NoResults));
         assert!(filters_shown(Empty::No));
-    }
-
-    #[test]
-    fn space_chooses_only_a_focused_row_in_selection_mode() {
-        assert_eq!(space_action(true, true), SpaceAction::Toggle);
-        assert_eq!(space_action(true, false), SpaceAction::Pass);
-        assert_eq!(space_action(false, true), SpaceAction::Pass);
-        assert_eq!(space_action(false, false), SpaceAction::Pass);
     }
 
     #[test]
@@ -798,13 +516,6 @@ mod tests {
     }
 
     #[test]
-    fn escape_leaves_the_selection_before_it_clears_the_search() {
-        assert_eq!(escape_action(true, true), EscapeAction::LeaveSelection);
-        assert_eq!(escape_action(false, true), EscapeAction::ClearSearch);
-        assert_eq!(escape_action(false, false), EscapeAction::Nothing);
-    }
-
-    #[test]
     fn filter_entries_map_to_items_and_states() {
         assert_eq!(filter_choice(0, 3), None);
         assert_eq!(filter_choice(1, 3), Some(0));
@@ -816,6 +527,47 @@ mod tests {
         assert_eq!(state_filter(1), Some(StateFilter::New));
         assert_eq!(state_filter(4), Some(StateFilter::Suspended));
         assert_eq!(state_filter(u32::MAX), None);
+    }
+
+    fn deck(id: &str, name: &str, archived: bool) -> Deck {
+        Deck {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            created_at: 0,
+            updated_at: 0,
+            archived_at: archived.then_some(5),
+        }
+    }
+
+    #[test]
+    fn archived_decks_are_listed_and_marked_only_when_shown() {
+        let decks = [
+            deck("1", "Maths", false),
+            deck("2", "Spanish", true),
+            deck("3", "Zoo", false),
+        ];
+        let ids = |decks: Vec<Deck>| decks.into_iter().map(|d| d.id).collect::<Vec<_>>();
+        assert_eq!(ids(filter_decks(&decks, false)), ["1", "3"]);
+        assert_eq!(ids(filter_decks(&decks, true)), ["1", "2", "3"]);
+        assert_eq!(deck_filter_label(&decks[0]), "Maths");
+        assert_eq!(
+            deck_filter_label(&decks[1]),
+            "\u{2068}Spanish\u{2069} (archived)"
+        );
+        // One line, and braces in a name stay as they are.
+        assert_eq!(
+            deck_filter_label(&deck("4", "a\n {name}", true)),
+            "\u{2068}a {name}\u{2069} (archived)"
+        );
+        assert_eq!(archived_entries(), ["Archived Hidden", "Archived Shown"]);
+        assert!(archived_shown(true, 1));
+        assert!(!archived_shown(true, 0));
+        // Hidden while no deck is archived: nothing to show.
+        assert!(!archived_shown(false, 1));
+        let (_, title, body) = empty_page(Empty::OnlyArchived).unwrap();
+        assert_eq!(title, "Only Archived Cards");
+        assert_eq!(body, "The cards of archived decks are hidden");
+        assert_eq!(show_archived_label(), "_Show Archived Decks");
     }
 
     #[test]
@@ -831,100 +583,6 @@ mod tests {
             ..BrowseQuery::default()
         };
         assert!(is_filtered(&q));
-    }
-
-    #[test]
-    fn dialog_and_button_texts() {
-        assert_eq!(move_body(3), "Choose the deck to move 3 cards to.");
-        assert_eq!(remove_tag_body(1), "Choose the tag to take off 1 card.");
-        assert_eq!(
-            add_tags_body(3),
-            "Choose the tags to put on 3 cards. Press Enter or type a comma after each one."
-        );
-        assert_eq!(
-            suspend_labels(SuspendChoice::Unsuspend),
-            (
-                "Unsuspend".to_owned(),
-                "Unsuspend selected cards".to_owned()
-            )
-        );
-    }
-
-    #[test]
-    fn toasts_count_and_name() {
-        assert_eq!(moved_text(3), "3 cards moved");
-        assert_eq!(tags_added_text(2), "2 cards tagged");
-        assert_eq!(tags_left_out_text(0, 100), None);
-        assert_eq!(
-            tags_left_out_text(1, 100).as_deref(),
-            Some("1 card left out. A card can have at most 100 tags")
-        );
-        assert_eq!(
-            tags_left_out_text(2_000, 1_000).as_deref(),
-            Some("2,000 cards left out. A card can have at most 1,000 tags")
-        );
-        assert_eq!(
-            no_room_text(100),
-            "No tags added; a card can have at most 100 tags"
-        );
-        assert_eq!(tag_removed_text(1), "1 card untagged");
-        assert_eq!(suspended_text(2, true), "2 cards suspended");
-        assert_eq!(suspended_text(1, false), "1 card unsuspended");
-        assert_eq!(reset_text(1_000), "1,000 cards reset");
-        assert_eq!(deleted_text(1), "1 card deleted");
-        // Each Undo toast's title fits beside Undo at 360 px (ADR 0058),
-        // up to 99,999 cards, in English and in French.
-        undo_titles_fit();
-        crate::i18n::tests::in_french(undo_titles_fit);
-        assert_eq!(
-            unchanged_text(),
-            "Nothing changed; the cards were already like that"
-        );
-    }
-
-    #[test]
-    fn a_partial_undo_says_how_much_came_back() {
-        assert_eq!(partial_undo_text(3, 3), None);
-        assert_eq!(
-            partial_undo_text(2, 3).as_deref(),
-            Some("2 of 3 cards restored; the others changed since")
-        );
-        assert_eq!(
-            partial_undo_text(0, 1).as_deref(),
-            Some("0 of 1 card restored; the others changed since")
-        );
-    }
-
-    fn undo_titles_fit() {
-        for n in [1, 2, 99_999] {
-            for title in [
-                moved_text(n),
-                tags_added_text(n),
-                tag_removed_text(n),
-                suspended_text(n, false),
-                suspended_text(n, true),
-                reset_text(n),
-                deleted_text(n),
-            ] {
-                assert!(
-                    title.chars().count() <= crate::ui::toast::TOAST_FITS_WITH_BUTTON,
-                    "{title}"
-                );
-            }
-        }
-        // The notes with Details keep their own titles.
-        for text in [
-            tags_left_out_text(99_999, 100).unwrap_or_default(),
-            no_room_text(100),
-            unchanged_text(),
-            stale_text(),
-        ] {
-            if let crate::ui::toast::ToastText::Detailed { title, .. } =
-                crate::ui::toast::toast_text(&text)
-            {
-                assert_ne!(title, crate::ui::toast::fallback_title(), "{text}");
-            }
-        }
     }
 
     #[test]
@@ -944,7 +602,10 @@ mod tests {
             );
             assert_eq!(count_text(5_000), "5\u{202f}000 cartes");
             assert_eq!(count_text(0), "Aucune carte");
-            assert_eq!(moved_text(1), "1 carte déplacée");
+            assert_eq!(
+                crate::ui::selection::text::moved_text(1),
+                "1 carte déplacée"
+            );
         });
     }
 }

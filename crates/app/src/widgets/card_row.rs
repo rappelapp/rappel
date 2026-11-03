@@ -1,43 +1,52 @@
 //! One row of a list of cards (ADR 0042, 0044): the front as the title,
 //! the back dimmed under it with the tags as pills at the end of that line,
 //! an icon when the card is suspended, and a menu with Edit, Card
-//! Information, Suspend or Unsuspend, Reset Progress and Delete. The deck
+//! Information, Study Cards Tagged “…” for each of its tags (a submenu
+//! when there are more than three, ADR 0069), Suspend or Unsuspend, Reset
+//! Progress, Move to Deck… and Delete. The deck
 //! page and All Cards use the same row, so both lists look and cost the
 //! same; on All Cards ([`CardRow::for_browser`]) a third line says the deck
-//! and the status, and a check button shows while cards are being chosen.
+//! and the status. On both, a check button shows while cards are being
+//! chosen (`ui::selection`, ADR 0065), and a long press on a touch screen
+//! starts choosing with the row's card.
 //! Layout in `data/card_row.blp`; what a screen reader says in `text.rs`
 //! (and `pages::browser_text` for All Cards).
 //!
-//! Rows are recycled by the `GtkListView`: [`CardRow::bind`] and
+//! Rows are recycled by the `GtkListView`: [`CardRow::bind_card`] and
 //! [`CardRow::bind_browse`] point a row at another card, reusing its pill
 //! labels. The `compact` property (bound to the page's, a narrow window)
-//! shows fewer pills; `selecting` (All Cards) shows the check button
-//! instead of the menu. As in `DeckRow`, the menu items activate the row's
+//! shows fewer pills; `selecting` shows the check button instead of the
+//! menu. As in `DeckRow`, the menu items activate the row's
 //! own `row.edit` / `row.info` / `row.suspend` / `row.unsuspend` /
-//! `row.reset` / `row.delete` actions, which forward to the page's
-//! `edit-card` / `card-info` / `suspend-card` / `unsuspend-card` /
-//! `reset-card` / `delete-card` actions (in the `deck.` or `browser.`
-//! group) with the bound card's id.
+//! `row.reset` / `row.move` / `row.delete` actions, which forward to the
+//! page's `edit-card` / `card-info` / `suspend-card` / `unsuspend-card` /
+//! `reset-card` / `move-card` / `delete-card` actions (in the `deck.` or `browser.`
+//! group) with the bound card's id, and a long press to `select-card`;
+//! `row.study-tag`, whose target is a tag's id, forwards it to the page's
+//! `study-tag`.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::glib;
+use gtk::{gio, glib};
+use rappel_core::domain::Tag;
 
 use super::tag_pills::text::{COMPACT_ROW_PILLS, ROW_PILLS};
 use super::{BrowseItem, CardObject};
 use crate::pages::browser_text;
 use crate::ui::rows;
+use crate::ui::selection::text::with_selected;
+use text::TagMenu;
 
 pub mod text;
 
 mod imp {
-    use std::cell::{Cell, RefCell};
+    use std::cell::{Cell, OnceCell, RefCell};
 
     use adw::prelude::*;
     use adw::subclass::prelude::*;
-    use gtk::glib;
+    use gtk::{gio, glib};
 
-    use crate::widgets::{BrowseItem, TagPills};
+    use crate::widgets::TagPills;
 
     #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::CardRow)]
@@ -60,21 +69,32 @@ mod imp {
         /// A narrow row: fewer pills, so the back keeps some room.
         #[property(get, set)]
         pub compact: Cell<bool>,
-        /// Cards are being chosen (All Cards): the check button shows, the
-        /// menu does not.
+        /// Cards are being chosen: the check button shows, the menu does
+        /// not.
         #[property(get, set)]
         pub selecting: Cell<bool>,
+        /// Another deck exists to move the card to (the page's, from
+        /// `dialogs::move_card::offered`): Move to Deck… is enabled.
+        #[property(get, set)]
+        pub can_move: Cell<bool>,
         #[template_child]
         pub menu_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
         pub card_menu: TemplateChild<gtk::gio::MenuModel>,
+        /// The menu's section of Study Cards Tagged “…” entries, filled
+        /// from the bound card's tags (`text::tag_menu`).
+        pub tag_section: OnceCell<gio::Menu>,
+        /// The tags `tag_section` was made for, so a rebind with the same
+        /// tags (most cards of a deck have few, or none) leaves it alone.
+        pub menu_tags: RefCell<Option<Vec<rappel_core::domain::Tag>>>,
         /// A row of All Cards: its actions are `browser.*`, not `deck.*`.
         pub browsing: Cell<bool>,
         /// The bound card, empty while unbound.
         pub card_id: RefCell<String>,
-        /// All Cards: the bound item, whose `selected` the row follows, and
-        /// the list item whose accessible label says it.
-        pub item: RefCell<Option<BrowseItem>>,
+        /// The bound item (a `BrowseItem` or a `CardObject`), whose
+        /// `selected` the row follows, and the list item whose accessible
+        /// label says it.
+        pub item: RefCell<Option<glib::Object>>,
         pub list_item: glib::WeakRef<gtk::ListItem>,
         pub selected_handler: RefCell<Option<glib::SignalHandlerId>>,
         /// How many times an item's `selected` reached the row, so the
@@ -107,9 +127,21 @@ mod imp {
             klass.install_action("row.reset", None, |row, _, _| {
                 row.forward("reset-card");
             });
+            klass.install_action("row.move", None, |row, _, _| {
+                row.forward("move-card");
+            });
             klass.install_action("row.delete", None, |row, _, _| {
                 row.forward("delete-card");
             });
+            klass.install_action(
+                "row.study-tag",
+                Some(glib::VariantTy::STRING),
+                |row, _, tag| {
+                    if let Some(tag) = tag.and_then(glib::Variant::str) {
+                        row.forward_tag(tag);
+                    }
+                },
+            );
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -121,11 +153,22 @@ mod imp {
     impl ObjectImpl for CardRow {
         fn constructed(&self) {
             self.parent_constructed();
+            // After Edit and Card Information: a section of the card's own.
+            let section = gio::Menu::new();
+            if let Some(menu) = self.card_menu.downcast_ref::<gio::Menu>() {
+                menu.insert_section(1, None, &section);
+            }
+            crate::ui::init_once(&self.tag_section, section);
             crate::ui::rows::menu_on_demand(&self.menu_button, &self.card_menu);
             let row = self.obj();
             row.connect_compact_notify(super::CardRow::update_pill_count);
             row.update_pill_count();
             row.connect_selecting_notify(super::CardRow::update_selection);
+            row.add_long_press();
+            // `gtk_widget_action_set_enabled` (GtkWidget docs): a menu item
+            // naming a disabled action is insensitive.
+            row.connect_can_move_notify(|row| row.action_set_enabled("row.move", row.can_move()));
+            row.action_set_enabled("row.move", row.can_move());
         }
     }
     impl WidgetImpl for CardRow {}
@@ -146,42 +189,56 @@ impl Default for CardRow {
 }
 
 impl CardRow {
-    /// A row of All Cards: its menu acts through `browser.*`, it shows the
-    /// deck and status line, and a long press on a touch screen starts
-    /// choosing cards with it (a mouse has the Select button and Ctrl+A).
+    /// A row of All Cards: its menu acts through `browser.*`, and it shows
+    /// the deck and status line.
     pub fn for_browser() -> Self {
         let row = Self::default();
         let imp = row.imp();
         imp.browsing.set(true);
         imp.caption_label.set_visible(true);
-        // Claiming the sequence keeps the release from activating the row
-        // (GtkGesture docs: a claimed sequence cancels the other gestures).
+        row
+    }
+
+    /// A long press on a touch screen starts choosing cards with this one
+    /// (a mouse has the Select button and Ctrl+A). Claiming the sequence
+    /// keeps the release from activating the row (`GtkGesture` docs: a
+    /// claimed sequence cancels the other gestures).
+    fn add_long_press(&self) {
         let press = gtk::GestureLongPress::new();
         press.set_touch_only(true);
         press.connect_pressed(glib::clone!(
-            #[weak]
-            row,
+            #[weak(rename_to = row)]
+            self,
             move |gesture, _, _| {
                 gesture.set_state(gtk::EventSequenceState::Claimed);
                 row.forward("select-card");
             }
         ));
-        row.add_controller(press);
-        row
+        self.add_controller(press);
+    }
+
+    /// Shows a deck page's `item` in this row, and follows whether it is
+    /// chosen; `list_item`'s accessible label is what a screen reader says
+    /// for the row.
+    pub fn bind_card(&self, item: &CardObject, list_item: &gtk::ListItem) {
+        self.unbind();
+        self.bind(item);
+        self.follow(item.upcast_ref(), list_item);
     }
 
     /// Shows `item` in this row. Called on every bind of a recycled row,
     /// so it only sets texts and reuses the pills (`TagPills::set_tags`).
     pub fn bind(&self, item: &CardObject) {
         let card = item.card();
-        self.show(
-            item.front_preview(),
-            item.back_preview(),
-            &item.tags(),
-            card.suspended,
-            item.is_new(),
-            &card.id,
-        );
+        self.show(&RowParts {
+            front: item.front_preview(),
+            back: item.back_preview(),
+            pill_names: &item.tags(),
+            tags: &item.tag_list(),
+            suspended: card.suspended,
+            is_new: item.is_new(),
+            id: &card.id,
+        });
     }
 
     /// Shows an All Cards `item` in this row: the card, its deck and status,
@@ -192,52 +249,65 @@ impl CardRow {
         let imp = self.imp();
         {
             let row = item.row();
-            self.show(
-                item.front_preview(),
-                item.back_preview(),
-                &item.tags(),
-                row.card.suspended,
-                row.is_new,
-                &row.card.id,
-            );
+            self.show(&RowParts {
+                front: item.front_preview(),
+                back: item.back_preview(),
+                pill_names: &item.tags(),
+                tags: &row.tags,
+                suspended: row.card.suspended,
+                is_new: row.is_new,
+                id: &row.card.id,
+            });
             let status = browser_text::status_text(row.status, rappel_core::time::now_ms());
             imp.caption_label
                 .set_label(&browser_text::caption(&row.deck_name, &status));
         }
+        self.follow(item.upcast_ref(), list_item);
+    }
+
+    /// Follows `item`'s `selected` (a `BrowseItem`'s or a `CardObject`'s),
+    /// and says the row in `list_item`'s accessible label.
+    fn follow(&self, item: &glib::Object, list_item: &gtk::ListItem) {
+        let imp = self.imp();
         imp.list_item.set(Some(list_item));
         imp.item.replace(Some(item.clone()));
-        let handler = item.connect_selected_notify(glib::clone!(
-            #[weak(rename_to = row)]
-            self,
-            move |_| {
-                #[cfg(test)]
-                row.imp()
-                    .selected_seen
-                    .set(row.imp().selected_seen.get() + 1);
-                row.update_selection();
-            }
-        ));
+        let handler = item.connect_notify_local(
+            Some("selected"),
+            glib::clone!(
+                #[weak(rename_to = row)]
+                self,
+                move |_, _| {
+                    #[cfg(test)]
+                    row.imp()
+                        .selected_seen
+                        .set(row.imp().selected_seen.get() + 1);
+                    row.update_selection();
+                }
+            ),
+        );
         imp.selected_handler.replace(Some(handler));
         self.update_selection();
     }
 
-    fn show(
-        &self,
-        front: &str,
-        back: &str,
-        tags: &[String],
-        suspended: bool,
-        is_new: bool,
-        id: &str,
-    ) {
+    fn show(&self, parts: &RowParts<'_>) {
+        let &RowParts {
+            front,
+            back,
+            pill_names,
+            tags,
+            suspended,
+            is_new,
+            id,
+        } = parts;
         let imp = self.imp();
         imp.front_label.set_label(front);
         imp.back_label.set_label(back);
-        imp.tag_pills.set_tags(tags);
-        imp.tag_pills.set_visible(!tags.is_empty());
+        imp.tag_pills.set_tags(pill_names);
+        self.set_tag_menu(tags);
+        imp.tag_pills.set_visible(!pill_names.is_empty());
         // Without a back or tags, the line is left out.
         imp.detail_box
-            .set_visible(!back.is_empty() || !tags.is_empty());
+            .set_visible(!back.is_empty() || !pill_names.is_empty());
         rows::label_menu_button(&imp.menu_button, &text::spoken_front(front));
         imp.suspended_icon.set_visible(suspended);
         // Rows are recycled, so this is set on every bind. The `row.*`
@@ -250,8 +320,51 @@ impl CardRow {
         imp.card_id.replace(id.to_owned());
     }
 
-    /// The check button, the menu and the accessible label of an All Cards
-    /// row, after `selecting` or the item's `selected` changed.
+    /// Fills the row menu's tag section for `tags` ([`text::tag_menu`]),
+    /// unless it was made for them already. Before the menu first opens the
+    /// section is only a model: the popover is built from it then
+    /// (`rows::menu_on_demand`), and follows its changes afterwards
+    /// (`GtkPopoverMenu` builds its items from the model and tracks its
+    /// `items-changed`, `GtkPopoverMenu` docs).
+    fn set_tag_menu(&self, tags: &[Tag]) {
+        let imp = self.imp();
+        if imp.menu_tags.borrow().as_deref() == Some(tags) {
+            return;
+        }
+        let Some(section) = imp.tag_section.get() else {
+            return;
+        };
+        section.remove_all();
+        let menu = text::tag_menu(tags);
+        let item = |label: &str, tag_id: &str| {
+            gio::MenuItem::new(
+                Some(label),
+                Some(&gio::Action::print_detailed_name(
+                    "row.study-tag",
+                    Some(&tag_id.to_variant()),
+                )),
+            )
+        };
+        match &menu {
+            TagMenu::None => {}
+            TagMenu::Items(items) => {
+                for (label, tag_id) in items {
+                    section.append_item(&item(label, tag_id));
+                }
+            }
+            TagMenu::Submenu(label, items) => {
+                let submenu = gio::Menu::new();
+                for (name, tag_id) in items {
+                    submenu.append_item(&item(name, tag_id));
+                }
+                section.append_submenu(Some(label), &submenu);
+            }
+        }
+        imp.menu_tags.replace(Some(tags.to_vec()));
+    }
+
+    /// The check button, the menu and the accessible label of a row, after
+    /// `selecting` or the item's `selected` changed.
     fn update_selection(&self) {
         let imp = self.imp();
         let selecting = self.selecting();
@@ -261,8 +374,13 @@ impl CardRow {
         let Some(item) = item.as_ref() else {
             return;
         };
-        imp.check.set_active(item.selected());
-        if let Some(list_item) = imp.list_item.upgrade() {
+        let selected = item.property::<bool>("selected");
+        imp.check.set_active(selected);
+        let Some(list_item) = imp.list_item.upgrade() else {
+            return;
+        };
+        let chosen = selecting.then_some(selected);
+        if let Some(item) = item.downcast_ref::<BrowseItem>() {
             let row = item.row();
             let status = browser_text::status_text(row.status, rappel_core::time::now_ms());
             list_item.set_accessible_label(&browser_text::row_label(
@@ -274,8 +392,12 @@ impl CardRow {
                 ),
                 &row.deck_name,
                 &status,
-                selecting.then(|| item.selected()),
+                chosen,
             ));
+        } else if let Some(item) = item.downcast_ref::<CardObject>() {
+            // Screen readers read the front, the back and the tags, not
+            // "row" (`card_row::text::row_label`).
+            list_item.set_accessible_label(&with_selected(item.row_label(), chosen));
         }
     }
 
@@ -303,6 +425,20 @@ impl CardRow {
         self.imp().card_id.borrow().clone()
     }
 
+    /// Activates the page's `study-tag` with `tag_id` (a menu entry of the
+    /// bound card's tags).
+    fn forward_tag(&self, tag_id: &str) {
+        if self.card_id().is_empty() {
+            return;
+        }
+        let group = if self.imp().browsing.get() {
+            "browser"
+        } else {
+            "deck"
+        };
+        rows::forward_id(self, &format!("{group}.study-tag"), tag_id);
+    }
+
     /// Activates the page's action `name` with the bound card's id.
     fn forward(&self, name: &str) {
         let id = self.card_id();
@@ -316,6 +452,24 @@ impl CardRow {
         };
         rows::forward_id(self, &format!("{group}.{name}"), &id);
     }
+}
+
+/// What a row shows of one card, from a deck page's `CardObject` or an All
+/// Cards `BrowseItem`.
+struct RowParts<'a> {
+    /// The front's one-line preview.
+    front: &'a str,
+    /// The back's one-line preview.
+    back: &'a str,
+    /// The tag names on one line each, as the item keeps them for the
+    /// pills (made once per item, not per bind).
+    pill_names: &'a [String],
+    /// The tags with their ids, for the menu's Study Cards Tagged entries.
+    tags: &'a [Tag],
+    suspended: bool,
+    is_new: bool,
+    /// The card's id.
+    id: &'a str,
 }
 
 /// A list factory of card rows, for the deck page's list and All Cards':
@@ -538,6 +692,206 @@ mod tests {
             assert_eq!(
                 *got.borrow(),
                 ["deck.edit-card card-00003", "browser.edit-card card-00004"]
+            );
+        });
+    }
+
+    /// Move to Deck… sits above Delete in the card menu, is disabled until
+    /// the page says another deck exists (`can-move`), and forwards to the
+    /// page's `move-card` with the card's id.
+    #[test]
+    fn move_to_deck_follows_the_page_and_forwards_to_it() {
+        crate::testing::with_widgets(|| {
+            use std::cell::RefCell;
+            use std::rc::Rc;
+
+            let row = CardRow::default();
+            let menu = row.imp().card_menu.get();
+            let mut actions = Vec::new();
+            for section in 0..menu.n_items() {
+                let Some(items) = menu.item_link(section, "section") else {
+                    continue;
+                };
+                for i in 0..items.n_items() {
+                    actions.extend(
+                        items
+                            .item_attribute_value(i, "action", Some(glib::VariantTy::STRING))
+                            .and_then(|v| v.get::<String>()),
+                    );
+                }
+            }
+            let at = |name: &str| actions.iter().position(|a| a == name).unwrap();
+            assert_eq!(at("row.move") + 1, at("row.delete"), "{actions:?}");
+
+            let got: Rc<RefCell<Vec<String>>> = Rc::default();
+            let group = gtk::gio::SimpleActionGroup::new();
+            let action = gtk::gio::SimpleAction::new("move-card", Some(glib::VariantTy::STRING));
+            let seen = got.clone();
+            action.connect_activate(move |_, id| {
+                let id = id.and_then(glib::Variant::str).unwrap_or_default();
+                seen.borrow_mut().push(id.to_owned());
+            });
+            group.add_action(&action);
+            let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            outer.insert_action_group("deck", Some(&group));
+            outer.append(&row);
+            row.bind(&card(3));
+
+            // No other deck known: the item is insensitive and does nothing.
+            assert!(!row.can_move());
+            let _ = row.activate_action("row.move", None);
+            assert!(got.borrow().is_empty());
+
+            row.set_can_move(true);
+            row.activate_action("row.move", None).unwrap();
+            assert_eq!(*got.borrow(), ["card-00003"]);
+        });
+    }
+
+    /// The `row.study-tag` entries of the menu's tag section: (label,
+    /// target), and the submenu's label if they are in one.
+    fn study_entries(row: &CardRow) -> (Vec<(String, String)>, Option<String>) {
+        let section = row.imp().tag_section.get().unwrap();
+        let read = |menu: &gtk::gio::MenuModel| -> Vec<(String, String)> {
+            (0..menu.n_items())
+                .map(|i| {
+                    let label = menu
+                        .item_attribute_value(i, "label", Some(glib::VariantTy::STRING))
+                        .and_then(|v| v.get::<String>())
+                        .unwrap();
+                    let action = menu
+                        .item_attribute_value(i, "action", Some(glib::VariantTy::STRING))
+                        .and_then(|v| v.get::<String>())
+                        .unwrap();
+                    assert_eq!(action, "row.study-tag");
+                    let target = menu
+                        .item_attribute_value(i, "target", Some(glib::VariantTy::STRING))
+                        .and_then(|v| v.get::<String>())
+                        .unwrap();
+                    (label, target)
+                })
+                .collect()
+        };
+        if section.n_items() == 1
+            && let Some(sub) = section.item_link(0, "submenu")
+        {
+            let label = section
+                .item_attribute_value(0, "label", Some(glib::VariantTy::STRING))
+                .and_then(|v| v.get::<String>());
+            return (read(&sub), label);
+        }
+        (read(section.upcast_ref()), None)
+    }
+
+    /// Each tag of the card has a Study Cards Tagged “…” entry, in a
+    /// section after Edit and Card Information (a submenu past three
+    /// tags), that follows a recycled row's card and forwards the tag's
+    /// id to its page's `study-tag` (ADR 0069).
+    #[test]
+    fn the_menu_studies_the_cards_tags_and_forwards_to_the_page() {
+        crate::testing::with_widgets(|| {
+            use std::cell::RefCell;
+            use std::rc::Rc;
+
+            let row = CardRow::default();
+            // The tag section is the menu's second.
+            let menu = row.imp().card_menu.get();
+            let second = menu.item_link(1, "section").unwrap();
+            assert_eq!(
+                second,
+                row.imp()
+                    .tag_section
+                    .get()
+                    .unwrap()
+                    .clone()
+                    .upcast::<gtk::gio::MenuModel>()
+            );
+            row.bind(&card(2));
+            let label = |name: &str| format!("Study Cards Tagged “\u{2068}{name}\u{2069}”");
+            assert_eq!(
+                study_entries(&row),
+                (
+                    vec![
+                        (label("tag number 0"), "tag-0".to_owned()),
+                        (label("tag number 1"), "tag-1".to_owned())
+                    ],
+                    None
+                )
+            );
+            // More than three tags: a submenu of their names.
+            row.bind(&card(5));
+            let (entries, submenu) = study_entries(&row);
+            assert_eq!(submenu.as_deref(), Some("Study Cards _Tagged"));
+            assert_eq!(entries.len(), 5);
+            assert_eq!(
+                entries[4],
+                (
+                    "\u{2068}tag number 4\u{2069}".to_owned(),
+                    "tag-4".to_owned()
+                )
+            );
+            // No tag, no entry.
+            row.bind(&card(0));
+            assert_eq!(study_entries(&row), (Vec::new(), None));
+
+            let got: Rc<RefCell<Vec<String>>> = Rc::default();
+            let group = |prefix: &'static str| {
+                let actions = gtk::gio::SimpleActionGroup::new();
+                let action =
+                    gtk::gio::SimpleAction::new("study-tag", Some(glib::VariantTy::STRING));
+                let got = got.clone();
+                action.connect_activate(move |_, id| {
+                    let id = id.and_then(glib::Variant::str).unwrap_or_default();
+                    got.borrow_mut().push(format!("{prefix} {id}"));
+                });
+                actions.add_action(&action);
+                actions
+            };
+            let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            outer.insert_action_group("deck", Some(&group("deck")));
+            outer.insert_action_group("browser", Some(&group("browser")));
+            row.bind(&card(2));
+            outer.append(&row);
+            row.activate_action("row.study-tag", Some(&"tag-1".to_variant()))
+                .unwrap();
+            let browser_row = CardRow::for_browser();
+            outer.append(&browser_row);
+            browser_row.bind_browse(&browse_item(3), &glib::Object::new::<gtk::ListItem>());
+            assert_eq!(study_entries(&browser_row).0.len(), 3);
+            browser_row
+                .activate_action("row.study-tag", Some(&"tag-2".to_variant()))
+                .unwrap();
+            assert_eq!(*got.borrow(), ["deck tag-1", "browser tag-2"]);
+        });
+    }
+
+    /// A tag's name reaches the opened menu as it is: an underscore is not
+    /// taken as a mnemonic, and markup is not parsed.
+    #[test]
+    fn a_tag_name_is_shown_as_it_is_in_the_menu() {
+        crate::testing::with_widgets(|| {
+            let window = gtk::Window::new();
+            let row = CardRow::default();
+            window.set_child(Some(&row));
+            window.present();
+            let item = CardObject::new(TaggedCard {
+                card: card(1).card().clone(),
+                tags: vec![Tag {
+                    id: "t".to_owned(),
+                    name: "my_tag <b>x</b>".to_owned(),
+                }],
+            });
+            row.bind(&item);
+            let button = &row.imp().menu_button;
+            button.popup();
+            let popover = button.popover().unwrap();
+            let mut texts = Vec::new();
+            texts.extend(crate::testing::label_texts(popover.upcast_ref()));
+            button.popdown();
+            window.destroy();
+            assert!(
+                texts.contains(&"Study Cards Tagged “\u{2068}my_tag <b>x</b>\u{2069}”".to_owned()),
+                "{texts:?}"
             );
         });
     }

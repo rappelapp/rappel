@@ -158,6 +158,7 @@ impl Store {
         if summary.is_noop() {
             return Ok(AnkiReport {
                 new_decks: 0,
+                archived_decks: 0,
                 cards: 0,
                 suspended: 0,
                 reviews: 0,
@@ -236,6 +237,7 @@ impl Store {
         );
         Ok(AnkiReport {
             new_decks: summary.new_decks,
+            archived_decks: summary.archived_decks,
             cards: summary.cards,
             suspended: summary.suspended,
             reviews: summary.reviews,
@@ -464,6 +466,7 @@ impl<'c> Run<'c> {
         let mut walk = Walk {
             existing: existing_cards(conn)?,
             live_decks: live_decks(conn)?,
+            archived_decks: archived_deck_ids(conn)?,
             writer: match ids {
                 Some(ids) => Some(Writer::new(conn, ids, now)?),
                 None => None,
@@ -555,6 +558,9 @@ struct Walk<'a, 't> {
     existing: HashSet<[u8; 16]>,
     /// The database's live decks by name key.
     live_decks: HashMap<String, String>,
+    /// The ids of those that are archived (ADR 0068): cards go into them
+    /// all the same, and the plan says so.
+    archived_decks: HashSet<String>,
     /// Applying: what writes.
     writer: Option<Writer<'t>>,
     notetypes: &'a HashMap<i64, Notetype>,
@@ -790,10 +796,16 @@ impl Walk<'_, '_> {
             .values()
             .filter(|c| matches!(c, DeckChoice::New(_)))
             .count();
+        let archived_decks = self
+            .decks
+            .values()
+            .filter(|c| matches!(c, DeckChoice::Existing(id) if self.archived_decks.contains(id)))
+            .count();
         let summary = AnkiSummary {
             format,
             new_decks,
             existing_decks: self.decks.len() - new_decks,
+            archived_decks,
             cards: self.tally.cards,
             suspended: self.tally.suspended,
             reviews: self.tally.reviews,
@@ -1252,6 +1264,14 @@ fn existing_cards(conn: &Connection) -> Result<HashSet<[u8; 16]>> {
 fn live_decks(conn: &Connection) -> Result<HashMap<String, String>> {
     let mut stmt = conn.prepare("SELECT name_key, id FROM decks WHERE deleted_at IS NULL")?;
     let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The ids of the archived live decks (ADR 0068).
+fn archived_deck_ids(conn: &Connection) -> Result<HashSet<String>> {
+    let mut stmt =
+        conn.prepare("SELECT id FROM decks WHERE deleted_at IS NULL AND archived_at IS NOT NULL")?;
+    let rows = stmt.query_map([], |r| r.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 

@@ -16,8 +16,62 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decides whether a pull request touches anything the gate can check
+  # (ADR 0003, amendment: docs-only changes skip the gate). A few seconds on
+  # the bare runner, against several minutes for the gate.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      # A pull request is checked out as its merge commit, whose first parent
+      # is the base branch, so a depth of 2 is enough to list what it changes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Classify the changed files
+        id: filter
+        shell: bash
+        run: |
+          # Pushes to main always run the gate.
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # --no-renames: a rename lists its old path too, so moving a source
+          # file into docs/ is not mistaken for a docs-only change.
+          files=$(git diff --no-renames --name-only HEAD^1 HEAD)
+          printf 'Changed files:\n%s\n' "$files"
+          # Docs-only: anything under docs/ or .claude/, and Markdown files at
+          # the top level, except CHANGELOG.md, which the tests read (it must
+          # match the AppStream metainfo, crates/app/src/desktop_files.rs).
+          # Everything else, and an empty list, runs the gate.
+          # No pipe into `grep -q`: it exits at the first match, the writer
+          # dies of SIGPIPE, and under bash's `-o pipefail` (which GitHub sets)
+          # the negated pipeline would then read as "no code file", skipping
+          # the gate on a long list of code files.
+          # grep exits 1 when no line is left (docs only): accepted. Any
+          # other failure stops this job, and then the gate runs.
+          others=$(grep -v -E '^(docs/|\.claude/)|^[^/]+\.md$' <<<"$files") || [ $? -eq 1 ]
+          code=true
+          if [ -n "$files" ] && [ -z "$others" ] \
+            && ! grep -q -x 'CHANGELOG.md' <<<"$files"; then
+            code=false
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Run the gate: $code"
+
   # The job id is the status check name: mark `check` as required in the ruleset.
+  # When `changes` finds a docs-only pull request this job is skipped, and
+  # GitHub counts a job skipped by its `if` as a success for a required check
+  # (GitHub docs, "Using conditions to control job execution"), so the
+  # pull request can still merge. Fail-safe: the gate runs whenever `changes`
+  # did not succeed, since a skip would otherwise also count as a success.
   check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     timeout-minutes: 30

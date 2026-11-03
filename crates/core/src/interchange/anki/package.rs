@@ -151,6 +151,23 @@ impl<R: Read + Seek> Package<R> {
         if !has(&archive, format.collection()) {
             return Err(AnkiProblem::NoCollection);
         }
+        // Refused from the sizes the entries declare, before a byte of
+        // them is read (ADR 0071). Only where the entry's data is what is
+        // measured: in the current format it is zstd's output that is
+        // capped, and a compressed frame can be padded, so its declared
+        // size says nothing. A size that lies is still caught while
+        // reading, which is capped the same.
+        if format != AnkiFormat::Current {
+            let declared = |name: AnkiName, limit: u64| match archive.anki_entry(name) {
+                Some(entry) if entry.size > limit => Err(AnkiProblem::EntryTooLarge {
+                    entry: name.name(),
+                    limit,
+                }),
+                _ => Ok(()),
+            };
+            declared(format.collection(), limits.collection)?;
+            declared(AnkiName::MediaMap, limits.media_list)?;
+        }
         Ok(Self {
             archive,
             format,

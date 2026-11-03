@@ -167,6 +167,28 @@ Adw.ShortcutsDialog shortcuts_dialog {
     }
   }
 
+  // A deck's page has the same selection mode as All Cards (ADR 0065).
+  Adw.ShortcutsSection {
+    title: _("Deck");
+
+    Adw.ShortcutsItem {
+      title: _("Select All");
+      accelerator: "<Control>a";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Select or Deselect Card");
+      subtitle: _("While selecting cards");
+      accelerator: "space";
+    }
+
+    Adw.ShortcutsItem {
+      title: _("Stop Selecting");
+      subtitle: _("While selecting cards");
+      accelerator: "Escape";
+    }
+  }
+
   Adw.ShortcutsSection {
     title: _("All Cards");
 

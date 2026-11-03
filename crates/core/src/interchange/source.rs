@@ -7,6 +7,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use super::ImportProblem;
@@ -58,6 +59,46 @@ impl Seek for Input {
             #[cfg(test)]
             Self::Bytes(b) => b.seek(pos),
         }
+    }
+}
+
+/// A reader that fails once `cancel` is set, so the reading under it stops
+/// at its next read, whatever it is in the middle of (ADR 0063, 0071). The
+/// error is only a way out: whoever reads `cancel` afterwards decides the
+/// import was cancelled.
+#[derive(Debug)]
+pub(super) struct Cancellable<'a, R> {
+    inner: R,
+    cancel: &'a AtomicBool,
+}
+
+impl<'a, R> Cancellable<'a, R> {
+    pub(super) fn new(inner: R, cancel: &'a AtomicBool) -> Self {
+        Self { inner, cancel }
+    }
+
+    fn check(&self) -> io::Result<()> {
+        // Relaxed: the flag carries no data (as for the Anki import).
+        if self.cancel.load(Ordering::Relaxed) {
+            // Not `Interrupted`: `read_exact` and `io::copy` retry that.
+            Err(io::Error::other("the import was cancelled"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl<R: Read> Read for Cancellable<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.check()?;
+        self.inner.read(buf)
+    }
+}
+
+impl<R: Seek> Seek for Cancellable<'_, R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.check()?;
+        self.inner.seek(pos)
     }
 }
 

@@ -38,6 +38,7 @@ fn export_import_export_gives_identical_bytes_and_schedules() {
                 revived: 0
             },
             media: TableCounts::default(),
+            cards_kept_in_their_deck: 0,
             settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }
@@ -109,6 +110,7 @@ fn importing_the_same_file_twice_is_a_noop() {
                 revived: 0
             },
             media: TableCounts::default(),
+            cards_kept_in_their_deck: 0,
             settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }

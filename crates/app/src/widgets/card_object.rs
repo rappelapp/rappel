@@ -1,7 +1,8 @@
 //! `CardObject`: one card as a list model item, for the deck page's
 //! `GtkListView` (ADR 0013, 0042). It holds the card, its tags (each name on
-//! one line, for the pills) and the one-line previews of its front and back
-//! (plain text, never markup). The previews are made the first time a row
+//! one line, for the pills), the one-line previews of its front and back
+//! (plain text, never markup), and whether it is chosen in selection mode
+//! (the `selected` property, which a row widget follows, ADR 0065). The previews are made the first time a row
 //! shows the card and then kept, so opening a deck of 5,000 cards parses
 //! nothing until the rows scroll into view, and binding a recycled row
 //! again is cheap.
@@ -11,20 +12,28 @@ use std::cell::{Cell, OnceCell, Ref, RefCell};
 use gtk::glib;
 use gtk::subclass::prelude::*;
 use rappel_core::content::plain_summary;
-use rappel_core::domain::{Card, TaggedCard};
+use rappel_core::domain::{Card, Tag, TaggedCard};
 
 use super::card_row::text::row_label;
 use crate::ui::text::one_line;
 
 mod imp {
-    use super::{Card, Cell, OnceCell, RefCell};
+    use super::{Card, Cell, OnceCell, RefCell, Tag};
     use gtk::glib;
+    use gtk::glib::prelude::*;
     use gtk::subclass::prelude::*;
 
-    #[derive(Debug)]
+    #[derive(Debug, glib::Properties)]
+    #[properties(wrapper_type = super::CardObject)]
     pub struct CardObject {
         pub card: RefCell<Card>,
+        /// The tag names, each on one line, for the pills.
         pub tags: RefCell<Vec<String>>,
+        /// The tags themselves, for Remove Tag… in selection mode.
+        pub tag_list: RefCell<Vec<Tag>>,
+        /// Chosen in selection mode.
+        #[property(get, set)]
+        pub selected: Cell<bool>,
         pub front: OnceCell<String>,
         pub back: OnceCell<String>,
         pub is_new: Cell<bool>,
@@ -45,6 +54,8 @@ mod imp {
                     suspended: false,
                 }),
                 tags: RefCell::default(),
+                tag_list: RefCell::default(),
+                selected: Cell::new(false),
                 front: OnceCell::new(),
                 back: OnceCell::new(),
                 is_new: Cell::new(false),
@@ -58,6 +69,7 @@ mod imp {
         type Type = super::CardObject;
     }
 
+    #[glib::derived_properties]
     impl ObjectImpl for CardObject {}
 }
 
@@ -72,6 +84,7 @@ impl CardObject {
         obj.imp()
             .tags
             .replace(tags.iter().map(|tag| one_line(&tag.name)).collect());
+        obj.imp().tag_list.replace(tags);
         obj.imp().card.replace(card);
         obj
     }
@@ -97,13 +110,16 @@ impl CardObject {
     }
 
     /// A copy of this item, new or not: a new object, so the list rebinds
-    /// its row. The previews already made are kept.
+    /// its row. The previews already made, and whether it is chosen, are
+    /// kept.
     pub fn copy_with_new(&self, is_new: bool) -> Self {
         let imp = self.imp();
         let obj: Self = glib::Object::new();
         let copy = obj.imp();
         copy.card.replace(imp.card.borrow().clone());
         copy.tags.replace(imp.tags.borrow().clone());
+        copy.tag_list.replace(imp.tag_list.borrow().clone());
+        copy.selected.set(imp.selected.get());
         for (from, to) in [(&imp.front, &copy.front), (&imp.back, &copy.back)] {
             if let Some(text) = from.get() {
                 to.get_or_init(|| text.clone());
@@ -134,6 +150,11 @@ impl CardObject {
         self.imp().tags.borrow()
     }
 
+    /// The tags themselves, with their ids (a row's menu studies them).
+    pub fn tag_list(&self) -> Ref<'_, Vec<Tag>> {
+        self.imp().tag_list.borrow()
+    }
+
     /// Whether either preview has been made (they are made on first use).
     #[cfg(test)]
     pub fn has_previews(&self) -> bool {
@@ -148,5 +169,27 @@ impl CardObject {
             &self.tags(),
             self.card().suspended,
         )
+    }
+}
+
+impl crate::ui::selection::SelectableCard for CardObject {
+    fn card_id(&self) -> String {
+        self.card().id.clone()
+    }
+
+    fn card_suspended(&self) -> bool {
+        self.card().suspended
+    }
+
+    fn card_is_new(&self) -> bool {
+        self.is_new()
+    }
+
+    fn card_tags(&self) -> Vec<Tag> {
+        self.imp().tag_list.borrow().clone()
+    }
+
+    fn set_chosen(&self, chosen: bool) {
+        self.set_selected(chosen);
     }
 }

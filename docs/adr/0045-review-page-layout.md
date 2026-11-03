@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-17
 - Amends: ADR 0014 (the review page's bottom bar and summary), ADR 0019 (the review page's card text is larger than body text)
+- Amended by: ADR 0064 (the key hints under the buttons are gone; the keys are in the tooltips)
 - Refers to: ADR 0021, 0023, 0024 (math), ADR 0040 (the page's stacks were left for this slice), `docs/briefs/phase-1-finish.md` ("Review", "Design rules")
 
 ## Context

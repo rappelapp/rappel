@@ -811,7 +811,9 @@ mod study {
     #[test]
     fn new_cards_are_limited_per_day_from_first_reviews() {
         let (mut store, deck, cards) = store_with_cards(30);
-        let input = store.study_input(&deck, T0, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, DAY_START)
+            .unwrap();
         assert_eq!(input.new_today, 0);
         assert_eq!(input.new, cards[..NEW_PER_DAY as usize]);
 
@@ -826,7 +828,9 @@ mod study {
         // Yesterday's card reviewed again today does not count again.
         answer(&mut store, &cards[0], Grade::Pass, T0);
 
-        let input = store.study_input(&deck, T0, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, DAY_START)
+            .unwrap();
         assert_eq!(input.new_today, 2);
         assert_eq!(input.new, cards[3..3 + NEW_PER_DAY as usize - 2]);
     }
@@ -839,17 +843,25 @@ mod study {
         for card in &cards[..NEW_PER_DAY as usize] {
             answer(&mut store, card, Grade::Pass, T0);
         }
-        let input = store.study_input(&deck, T0, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, DAY_START)
+            .unwrap();
         assert_eq!(input.new_today, NEW_PER_DAY);
         assert_eq!(input.new, Vec::<String>::new());
-        let other_input = store.study_input(&other, T0, DAY_START).unwrap();
+        let other_input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&other), T0, DAY_START)
+            .unwrap();
         assert_eq!(
             (other_input.new_today, other_input.new),
             (0, vec![other_card])
         );
         // The next day starts a new budget.
         let input = store
-            .study_input(&deck, T0 + DAY_MS, DAY_START + DAY_MS)
+            .study_input(
+                &crate::scheduling::StudyScope::deck(&deck),
+                T0 + DAY_MS,
+                DAY_START + DAY_MS,
+            )
             .unwrap();
         assert_eq!(input.new_today, 0);
         assert_eq!(input.new, cards[NEW_PER_DAY as usize..]);
@@ -872,7 +884,9 @@ mod study {
         answer(&mut store, &cards[2], Grade::Pass, T0 - STEP_MS);
         answer(&mut store, &cards[2], Grade::Pass, T0);
 
-        let input = store.study_input(&deck, T0, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, DAY_START)
+            .unwrap();
         assert_eq!(
             input.reviews.iter().map(|d| &d.card_id).collect::<Vec<_>>(),
             [&cards[0]]
@@ -884,7 +898,13 @@ mod study {
 
         // A step card more than 20 minutes away is not in the input.
         let early = T0 + STEP_MS - EARLY_MS - 1;
-        let input = store.study_input(&deck, early, DAY_START).unwrap();
+        let input = store
+            .study_input(
+                &crate::scheduling::StudyScope::deck(&deck),
+                early,
+                DAY_START,
+            )
+            .unwrap();
         assert_eq!(input.steps, Vec::<Due>::new());
     }
 
@@ -894,7 +914,9 @@ mod study {
         answer(&mut store, &cards[0], Grade::Fail, T0);
         store.delete_card_at(&cards[0], T0).unwrap();
         store.delete_card_at(&cards[1], T0).unwrap();
-        let input = store.study_input(&deck, T0, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, DAY_START)
+            .unwrap();
         assert!(input.is_empty());
         assert_eq!(input.new_today, 1);
     }
@@ -907,7 +929,11 @@ mod study {
             answer(&mut store, card, Grade::Pass, T0 - 60 * DAY_MS + STEP_MS);
         }
         let mut now = T0;
-        let mut session = Session::new(store.study_input(&deck, now, DAY_START).unwrap());
+        let mut session = Session::new(
+            store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), now, DAY_START)
+                .unwrap(),
+        );
         let mut answers = 0;
         while let Some(card) = session.next(now).map(str::to_owned) {
             // Fail every third answer; time passes 40 s per card.
@@ -941,7 +967,10 @@ mod study {
             }
         }
         assert_eq!(
-            store.study_input(&deck, now, DAY_START).unwrap().steps,
+            store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), now, DAY_START)
+                .unwrap()
+                .steps,
             Vec::<Due>::new()
         );
     }
@@ -950,12 +979,16 @@ mod study {
     fn a_missing_or_deleted_deck_is_reported() {
         let (mut store, deck, _) = store_with_cards(1);
         assert!(matches!(
-            store.study_input("01920000-0000-7000-8000-00000000dead", T0, DAY_START),
+            store.study_input(
+                &crate::scheduling::StudyScope::deck("01920000-0000-7000-8000-00000000dead"),
+                T0,
+                DAY_START
+            ),
             Err(crate::Error::DeckNotFound(_))
         ));
         store.delete_deck_at(&deck, T0).unwrap();
         assert!(matches!(
-            store.study_input(&deck, T0, DAY_START),
+            store.study_input(&crate::scheduling::StudyScope::deck(&deck), T0, DAY_START),
             Err(crate::Error::DeckNotFound(_))
         ));
     }
@@ -975,7 +1008,9 @@ mod study {
         answer(&mut store, &cards[11], Grade::Fail, T0 - 2 * 60_000);
         answer(&mut store, &cards[10], Grade::Fail, T0 - 60_000);
 
-        let input = store.study_input(&deck, T0, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, DAY_START)
+            .unwrap();
         let created = |id: &str| cards.iter().position(|c| c == id).unwrap();
         let keys: Vec<_> = input
             .reviews
@@ -1009,7 +1044,12 @@ mod next_change {
     #[test]
     fn nothing_scheduled_never_changes() {
         let (store, deck, _) = store_with_cards(3);
-        assert_eq!(store.next_study_change(&deck, T0).unwrap(), None);
+        assert_eq!(
+            store
+                .next_study_change(&crate::scheduling::StudyScope::deck(&deck), T0)
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -1020,15 +1060,28 @@ mod next_change {
             .unwrap();
         let due = due_at(&store, &cards[0]);
         // Already within the early window at T0: offered now, not a change.
-        assert_eq!(store.next_study_change(&deck, T0).unwrap(), None);
+        assert_eq!(
+            store
+                .next_study_change(&crate::scheduling::StudyScope::deck(&deck), T0)
+                .unwrap(),
+            None
+        );
         // From before that window, the change is when it opens.
         let before = due - EARLY_MS - 1;
         assert_eq!(
-            store.next_study_change(&deck, before).unwrap(),
+            store
+                .next_study_change(&crate::scheduling::StudyScope::deck(&deck), before)
+                .unwrap(),
             Some(due - EARLY_MS)
         );
         // And it is exactly when study_input starts to offer it.
-        let at = |now| store.study_input(&deck, now, T0).unwrap().steps.len();
+        let at = |now| {
+            store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), now, T0)
+                .unwrap()
+                .steps
+                .len()
+        };
         assert_eq!((at(due - EARLY_MS - 1), at(due - EARLY_MS)), (0, 1));
     }
 
@@ -1047,8 +1100,19 @@ mod next_change {
         let (first, second) = (due_at(&store, &cards[0]), due_at(&store, &cards[1]));
         let soonest = first.min(second);
         let now = soonest - 1;
-        assert_eq!(store.next_study_change(&deck, now).unwrap(), Some(soonest));
-        let reviews = |now| store.study_input(&deck, now, T0).unwrap().reviews.len();
+        assert_eq!(
+            store
+                .next_study_change(&crate::scheduling::StudyScope::deck(&deck), now)
+                .unwrap(),
+            Some(soonest)
+        );
+        let reviews = |now| {
+            store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), now, T0)
+                .unwrap()
+                .reviews
+                .len()
+        };
         assert_eq!(reviews(soonest - 1), 0);
         assert!(reviews(soonest) >= 1);
 
@@ -1060,7 +1124,9 @@ mod next_change {
         };
         store.delete_card_at(soonest_card, now).unwrap();
         assert_eq!(
-            store.next_study_change(&deck, now).unwrap(),
+            store
+                .next_study_change(&crate::scheduling::StudyScope::deck(&deck), now)
+                .unwrap(),
             Some(first.max(second))
         );
     }
@@ -1083,8 +1149,18 @@ mod next_change {
         let (a, b) = (due_at(&store, &cards[0]), due_at(&store, &cards[1]));
         assert_ne!(a, b, "the fixture needs two different due times");
         let (first, second) = (a.min(b), a.max(b));
-        assert_eq!(store.next_study_change(&deck, first).unwrap(), Some(second));
-        assert_eq!(store.next_study_change(&deck, second).unwrap(), None);
+        assert_eq!(
+            store
+                .next_study_change(&crate::scheduling::StudyScope::deck(&deck), first)
+                .unwrap(),
+            Some(second)
+        );
+        assert_eq!(
+            store
+                .next_study_change(&crate::scheduling::StudyScope::deck(&deck), second)
+                .unwrap(),
+            None
+        );
     }
 
     /// A review card failed goes to relearning: like a learning card, it
@@ -1111,10 +1187,18 @@ mod next_change {
         let due = due_at(&store, card);
         let before = due - EARLY_MS - 1;
         assert_eq!(
-            store.next_study_change(&deck, before).unwrap(),
+            store
+                .next_study_change(&crate::scheduling::StudyScope::deck(&deck), before)
+                .unwrap(),
             Some(due - EARLY_MS)
         );
-        let steps = |now| store.study_input(&deck, now, T0).unwrap().steps.len();
+        let steps = |now| {
+            store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), now, T0)
+                .unwrap()
+                .steps
+                .len()
+        };
         assert_eq!((steps(due - EARLY_MS - 1), steps(due - EARLY_MS)), (0, 1));
     }
 
@@ -1122,7 +1206,10 @@ mod next_change {
     fn a_missing_deck_is_reported() {
         let (store, _, _) = store_with_cards(1);
         assert!(matches!(
-            store.next_study_change("01920000-0000-7000-8000-00000000dead", T0),
+            store.next_study_change(
+                &crate::scheduling::StudyScope::deck("01920000-0000-7000-8000-00000000dead"),
+                T0
+            ),
             Err(Error::DeckNotFound(_))
         ));
     }
@@ -1155,7 +1242,9 @@ mod limits {
     }
 
     fn reviews(store: &Store, deck: &str) -> Vec<String> {
-        let input = store.study_input(deck, NOW, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(deck), NOW, DAY_START)
+            .unwrap();
         input.reviews.into_iter().map(|d| d.card_id).collect()
     }
 
@@ -1164,7 +1253,9 @@ mod limits {
         let (mut store, deck, cards) = store_with_cards(30);
         for (limit, shown) in [(0, 0), (1, 1), (20, 20), (30, 30), (9_999, 30)] {
             store.set_max_new_per_day(limit).unwrap();
-            let input = store.study_input(&deck, T0, T0 - 1).unwrap();
+            let input = store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, T0 - 1)
+                .unwrap();
             assert_eq!(input.new, cards[..shown], "limit {limit}");
         }
     }
@@ -1174,15 +1265,27 @@ mod limits {
         let (mut store, deck, cards) = store_with_cards(10);
         store.set_max_new_per_day(3).unwrap();
         answer(&mut store, &cards[0], Grade::Pass, T0);
-        let input = store.study_input(&deck, T0, T0 - 1).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, T0 - 1)
+            .unwrap();
         assert_eq!((input.new_today, input.new.len()), (1, 2));
         // Raising the limit gives more at once; lowering it below what was
         // done gives none, not an underflow.
         store.set_max_new_per_day(6).unwrap();
-        assert_eq!(store.study_input(&deck, T0, T0 - 1).unwrap().new.len(), 5);
+        assert_eq!(
+            store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, T0 - 1)
+                .unwrap()
+                .new
+                .len(),
+            5
+        );
         store.set_max_new_per_day(0).unwrap();
         assert_eq!(
-            store.study_input(&deck, T0, T0 - 1).unwrap().new,
+            store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), T0, T0 - 1)
+                .unwrap()
+                .new,
             Vec::<String>::new()
         );
     }
@@ -1203,7 +1306,9 @@ mod limits {
         let (mut store, deck, cards) = overdue(10);
         store.set_max_reviews_per_day(4).unwrap();
         answer(&mut store, &cards[0], Grade::Pass, NOW);
-        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, DAY_START)
+            .unwrap();
         assert_eq!(input.reviews_today, 1);
         let shown: Vec<_> = input.reviews.into_iter().map(|d| d.card_id).collect();
         assert_eq!(shown, cards[1..4], "3 left of 4");
@@ -1211,7 +1316,9 @@ mod limits {
         for card in &cards[1..4] {
             answer(&mut store, card, Grade::Pass, NOW);
         }
-        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, DAY_START)
+            .unwrap();
         assert_eq!((input.reviews_today, input.reviews.len()), (4, 0));
         // Lowering the limit below what was done is not an underflow.
         store.set_max_reviews_per_day(2).unwrap();
@@ -1226,7 +1333,9 @@ mod limits {
         store.set_max_new_per_day(1).unwrap();
         answer(&mut store, &fresh, Grade::Pass, NOW);
         answer(&mut store, &cards[0], Grade::Pass, NOW);
-        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, DAY_START)
+            .unwrap();
         assert_eq!((input.new_today, input.reviews_today), (1, 1));
         assert!(input.reviews.is_empty() && input.new.is_empty());
     }
@@ -1239,11 +1348,15 @@ mod limits {
         store.set_max_new_per_day(1).unwrap();
         let new_review = answer(&mut store, &fresh, Grade::Pass, NOW);
         let old_review = answer(&mut store, &cards[0], Grade::Pass, NOW);
-        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, DAY_START)
+            .unwrap();
         assert_eq!((input.new_today, input.reviews_today), (1, 1));
         store.undo(&cards[0], &old_review.id, NOW).unwrap();
         store.undo(&fresh, &new_review.id, NOW).unwrap();
-        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, DAY_START)
+            .unwrap();
         assert_eq!((input.new_today, input.reviews_today), (0, 0));
         assert_eq!(input.new, [fresh]);
         assert_eq!(input.reviews.len(), 1);
@@ -1257,13 +1370,21 @@ mod limits {
         // today any more, and offered as new.
         answer(&mut store, &cards[0], Grade::Pass, NOW);
         store.reset_card(&cards[0], NOW).unwrap();
-        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, DAY_START)
+            .unwrap();
         assert_eq!((input.new_today, input.reviews_today), (0, 0));
         assert_eq!(input.new, [cards[0].clone()]);
         assert_eq!(input.reviews.len(), 1);
         // Its first review after the reset is a new card of today.
         answer(&mut store, &cards[0], Grade::Pass, NOW + 1);
-        let input = store.study_input(&deck, NOW + 1, DAY_START).unwrap();
+        let input = store
+            .study_input(
+                &crate::scheduling::StudyScope::deck(&deck),
+                NOW + 1,
+                DAY_START,
+            )
+            .unwrap();
         assert_eq!((input.new_today, input.reviews_today), (1, 0));
         // Undoing the reset brings back its old history.
         let log = store.review_events(&cards[0]).unwrap();
@@ -1275,7 +1396,13 @@ mod limits {
         let last = log.last().unwrap().clone();
         store.undo(&cards[0], &last.id, NOW + 1).unwrap();
         store.undo(&cards[0], &reset.id, NOW + 1).unwrap();
-        let input = store.study_input(&deck, NOW + 1, DAY_START).unwrap();
+        let input = store
+            .study_input(
+                &crate::scheduling::StudyScope::deck(&deck),
+                NOW + 1,
+                DAY_START,
+            )
+            .unwrap();
         assert_eq!((input.new_today, input.reviews_today), (0, 1));
         assert_eq!(input.new, Vec::<String>::new());
     }
@@ -1287,7 +1414,13 @@ mod limits {
         store.set_max_new_per_day(0).unwrap();
         // Failed, so in the 10-minute step and due again within it.
         answer(&mut store, &cards[0], Grade::Fail, NOW);
-        let input = store.study_input(&deck, NOW + STEP_MS, DAY_START).unwrap();
+        let input = store
+            .study_input(
+                &crate::scheduling::StudyScope::deck(&deck),
+                NOW + STEP_MS,
+                DAY_START,
+            )
+            .unwrap();
         assert_eq!(
             input.steps.iter().map(|d| &d.card_id).collect::<Vec<_>>(),
             [&cards[0]]
@@ -1306,7 +1439,9 @@ mod limits {
         // card reviewed today, though step cards themselves are not held back.
         answer(&mut store, &cards[1], Grade::Fail, DAY_START - 60_000);
         answer(&mut store, &cards[1], Grade::Pass, NOW);
-        let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, DAY_START)
+            .unwrap();
         assert_eq!(input.reviews_today, 2);
         assert_eq!(input.reviews, Vec::<Due>::new());
     }
@@ -1322,7 +1457,9 @@ mod limits {
             answer(&mut store, card, Grade::Pass, NOW);
         }
         assert_eq!(reviews(&store, &deck), Vec::<String>::new());
-        let input = store.study_input(&other, NOW, DAY_START).unwrap();
+        let input = store
+            .study_input(&crate::scheduling::StudyScope::deck(&other), NOW, DAY_START)
+            .unwrap();
         assert_eq!(input.new, [other_card]);
     }
 
@@ -1334,7 +1471,9 @@ mod limits {
             store.set_max_new_per_day(new).unwrap();
             store.set_max_reviews_per_day(rev).unwrap();
             let summary = &store.list_decks(NOW, DAY_START).unwrap()[0];
-            let input = store.study_input(&deck, NOW, DAY_START).unwrap();
+            let input = store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, DAY_START)
+                .unwrap();
             assert_eq!(
                 (summary.new_count, summary.due_count),
                 (new.min(1), rev.min(10)),
@@ -1356,7 +1495,9 @@ mod limits {
         answer(&mut store, &cards[0], Grade::Pass, NOW);
         answer(&mut store, &fresh, Grade::Pass, NOW);
         let counts = |day_start| {
-            let input = store.study_input(&deck, NOW, day_start).unwrap();
+            let input = store
+                .study_input(&crate::scheduling::StudyScope::deck(&deck), NOW, day_start)
+                .unwrap();
             (input.new_today, input.reviews_today)
         };
         // The day began at the last review: both reviews count.

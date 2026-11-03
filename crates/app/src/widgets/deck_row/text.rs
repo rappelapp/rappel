@@ -224,6 +224,7 @@ mod tests {
                 name: "Scratch".to_owned(),
                 created_at: 0,
                 updated_at: 0,
+                archived_at: None,
             },
             new_count: new,
             due_count: due,

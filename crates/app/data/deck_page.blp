@@ -6,13 +6,22 @@ using Adw 1;
 // NavigationPage:title and AdwWindowTitle are plain text.
 template $RappelDeckPage: Adw.NavigationPage {
   // At most three controls per header side (brief): on a narrow window
-  // the deck page header (Back, New Card, title, Study, menu and the
-  // window buttons) does not fit, so Study moves to a bottom bar, as the
-  // HIG's adaptive header bars do. The bin's size request is the
+  // the deck page header (Back, New Card, title, Study, Select, menu and
+  // the window buttons) does not fit, so Study moves to a bottom bar, as
+  // the HIG's adaptive header bars do. The bin's size request is the
   // window's minimum (data/window.blp); AdwBreakpointBin needs one.
   child: Adw.BreakpointBin {
     width-request: 360;
     height-request: 294;
+
+    // A phone: in selection mode Select All and the action bar keep only
+    // their icons, as on All Cards (pages/deck_page.rs follows it and the
+    // breakpoint below). It comes first: when both match, the last one
+    // applies (AdwBreakpointBin docs: "If multiple breakpoints can be used
+    // for the current size, the last one is used").
+    Adw.Breakpoint selection_narrow {
+      condition ("max-width: 500sp")
+    }
 
     Adw.Breakpoint breakpoint {
       condition ("max-width: 400sp")
@@ -24,14 +33,17 @@ template $RappelDeckPage: Adw.NavigationPage {
       // the bar loses its mnemonic as the header button comes back.
       setters {
         header_study_button.visible: false;
+        select_slot.visible: false;
         bar_study_button.label: _("_Study");
         bar_study_button.use-underline: true;
       }
     }
 
     child: Adw.ToolbarView {
+      // While cards are being chosen the shared header of selection mode
+      // takes its place (ui/selection.rs).
       [top]
-      Adw.HeaderBar {
+      Adw.HeaderBar header {
         title-widget: Adw.WindowTitle window_title {};
 
         [start]
@@ -46,13 +58,33 @@ template $RappelDeckPage: Adw.NavigationPage {
         }
 
         [end]
-        Gtk.MenuButton {
+        // Its "Study Cards Tagged" submenu is filled when it opens
+        // (pages/deck_page.rs, `update_tag_menu`).
+        Gtk.MenuButton deck_menu_button {
           icon-name: "view-more-symbolic";
           menu-model: deck_menu;
           tooltip-text: _("Deck Menu");
 
           accessibility {
             label: _("Deck Menu");
+          }
+        }
+
+        // Selection mode (HIG, "Selection mode"), as on All Cards; disabled
+        // while the deck has no card. On a narrow window it moves to the
+        // bottom bar, so the title has the room (ADR 0071): the slot is what
+        // the breakpoint hides, as selection mode shows and hides the button
+        // itself.
+        [end]
+        Gtk.Box select_slot {
+          Gtk.Button select_button {
+            icon-name: "selection-mode-symbolic";
+            action-name: "selection.choose";
+            tooltip-text: _("Select Cards");
+
+            accessibility {
+              label: _("Select Cards");
+            }
           }
         }
 
@@ -68,6 +100,13 @@ template $RappelDeckPage: Adw.NavigationPage {
             "suggested-action",
           ]
         }
+      }
+
+      // How many cards are chosen, Select All and Cancel; the page cannot
+      // be popped then, so Back hides.
+      [top]
+      $RappelSelectionHeader selection_header {
+        visible: false;
       }
 
       content: Gtk.Stack content_stack {
@@ -142,34 +181,97 @@ template $RappelDeckPage: Adw.NavigationPage {
         }
       };
 
-      // The narrow window's Study button (see the breakpoint above). Shown
-      // by pages/deck_page.rs only while the window is narrow and the deck
-      // has cards (`study_bar_shown`): an empty deck's status page has its
-      // own action and stands alone.
+      // The narrow window's Study and Select Cards buttons (see the
+      // breakpoint above). Shown by pages/deck_page.rs only while the
+      // window is narrow and the deck has cards (`study_bar_shown`): an
+      // empty deck's status page has its own action and stands alone.
       [bottom]
       Gtk.ActionBar study_bar {
         revealed: false;
 
-        [center]
-        Gtk.Button bar_study_button {
-          label: _("Study");
-          action-name: "deck.study";
+        // Select Cards, from the header (see `select_slot`): shown only
+        // with the bar, so only while the window is narrow.
+        [start]
+        Gtk.Button bar_select_button {
+          icon-name: "selection-mode-symbolic";
+          action-name: "selection.choose";
+          tooltip-text: _("Select Cards");
 
-          styles [
-            "pill",
-            "suggested-action",
-          ]
+          accessibility {
+            label: _("Select Cards");
+          }
+        }
+
+        // Study, with the whole line of what there is to study under it,
+        // which the header's subtitle shortens on a phone (set in
+        // pages/deck_page.rs). Under the pill, not beside it: beside it the
+        // French line had too little room at 360 px and was cut at the
+        // window's edge; centred under it, it has the bar's whole width
+        // and wraps only if even that is too narrow (ADR 0071).
+        [center]
+        Gtk.Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Gtk.Button bar_study_button {
+            label: _("Study");
+            action-name: "deck.study";
+            halign: center;
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          }
+
+          Gtk.Label bar_counts {
+            wrap: true;
+            justify: center;
+            xalign: 0.5;
+
+            styles [
+              "caption",
+              "dimmed",
+            ]
+          }
         }
       }
+
+      // The actions on the chosen cards, as on All Cards. The Study bar
+      // above hides while cards are being chosen.
+      [bottom]
+      $RappelSelectionBar selection_bar {}
     };
   };
 }
 
 menu deck_menu {
+  // Practice goes over the deck's cards without writing anything (ADR
+  // 0070); disabled while the deck has none to practise.
   section {
+    item {
+      label: _("_Practice");
+      action: "deck.practice";
+    }
+
     item {
       label: _("_Statistics");
       action: "deck.statistics";
+    }
+  }
+
+  // Changes to the deck itself, apart from what it shows. Merge Into… is
+  // disabled while there is no other deck (dialogs/merge_deck.rs); Archive
+  // goes back to the deck list, with an Undo toast (ADR 0068).
+  section {
+    item {
+      label: _("_Merge Into…");
+      action: "deck.merge";
+    }
+
+    item {
+      label: _("_Archive");
+      action: "deck.archive";
     }
   }
 }

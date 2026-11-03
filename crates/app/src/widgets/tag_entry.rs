@@ -407,7 +407,7 @@ impl TagEntry {
         // GTK_CROSSING_ACTIVE as well as GTK_CROSSING_FOCUS
         // (`gtk_event_controller_focus_handle_crossing`, GTK 4.20). So the
         // decision waits for the focus to settle, in an idle, and is
-        // `keys::should_split`.
+        // `keys::after_leave`.
         let field_focus = gtk::EventControllerFocus::new();
         field_focus.connect_leave(glib::clone!(
             #[weak(rename_to = entry)]
@@ -453,12 +453,25 @@ impl TagEntry {
         );
     }
 
-    /// Makes the typed name a pill if `keys::should_split` says so, for a
-    /// window that is `active` or not and the widget with the `focus`.
+    /// Does what `keys::after_leave` says, for a window that is `active` or
+    /// not and the widget with the `focus`.
     fn after_leave(&self, active: bool, focus: Option<gtk::Widget>) {
-        if keys::should_split(active, self.has_focus_inside(focus)) {
-            self.imp().split_queued.set(false);
-            self.split(true);
+        let ancestor = focus.as_ref().is_some_and(|focus| self.is_ancestor(focus));
+        let inside = self.has_focus_inside(focus);
+        match keys::after_leave(active, inside, ancestor) {
+            keys::AfterLeave::Nothing => {}
+            keys::AfterLeave::Split => {
+                self.imp().split_queued.set(false);
+                self.split(true);
+            }
+            keys::AfterLeave::Refocus => {
+                // `GtkText` selects everything when it takes the focus by
+                // keyboard focus; the next key would replace the name.
+                let text = self.text();
+                let position = text.position();
+                text.grab_focus();
+                text.select_region(position, position);
+            }
         }
     }
 
@@ -925,6 +938,10 @@ mod tests {
             assert_eq!(entry.typed(), "geo");
             // The window went to the background: the name stays.
             entry.after_leave(false, Some(other.clone().upcast()));
+            assert_eq!(entry.typed(), "geo");
+            // A container around the field has the focus (the sheet of a
+            // dialog after a resize): nobody chose it, the name stays.
+            entry.after_leave(true, Some(column.upcast()));
             assert_eq!(entry.typed(), "geo");
             // Elsewhere in an active window: a pill.
             entry.after_leave(true, Some(other.upcast()));

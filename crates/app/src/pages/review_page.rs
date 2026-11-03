@@ -1,8 +1,21 @@
-//! A study session of one deck: the front, then the back, then Fail or
-//! Pass; a summary at the end. Layout in `data/review_page.blp` (ADR 0014).
+//! A study session of one deck, or of the cards carrying a tag in every
+//! deck that is not archived ([`Studied`], ADR 0069): the front, then the
+//! back, then Fail or Pass; a summary at the end. Layout in
+//! `data/review_page.blp` (ADR 0014).
 //!
 //! The order of cards is the core's [`Session`]. Each answer is recorded
 //! at once with `record_review`, so leaving early loses nothing.
+//!
+//! A **practice** ([`Mode::Practice`], ADR 0070) runs on the same page over
+//! the core's [`Practice`] instead: lowest retrievability first, the same
+//! Fail and Pass, and **nothing written**. Its answers and their Undo go
+//! only to the [`Practice`] in memory (`grade_practice`, `undo_practice`,
+//! which call no writing method of [`AppState`]: the tests enforce it); a
+//! banner says "Practice — nothing is rescheduled" and the summary
+//! "Practice: nothing was rescheduled".
+//! Edit, Card Information, Suspend, Move to Deck and Delete work as in a
+//! session: explicit card commands, each with its own Undo, that do not
+//! reschedule, so the summary stays true.
 //!
 //! Keys, in the bubble phase so a focused button keeps its own Space and
 //! Enter: Space or Enter shows the answer; then 1 is Fail, 2 or Space is
@@ -26,21 +39,23 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 use rappel_core::content::{self, Document};
-use rappel_core::domain::{CardState, Deck, Grade};
-use rappel_core::scheduling::{Session, Summary, capped};
+use rappel_core::domain::{CardState, Deck, Grade, Tag};
+use rappel_core::scheduling::{Practice, Session, StudyScope, Summary, capped};
 
 use crate::dialogs::card_editor::{CardEditor, Saved};
-use crate::dialogs::card_info;
-use crate::i18n::{self, gettext, ngettext};
+use crate::dialogs::{card_info, move_card};
+use crate::i18n::{self, gettext, ngettext, pgettext};
 use crate::render::{Images, audio_controls, back_shown, clear, fill, shown_part, stop_audio};
 use crate::state::AppState;
 use crate::ui::callback::Callback;
 use crate::ui::dialog;
-use crate::ui::text::{counted, duration_text, group_digits, whole_percent, with_error};
+use crate::ui::text::{
+    counted, duration_text, group_digits, isolate, one_line, whole_percent, with_error,
+};
 use crate::ui::tile::{Tile, set_tile};
 use crate::ui::toast::{info_toast, log_failure, show_error, show_toast_from, undo_toast};
 use crate::ui::undo::{self, UndoFailure};
-use crate::ui::{breakpoint, init_once, nav};
+use crate::ui::{breakpoint, init_once, keys, nav};
 use crate::window::RappelWindow;
 
 type OnSaved = dyn Fn(Saved);
@@ -54,10 +69,8 @@ mod imp {
     use adw::subclass::prelude::*;
     use gtk::glib;
     use rappel_core::content::Document;
-    use rappel_core::domain::Deck;
-    use rappel_core::scheduling::Session;
 
-    use super::OnSaved;
+    use super::{OnSaved, Run, Studied};
     use crate::state::AppState;
     use crate::ui::callback::Callback;
     use crate::ui::toast::ErrorSlot;
@@ -68,7 +81,11 @@ mod imp {
         #[template_child]
         pub window_title: TemplateChild<adw::WindowTitle>,
         #[template_child]
+        pub banner: TemplateChild<adw::Banner>,
+        #[template_child]
         pub edit_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub undo_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub card_menu_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
@@ -88,11 +105,11 @@ mod imp {
         #[template_child]
         pub bottom_bar: TemplateChild<adw::Clamp>,
         #[template_child]
-        pub reveal_hint: TemplateChild<gtk::Label>,
+        pub reveal_button: TemplateChild<gtk::Button>,
         #[template_child]
-        pub fail_hint: TemplateChild<gtk::Label>,
+        pub fail_button: TemplateChild<gtk::Button>,
         #[template_child]
-        pub pass_hint: TemplateChild<gtk::Label>,
+        pub pass_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub buttons: TemplateChild<adw::ViewStack>,
         #[template_child]
@@ -110,14 +127,28 @@ mod imp {
         #[template_child]
         pub passed_caption: TemplateChild<gtk::Label>,
         #[template_child]
+        pub time_tile: TemplateChild<gtk::Box>,
+        #[template_child]
         pub time_value: TemplateChild<gtk::Label>,
         #[template_child]
         pub time_caption: TemplateChild<gtk::Label>,
         #[template_child]
         pub done_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub practice_button: TemplateChild<gtk::Button>,
         pub state: OnceCell<AppState>,
-        pub deck: OnceCell<Deck>,
-        pub session: RefCell<Option<Session>>,
+        /// What the session studies.
+        pub studied: OnceCell<Studied>,
+        /// Whether there was nothing to study when the session began: the
+        /// summary then says so instead of "Session Complete".
+        pub started_empty: Cell<bool>,
+        /// Decks archived while this tag's session was open
+        /// (`super::ReviewPage::leave_deck`): their cards are never shown
+        /// again, whatever brings them back (an Undo of an answer, of a
+        /// Suspend, a Delete or a Move).
+        pub left_decks: RefCell<std::collections::HashSet<String>>,
+        /// The session, or the practice (ADR 0070).
+        pub(super) session: RefCell<Option<Run>>,
         /// The card on screen.
         pub current: RefCell<Option<String>>,
         /// Its back, parsed, until it is shown.
@@ -136,8 +167,16 @@ mod imp {
         pub errors: ErrorSlot,
         /// Whether the card editor is open.
         pub editing: Rc<Cell<bool>>,
-        /// Whether the question before a delete is open.
+        /// Whether the question before a delete, or the choice of a deck to
+        /// move the card to, is open.
         pub asking: Cell<bool>,
+        /// Another deck exists to move the card on screen to.
+        pub can_move: Cell<bool>,
+        /// A window under [`EDIT_IN_MENU_WIDTH`]: Edit Card is only in the
+        /// Card Menu, so the title has the header's room (ADR 0071).
+        pub narrow: Cell<bool>,
+        /// A card is on screen (what shows the Edit and Card Menu buttons).
+        pub editable: Cell<bool>,
         /// Told about every save made from this page's editor.
         pub on_saved: OnceCell<Callback<OnSaved>>,
         /// Fades the back in at the reveal (`super::reveal_step`).
@@ -165,8 +204,12 @@ mod imp {
             klass.install_action("review.suspend", None, |page, _, _| {
                 page.remove_current(super::Removal::Suspend);
             });
+            klass.install_action("review.move", None, |page, _, _| page.move_current());
             klass.install_action("review.delete", None, |page, _, _| page.confirm_delete());
             klass.install_action("review.undo", None, |page, _, _| page.undo());
+            klass.install_action("review.practice", None, |page, _, _| {
+                page.practise_instead();
+            });
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -179,8 +222,10 @@ mod imp {
             self.parent_constructed();
             let page = self.obj();
             page.setup_keys();
+            page.setup_key_tooltips();
             page.setup_reveal_animation();
             page.setup_short_summary();
+            page.follow_width();
             // A grab before the push does nothing, and the navigation view
             // then focuses the first widget: the Back button, which would
             // take Space and Enter. So park the focus once on screen.
@@ -233,6 +278,43 @@ fn undo_removal(
         Removal::Suspend => state.restore_suspended(&[id.to_owned()], false).map(|_| ()),
         Removal::Delete => state.undelete_card(id).map(|_| ()),
     };
+    finish_undo(state, id, result, page, window);
+}
+
+/// The Undo of a move to another deck: the card is studied again if it went
+/// back to its deck. `result` is how many cards went back, 0 if it could
+/// not (moved again, deleted, or its deck deleted since).
+fn undo_move(
+    state: &AppState,
+    id: &str,
+    result: rappel_core::Result<usize>,
+    page: &glib::WeakRef<ReviewPage>,
+    window: Option<&glib::WeakRef<RappelWindow>>,
+) {
+    let window = window.and_then(glib::WeakRef::upgrade);
+    match result {
+        Ok(0) => {
+            let text = move_card::not_moved_back_text();
+            match window {
+                Some(window) => show_toast_from(&window, info_toast(&text)),
+                None => log_failure("a review operation", &text),
+            }
+        }
+        Ok(_) => finish_undo(state, id, Ok(()), page, window),
+        Err(err) => finish_undo(state, id, Err(err), page, window),
+    }
+}
+
+/// After the Undo of a removal wrote (`result`): the card is put back into
+/// the session if the page is still shown and the card is live and not
+/// suspended, and the other pages read the change; or the error is shown.
+fn finish_undo(
+    state: &AppState,
+    id: &str,
+    result: rappel_core::Result<()>,
+    page: &glib::WeakRef<ReviewPage>,
+    window: Option<RappelWindow>,
+) {
     match result {
         Ok(()) => {
             // Only a card that is live and not suspended is studied again
@@ -319,6 +401,13 @@ pub(crate) fn key_triggers() -> impl Iterator<Item = &'static str> {
     KEYS.iter().map(|(trigger, _)| *trigger)
 }
 
+/// How GTK labels the first of [`KEYS`] bound to `key` ("Space", "2"), the
+/// way it shows an accelerator in a menu, in the user's language.
+fn key_label(key: Key) -> Option<String> {
+    let (trigger, _) = KEYS.iter().find(|(_, bound)| *bound == key)?;
+    keys::label(trigger)
+}
+
 /// What a key makes the page do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Act {
@@ -394,6 +483,16 @@ fn suspend_allowed(shown_for: Option<Duration>) -> bool {
 }
 
 impl ReviewPage {
+    /// The id of the deck being studied; `None` for a tag's session, which
+    /// is no deck's (the window never remembers it as the last deck, and
+    /// archiving a deck does not leave it).
+    pub fn deck_id(&self) -> Option<String> {
+        match self.imp().studied.get()? {
+            Studied::Deck { deck, .. } => Some(deck.id.clone()),
+            Studied::Tag { .. } => None,
+        }
+    }
+
     /// A session over what `deck` has to study now, showing its first card.
     /// `on_saved` is called after each save made from the session's editor.
     ///
@@ -404,15 +503,143 @@ impl ReviewPage {
         deck: Deck,
         on_saved: impl Fn(Saved) + 'static,
     ) -> rappel_core::Result<Self> {
+        let studied = Studied::Deck {
+            deck,
+            from: StartedFrom::DeckPage,
+        };
+        Self::start(state, studied, Mode::Study, on_saved)
+    }
+
+    /// A practice of `studied` (ADR 0070): its cards, lowest retrievability
+    /// first, with nothing written; otherwise as [`Self::new`].
+    ///
+    /// # Errors
+    /// If what to practise cannot be read.
+    pub fn practice(
+        state: AppState,
+        studied: Studied,
+        on_saved: impl Fn(Saved) + 'static,
+    ) -> rappel_core::Result<Self> {
+        Self::start(state, studied, Mode::Practice, on_saved)
+    }
+
+    /// Whether this page is a practice.
+    pub fn is_practice(&self) -> bool {
+        matches!(&*self.imp().session.borrow(), Some(Run::Practice(_)))
+    }
+
+    /// A session over the cards carrying `tag` in every deck that is not
+    /// archived, each deck within its own daily limits (ADR 0069), started
+    /// from `from`; otherwise as [`Self::new`].
+    ///
+    /// # Errors
+    /// If what to study cannot be read.
+    pub fn for_tag(
+        state: AppState,
+        tag: Tag,
+        from: StartedFrom,
+        on_saved: impl Fn(Saved) + 'static,
+    ) -> rappel_core::Result<Self> {
+        Self::start(state, Studied::Tag { tag, from }, Mode::Study, on_saved)
+    }
+
+    /// Pushes a session over tag `tag_id` above the page that holds
+    /// `from_page` (a deck page or All Cards, as `from` says), unless a
+    /// session is already on top. The tag is read first: `TagNotFound` if
+    /// it is not one (tags are never deleted, ADR 0029).
+    ///
+    /// Returns whether a session was pushed.
+    ///
+    /// # Errors
+    /// If the tag or what to study cannot be read; nothing is pushed then.
+    pub fn push_for_tag(
+        from_page: &impl IsA<gtk::Widget>,
+        state: &AppState,
+        tag_id: &str,
+        from: StartedFrom,
+        on_saved: impl Fn(Saved) + 'static,
+    ) -> rappel_core::Result<bool> {
+        let Some(view) = nav::navigation_view(from_page) else {
+            return Ok(false);
+        };
+        nav::push_unless_on_top(&view, || {
+            let tag = state
+                .tags()?
+                .into_iter()
+                .find(|t| t.id == tag_id)
+                .ok_or_else(|| rappel_core::Error::TagNotFound(tag_id.to_owned()))?;
+            Self::for_tag(state.clone(), tag, from, on_saved)
+        })
+    }
+
+    /// Deck `deck_id` was archived while this page is open: a tag's session
+    /// drops that deck's cards, as an archived deck is not studied (ADR
+    /// 0068, 0069), and the card on screen, if it is one of them, leaves
+    /// the session as a suspended card does (nothing is counted). A deck's
+    /// own session is left by the window instead.
+    pub fn leave_deck(&self, deck_id: &str) {
+        let imp = self.imp();
+        let (Some(state), Some(Studied::Tag { .. })) = (imp.state.get(), imp.studied.get()) else {
+            return;
+        };
+        imp.left_decks.borrow_mut().insert(deck_id.to_owned());
+        let cards = match state.list_cards(deck_id) {
+            Ok(cards) => cards,
+            Err(err) => {
+                tracing::warn!("cannot read the cards of an archived deck: {err}");
+                return;
+            }
+        };
+        let current = imp.current.borrow().clone();
+        let mut leaves_screen = false;
+        if let Some(session) = imp.session.borrow_mut().as_mut() {
+            for card in &cards {
+                if current.as_deref() == Some(card.id.as_str()) {
+                    leaves_screen = true;
+                } else {
+                    session.skip(&card.id);
+                }
+            }
+        }
+        if leaves_screen && let Some(id) = current {
+            self.leave_session(&id);
+        }
+    }
+
+    fn start(
+        state: AppState,
+        studied: Studied,
+        mode: Mode,
+        on_saved: impl Fn(Saved) + 'static,
+    ) -> rappel_core::Result<Self> {
         let now = rappel_core::time::now_ms();
-        let input = state.study_input(&deck.id, now)?;
+        let (run, empty) = match mode {
+            Mode::Study => {
+                let input = state.study_input(&studied.scope(), now)?;
+                let empty = input.is_empty();
+                (Run::Study(Session::new(input)), empty)
+            }
+            Mode::Practice => {
+                let queue = state.practice_queue(&studied.scope(), now)?;
+                let empty = queue.is_empty();
+                (Run::Practice(Practice::new(queue)), empty)
+            }
+        };
         let page: Self = glib::Object::new();
         let imp = page.imp();
-        // Deck names are untrusted; AdwWindowTitle shows plain text.
-        imp.window_title.set_title(&deck.name);
-        imp.session.replace(Some(Session::new(input)));
+        // Deck and tag names are untrusted; AdwWindowTitle shows plain
+        // text.
+        imp.window_title.set_title(&studied.title());
+        imp.done_button.set_label(&studied.done_label());
+        if mode == Mode::Practice {
+            // Read by screen readers as the page's name, and by the Back
+            // button of a page above it.
+            page.set_title(&pgettext("page title", "Practice"));
+        }
+        imp.started_empty.set(empty);
+        imp.session.replace(Some(run));
         init_once(&imp.state, state);
-        init_once(&imp.deck, deck);
+        init_once(&imp.studied, studied);
         init_once(&imp.on_saved, Callback::new(Rc::new(on_saved)));
         page.show_next();
         Ok(page)
@@ -434,6 +661,24 @@ impl ReviewPage {
             ));
         }
         self.add_controller(shortcuts);
+    }
+
+    /// Gives Show Answer, Fail and Pass their key in the tooltip (#105),
+    /// as the page binds it: the key's label is the one GTK shows in menus
+    /// (`gtk_accelerator_get_label`), in the user's language.
+    fn setup_key_tooltips(&self) {
+        let imp = self.imp();
+        for (button, name, key) in [
+            (&*imp.reveal_button, gettext("Show Answer"), Key::Space),
+            (&*imp.fail_button, gettext("Fail"), Key::Fail),
+            (&*imp.pass_button, gettext("Pass"), Key::Pass),
+            (&*imp.undo_button, gettext("Undo Last Answer"), Key::Undo),
+            (&*imp.edit_button, gettext("Edit Card"), Key::Edit),
+        ] {
+            if let Some(label) = key_label(key) {
+                button.set_tooltip_text(Some(&keys::tooltip(&name, &label)));
+            }
+        }
     }
 
     /// Puts the keyboard focus on the card, or on Back to Deck at the end.
@@ -514,8 +759,9 @@ impl ReviewPage {
                 }
             };
             // Suspended since the session began (another window, or an Undo
-            // of an answer that brought it back): not studied, not counted.
-            if card.suspended {
+            // of an answer that brought it back), or of a deck archived
+            // since (ADR 0069): not studied, not counted.
+            if card.suspended || imp.left_decks.borrow().contains(&card.deck_id) {
                 self.skip_in_session(&id);
                 continue;
             }
@@ -533,11 +779,19 @@ impl ReviewPage {
             .reset_property(gtk::AccessibleProperty::Description);
         self.keep_back(&card.back_md);
         imp.revealed_at.set(None);
+        // Move to Deck… needs a deck other than the card's own.
+        imp.can_move.set(
+            state
+                .decks()
+                .is_ok_and(|decks| move_card::offered(&decks, Some(&card.deck_id))),
+        );
         imp.current.replace(Some(id));
         imp.shown_at.set(Some(Instant::now()));
-        let left = imp.session.borrow().as_ref().map_or(0, Session::remaining);
+        let left = imp.session.borrow().as_ref().map_or(0, Run::remaining);
         imp.window_title.set_subtitle(&left_text(left));
         self.set_controls(Controls::Reveal);
+        // A practice says so above every card (ADR 0070).
+        imp.banner.set_revealed(self.is_practice());
         imp.stack.set_visible_child_name("card");
         imp.card_area.grab_focus();
     }
@@ -562,6 +816,33 @@ impl ReviewPage {
         let animation = adw::TimedAnimation::new(&*imp.card_area, 0.0, 1.0, REVEAL_MS, target);
         animation.set_easing(adw::Easing::EaseOutCubic);
         init_once(&imp.reveal_animation, animation);
+    }
+
+    /// Keeps Edit Card out of the header on a narrow window.
+    fn follow_width(&self) {
+        breakpoint::follow_window_width(
+            self,
+            EDIT_IN_MENU_WIDTH,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |narrow| {
+                    page.imp().narrow.set(narrow);
+                    page.show_header_buttons();
+                }
+            ),
+        );
+    }
+
+    /// The header's Edit Card and Card Menu buttons: with a card on
+    /// screen; Edit Card only while the window is not narrow (see
+    /// [`edit_button_shown`]).
+    fn show_header_buttons(&self) {
+        let imp = self.imp();
+        let (editable, narrow) = (imp.editable.get(), imp.narrow.get());
+        imp.edit_button
+            .set_visible(edit_button_shown(editable, narrow));
+        imp.card_menu_button.set_visible(editable);
     }
 
     /// Makes the summary `compact` (libadwaita's style class for a status
@@ -715,11 +996,7 @@ impl ReviewPage {
     /// Opens the card editor on the card on screen.
     fn edit(&self) {
         let imp = self.imp();
-        let (Some(state), Some(deck), Some(id)) = (
-            imp.state.get(),
-            imp.deck.get(),
-            imp.current.borrow().clone(),
-        ) else {
+        let (Some(state), Some(id)) = (imp.state.get(), imp.current.borrow().clone()) else {
             return;
         };
         if imp.editing.get() {
@@ -743,7 +1020,9 @@ impl ReviewPage {
             self,
             &imp.editing,
             state.clone(),
-            &deck.id,
+            // The card's own deck: in a tag's session it is not one deck
+            // (Ctrl+Shift+Enter adds the next card there too).
+            &card.deck_id,
             Some(&card),
             glib::clone!(
                 #[weak(rename_to = page)]
@@ -890,6 +1169,123 @@ impl ReviewPage {
         }
     }
 
+    /// Move to Deck… (Card Menu): asks for a deck other than the card's,
+    /// moves the card there, and takes it out of the session as Suspend
+    /// does (ADR 0037, 0064), with an Undo toast. Nothing is counted as
+    /// answered.
+    fn move_current(&self) {
+        let imp = self.imp();
+        if imp.editing.get() || imp.asking.get() || !imp.can_move.get() {
+            return;
+        }
+        let (Some(id), Some(state)) = (imp.current.borrow().clone(), imp.state.get().cloned())
+        else {
+            return;
+        };
+        let targets = match state.card(&id).and_then(|card| {
+            let decks = state.decks()?;
+            Ok(move_card::targets(&decks, &card.deck_id)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<Deck>>())
+        }) {
+            Ok(targets) => targets,
+            Err(rappel_core::Error::CardNotFound(_)) => {
+                // Deleted elsewhere meanwhile: it is gone from the session too.
+                self.leave_session(&id);
+                show_toast_from(self, info_toast(&gettext("The card was already gone")));
+                return;
+            }
+            Err(err) => {
+                // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+                self.error_toast(&with_error(
+                    &gettext("The card could not be changed: {error}"),
+                    &err,
+                ));
+                return;
+            }
+        };
+        if targets.is_empty() {
+            // The last other deck went since the card was shown.
+            imp.can_move.set(false);
+            self.action_set_enabled("review.move", false);
+            show_toast_from(self, info_toast(&move_card::no_other_deck_text()));
+            return;
+        }
+        imp.asking.set(true);
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            async move {
+                // AdwDialog gives the focus back to the widget that had it
+                // when it has closed (see `confirm_delete`): the card area
+                // needs it for the keys to work.
+                let closed = glib::clone!(
+                    #[weak]
+                    page,
+                    move || page.park_focus()
+                );
+                let answer = move_card::choose_deck(&page, targets, closed).await;
+                page.imp().asking.set(false);
+                // Only the card the question was about.
+                if let Some(target) = answer
+                    && page.imp().current.borrow().as_deref() == Some(&id)
+                {
+                    page.finish_move(&id, &target);
+                }
+            }
+        ));
+    }
+
+    /// Moves card `id` to `target`, then the card leaves the session.
+    fn finish_move(&self, id: &str, target: &Deck) {
+        let Some(state) = self.imp().state.get() else {
+            return;
+        };
+        let moved = match state.move_cards(&[id.to_owned()], &target.id) {
+            Ok(moved) if !moved.is_empty() => moved,
+            Ok(_) => {
+                // In that deck already: it is not this session's any more.
+                self.leave_session(id);
+                show_toast_from(self, info_toast(&gettext("The card was already moved")));
+                return;
+            }
+            Err(rappel_core::Error::CardNotFound(_)) => {
+                self.leave_session(id);
+                show_toast_from(self, info_toast(&gettext("The card was already gone")));
+                return;
+            }
+            Err(rappel_core::Error::DeckNotFound(_)) => {
+                // The deck was deleted while the choice was open.
+                show_toast_from(self, info_toast(&crate::ui::selection::text::stale_text()));
+                return;
+            }
+            Err(err) => {
+                // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+                self.error_toast(&with_error(
+                    &gettext("The card could not be moved: {error}"),
+                    &err,
+                ));
+                return;
+            }
+        };
+        self.leave_session(id);
+
+        // As for Suspend: Undo must work after leaving the page, so the
+        // closure keeps the state and weak references, not the page.
+        let window = self.root().and_downcast::<RappelWindow>();
+        if let Some(window) = &window {
+            window.data_changed();
+        }
+        let (id, state) = (id.to_owned(), state.clone());
+        let page = self.downgrade();
+        let window = window.map(|w| w.downgrade());
+        let toast = move_card::moved_toast(&state.clone(), moved, move |result| {
+            undo_move(&state, &id, result, &page, window.as_ref());
+        });
+        show_toast_from(self, toast);
+    }
+
     /// Asks before deleting the card on screen. Cancel is the default.
     fn confirm_delete(&self) {
         let imp = self.imp();
@@ -931,13 +1327,21 @@ impl ReviewPage {
     /// that is due, still goes first), and the summary gives way to it.
     fn put_back(&self, id: &str) {
         let imp = self.imp();
+        // A card of a deck archived since does not come back (ADR 0069).
+        if let Some(state) = imp.state.get()
+            && state
+                .card(id)
+                .is_ok_and(|card| imp.left_decks.borrow().contains(&card.deck_id))
+        {
+            return;
+        }
         if let Some(session) = imp.session.borrow_mut().as_mut() {
             session.put_back(id);
         }
         if imp.current.borrow().is_none() {
             self.show_next();
         } else {
-            let left = imp.session.borrow().as_ref().map_or(0, Session::remaining);
+            let left = imp.session.borrow().as_ref().map_or(0, Run::remaining);
             imp.window_title.set_subtitle(&left_text(left));
         }
     }
@@ -982,9 +1386,10 @@ impl ReviewPage {
         self.action_set_enabled("review.edit", editable);
         self.action_set_enabled("review.card-info", editable);
         self.action_set_enabled("review.suspend", editable);
+        self.action_set_enabled("review.move", editable && self.imp().can_move.get());
         self.action_set_enabled("review.delete", editable);
-        self.imp().edit_button.set_visible(editable);
-        self.imp().card_menu_button.set_visible(editable);
+        self.imp().editable.set(editable);
+        self.show_header_buttons();
         // The summary has its own button; the bar goes, and the summary
         // gets its room.
         self.imp().bottom_bar.set_visible(name.is_some());
@@ -1004,7 +1409,7 @@ impl ReviewPage {
             .session
             .borrow()
             .as_ref()
-            .is_some_and(|s| s.last_answer().is_some());
+            .is_some_and(Run::can_undo);
         self.action_set_enabled("review.undo", can_undo);
     }
 
@@ -1012,21 +1417,26 @@ impl ReviewPage {
     /// session, then the card is shown again as new (front side, timer
     /// restarted), whether a card or the summary was on screen.
     fn undo(&self) {
+        if self.is_practice() {
+            self.undo_practice();
+            return;
+        }
         let imp = self.imp();
         let Some(state) = imp.state.get() else {
             return;
         };
-        let last = imp
-            .session
-            .borrow()
-            .as_ref()
-            .and_then(|s| s.last_answer().map(|(c, e)| (c.to_owned(), e.to_owned())));
+        let last = match &*imp.session.borrow() {
+            Some(Run::Study(session)) => session
+                .last_answer()
+                .map(|(c, e)| (c.to_owned(), e.to_owned())),
+            _ => None,
+        };
         let Some((card_id, entry_id)) = last else {
             return;
         };
         match state.undo(&card_id, &entry_id, rappel_core::time::now_ms()) {
             Ok(_) => {
-                if let Some(session) = imp.session.borrow_mut().as_mut() {
+                if let Some(Run::Study(session)) = imp.session.borrow_mut().as_mut() {
                     session.undo_last();
                 }
                 imp.current.replace(None);
@@ -1036,7 +1446,7 @@ impl ReviewPage {
                 UndoFailure::Stale => {
                     // Older answers are undone only after this one, so none
                     // of them can be now.
-                    if let Some(session) = imp.session.borrow_mut().as_mut() {
+                    if let Some(Run::Study(session)) = imp.session.borrow_mut().as_mut() {
                         session.forget_answers();
                     }
                     self.update_undo();
@@ -1063,6 +1473,10 @@ impl ReviewPage {
     /// If it cannot be recorded, the card stays so the answer can be given
     /// again.
     fn grade(&self, grade: Grade) {
+        if self.is_practice() {
+            self.grade_practice(grade);
+            return;
+        }
         let imp = self.imp();
         let Some(state) = imp.state.get() else {
             return;
@@ -1092,11 +1506,124 @@ impl ReviewPage {
             tracing::warn!("cannot read a card's state after an answer: {err}");
             CardState::New
         });
-        if let Some(session) = imp.session.borrow_mut().as_mut() {
+        if let Some(Run::Study(session)) = imp.session.borrow_mut().as_mut() {
             session.graded(&id, &event.id, grade, duration, &card_state);
         }
         imp.current.replace(None);
         self.show_next();
+    }
+
+    /// A practice's answer for the card on screen (ADR 0070): kept in the
+    /// [`Practice`] alone, which shows the next card. Nothing is written:
+    /// this does not use the [`AppState`] (the practice tests check the
+    /// database is unchanged).
+    fn grade_practice(&self, grade: Grade) {
+        let imp = self.imp();
+        if !imp.revealed.get() {
+            return;
+        }
+        let Some(id) = imp.current.borrow().clone() else {
+            return;
+        };
+        let duration = imp.shown_at.get().map_or(Duration::ZERO, |t| t.elapsed());
+        if let Some(Run::Practice(practice)) = imp.session.borrow_mut().as_mut() {
+            practice.graded(&id, grade, duration);
+        }
+        imp.current.replace(None);
+        self.show_next();
+    }
+
+    /// Steps a practice back one answer (ADR 0070): the card is shown
+    /// again, front first, and the summary loses the answer. Only memory
+    /// changes, as for [`Self::grade_practice`].
+    ///
+    /// An answer whose card can no longer be practised (deleted, suspended,
+    /// moved out of a tag's decks by an archive, `practisable_card`) is
+    /// taken back silently, its card left out, and the step goes on to the
+    /// answer before it: one Ctrl+Z always shows a card that came back,
+    /// never an error about one that is gone. With no such answer left,
+    /// the card on screen stays as it was.
+    fn undo_practice(&self) {
+        let imp = self.imp();
+        let back = loop {
+            let undone = match imp.session.borrow_mut().as_mut() {
+                Some(Run::Practice(practice)) => practice.undo_last(),
+                _ => None,
+            };
+            let Some(id) = undone else {
+                break None;
+            };
+            if self.practisable_card(&id) {
+                break Some(id);
+            }
+            if let Some(Run::Practice(practice)) = imp.session.borrow_mut().as_mut() {
+                practice.skip(&id);
+            }
+        };
+        if back.is_some() || imp.current.borrow().is_none() {
+            // A card came back, or the summary is read again.
+            imp.current.replace(None);
+            self.show_next();
+        } else {
+            self.update_undo();
+            let left = imp.session.borrow().as_ref().map_or(0, Run::remaining);
+            imp.window_title.set_subtitle(&left_text(left));
+        }
+    }
+
+    /// Whether card `id` can still be practised here: live, not
+    /// suspended, in a deck that is not archived nor left by this page
+    /// (`left_decks`), and still in the practice's scope: in its deck (not
+    /// moved since), or carrying its tag (not untagged since). Only reads.
+    fn practisable_card(&self, id: &str) -> bool {
+        let imp = self.imp();
+        let (Some(state), Some(studied)) = (imp.state.get(), imp.studied.get()) else {
+            return false;
+        };
+        let Ok(card) = state.card(id) else {
+            return false;
+        };
+        let in_scope = match studied {
+            Studied::Deck { deck, .. } => card.deck_id == deck.id,
+            Studied::Tag { tag, .. } => state
+                .card_tags(id)
+                .is_ok_and(|tags| tags.iter().any(|t| t.id == tag.id)),
+        };
+        in_scope
+            && !card.suspended
+            && !imp.left_decks.borrow().contains(&card.deck_id)
+            && state
+                .deck(&card.deck_id)
+                .is_ok_and(|deck| !deck.is_archived())
+    }
+
+    /// Practice from the summary's button: this page gives way to a
+    /// practice of the same deck or tag, so Back from it goes where Back
+    /// from here went (`nav::replace_visible`).
+    fn practise_instead(&self) {
+        let imp = self.imp();
+        let (Some(state), Some(studied)) = (imp.state.get(), imp.studied.get()) else {
+            return;
+        };
+        let Some(view) = nav::navigation_view(self) else {
+            return;
+        };
+        let on_saved = imp.on_saved.get().map(Callback::get);
+        let started = Self::practice(state.clone(), studied.clone(), move |saved| {
+            if let Some(on_saved) = &on_saved {
+                on_saved(saved);
+            }
+        });
+        match started {
+            Ok(page) => nav::replace_visible(&view, &page),
+            Err(err) => {
+                // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+                self.error_toast(&with_error(
+                    &gettext("The session could not start: {error}"),
+                    &err,
+                ));
+            }
+        }
     }
 
     fn show_summary(&self) {
@@ -1107,17 +1634,53 @@ impl ReviewPage {
             .session
             .borrow()
             .as_ref()
-            .map(Session::summary)
+            .map(Run::summary)
             .unwrap_or_default();
-        if let Some([cards, passed, time]) = summary_tiles(&summary) {
+        let practising = self.is_practice();
+        let tiles = summary_tiles(&summary, practising);
+        // Read only after a session: a practice never offers it.
+        let practisable = !practising && self.practisable();
+        imp.practice_button
+            .set_visible(practice_button_shown(practising, practisable));
+        // A practice's summary says what it did in words, and gives the
+        // cards practised and the pass rate: the banner and the time would
+        // only repeat or crowd it (a phone shows it all without scrolling).
+        imp.banner.set_revealed(false);
+        imp.time_tile.set_visible(!practising);
+        if practising {
+            // The description is Pango markup; this text is ours, but
+            // escaped all the same, as every text put there.
+            imp.summary_figures.set_visible(tiles.is_some());
+            if let Some([cards, passed, time]) = tiles {
+                set_tile(&imp.cards_value, &imp.cards_caption, &cards);
+                set_tile(&imp.passed_value, &imp.passed_caption, &passed);
+                set_tile(&imp.time_value, &imp.time_caption, &time);
+            }
+            imp.summary_page.set_title(&practice_complete());
+            imp.summary_page
+                .set_description(Some(&glib::markup_escape_text(&nothing_rescheduled())));
+        } else if let Some([cards, passed, time]) = tiles {
             set_tile(&imp.cards_value, &imp.cards_caption, &cards);
             set_tile(&imp.passed_value, &imp.passed_caption, &passed);
             set_tile(&imp.time_value, &imp.time_caption, &time);
             imp.summary_figures.set_visible(true);
+            imp.summary_page.set_title(&session_complete());
             imp.summary_page.set_description(None);
+        } else if imp.started_empty.get()
+            && let Some(studied) = imp.studied.get()
+        {
+            // Nothing was there to study: the "all done" page.
+            imp.summary_figures.set_visible(false);
+            imp.summary_page.set_title(&nothing_to_study());
+            // The description is Pango markup (`AdwStatusPage:description`)
+            // and the text names a deck or a tag, which is untrusted.
+            imp.summary_page
+                .set_description(Some(&glib::markup_escape_text(&studied.nothing_to_study())));
         } else {
             imp.summary_figures.set_visible(false);
-            imp.summary_page.set_description(Some(&nothing_reviewed()));
+            imp.summary_page.set_title(&session_complete());
+            imp.summary_page
+                .set_description(Some(&glib::markup_escape_text(&nothing_reviewed())));
         }
         imp.window_title.set_subtitle("");
         self.set_controls(Controls::Hidden);
@@ -1127,6 +1690,22 @@ impl ReviewPage {
 
     fn done(&self) {
         nav::pop(self);
+    }
+
+    /// Whether a practice of what this page studies would show a card
+    /// (`AppState::has_practisable`; `false` if that cannot be read: the
+    /// button is then not offered).
+    fn practisable(&self) -> bool {
+        let imp = self.imp();
+        let (Some(state), Some(studied)) = (imp.state.get(), imp.studied.get()) else {
+            return false;
+        };
+        state
+            .has_practisable(&studied.scope())
+            .unwrap_or_else(|err| {
+                tracing::warn!("cannot read what to practise: {err}");
+                false
+            })
     }
 
     /// Shows `message`, dismissing the previous error toast of this page
@@ -1156,6 +1735,18 @@ fn with_cut_note(text: String, cut: bool) -> String {
 /// `review_page.blp`.
 fn cut_note() -> String {
     gettext("This card is long: only its start is shown. Edit it to see all of it.")
+}
+
+/// The window width under which Edit Card leaves the header for the Card
+/// Menu: at 360 px with minimise and maximise shown, the title and the
+/// subtitle ("30 restantes") of a session are cut beside Back, Undo, Edit,
+/// the menu and the window buttons.
+const EDIT_IN_MENU_WIDTH: i32 = 400;
+
+/// Whether the header shows its Edit Card button: with a card on screen
+/// (`editable`), unless the window is `narrow`, where the Card Menu has it.
+fn edit_button_shown(editable: bool, narrow: bool) -> bool {
+    editable && !narrow
 }
 
 /// The subtitle while studying: "12 left", "1,234 left". It counts the
@@ -1220,13 +1811,210 @@ fn nothing_reviewed() -> String {
     gettext("No cards were reviewed")
 }
 
-/// The summary's three tiles: cards reviewed, pass rate and time, or
-/// `None` when no card was answered.
-fn summary_tiles(summary: &Summary) -> Option<[Tile; 3]> {
+/// The summary's title after a session. Keep it equal to `summary_page`
+/// in `review_page.blp`.
+fn session_complete() -> String {
+    gettext("Session Complete")
+}
+
+/// The summary's title when there was nothing to study at the start (the
+/// "all done" page).
+fn nothing_to_study() -> String {
+    // Translators: the title of the review page when a deck or a tag has
+    // no card to study now.
+    gettext("Nothing to Study")
+}
+
+/// Where a session was started: its summary's button goes back there
+/// (the header's Back always does).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartedFrom {
+    /// A deck's page (Study, a card's tag in its menu, Practice in the
+    /// Deck Menu).
+    DeckPage,
+    /// All Cards (its tag filter, or a card's tag in its menu).
+    AllCards,
+    /// The deck list (Practice in a deck's ⋮ menu, ADR 0070).
+    DeckList,
+}
+
+impl StartedFrom {
+    /// The summary's button, which leaves the page.
+    fn done_label(self) -> String {
+        match self {
+            Self::DeckPage => gettext("_Back to Deck"),
+            Self::AllCards => gettext("_Back to All Cards"),
+            Self::DeckList => gettext("_Back to Decks"),
+        }
+    }
+}
+
+/// Whether a session studies or practises (ADR 0070).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// A session: answers are recorded and schedule the cards.
+    Study,
+    /// A practice: nothing is written.
+    Practice,
+}
+
+/// What the page runs: a study session, or a practice. The page asks it
+/// the card to show and what is left; answers and their Undo go to each
+/// in its own way (`grade`, `grade_practice`).
+#[derive(Debug)]
+pub(super) enum Run {
+    /// A session: each answer is recorded with `record_review`.
+    Study(Session),
+    /// A practice: answers are kept in memory only (ADR 0070).
+    Practice(Practice),
+}
+
+impl Run {
+    fn next(&self, now: i64) -> Option<&str> {
+        match self {
+            Self::Study(session) => session.next(now),
+            Self::Practice(practice) => practice.next(),
+        }
+    }
+
+    fn remaining(&self) -> usize {
+        match self {
+            Self::Study(session) => session.remaining(),
+            Self::Practice(practice) => practice.remaining(),
+        }
+    }
+
+    fn skip(&mut self, card_id: &str) {
+        match self {
+            Self::Study(session) => session.skip(card_id),
+            Self::Practice(practice) => practice.skip(card_id),
+        }
+    }
+
+    fn put_back(&mut self, card_id: &str) {
+        match self {
+            Self::Study(session) => session.put_back(card_id),
+            Self::Practice(practice) => practice.put_back(card_id),
+        }
+    }
+
+    fn can_undo(&self) -> bool {
+        match self {
+            Self::Study(session) => session.last_answer().is_some(),
+            Self::Practice(practice) => practice.can_undo(),
+        }
+    }
+
+    fn summary(&self) -> Summary {
+        match self {
+            Self::Study(session) => session.summary(),
+            Self::Practice(practice) => practice.summary(),
+        }
+    }
+}
+
+/// Whether Practice is offered for a deck or a tag with `practisable`
+/// cards to practise (live, not suspended, in a deck that is not
+/// archived): only when there is at least one, so it never opens on
+/// nothing. The Deck Menu, the deck rows' menus and the summary ask it.
+pub fn practice_offered(practisable: usize) -> bool {
+    practisable > 0
+}
+
+/// Whether the summary shows its Practice button: after a session, not a
+/// practice (which would only start over), when the scope has a card to
+/// practise (`practisable`, from `AppState::has_practisable`).
+fn practice_button_shown(practising: bool, practisable: bool) -> bool {
+    !practising && practisable
+}
+
+/// The practice summary's title. Keep `practice_complete` and
+/// [`nothing_rescheduled`] as the brief words them (ADR 0070).
+fn practice_complete() -> String {
+    gettext("Practice Complete")
+}
+
+/// What the practice summary says, under its title.
+fn nothing_rescheduled() -> String {
+    gettext("Practice: nothing was rescheduled")
+}
+
+/// What a session studies (ADR 0069).
+#[derive(Debug, Clone)]
+pub enum Studied {
+    /// One deck.
+    Deck {
+        deck: Deck,
+        /// Where the session was started.
+        from: StartedFrom,
+    },
+    /// The cards carrying `tag` in every deck that is not archived.
+    Tag {
+        tag: Tag,
+        /// Where the session was started.
+        from: StartedFrom,
+    },
+}
+
+impl Studied {
+    /// The core's scope of the session.
+    fn scope(&self) -> StudyScope {
+        match self {
+            Self::Deck { deck, .. } => StudyScope::deck(&deck.id),
+            Self::Tag { tag, .. } => StudyScope::tag(&tag.id),
+        }
+    }
+
+    /// The page's title: the deck's name, or "Tagged “verbs”".
+    fn title(&self) -> String {
+        match self {
+            Self::Deck { deck, .. } => deck.name.clone(),
+            // Translators: the title of the review page while studying the
+            // cards that carry a tag, in every deck; {tag} is its name.
+            Self::Tag { tag, .. } => i18n::fill(
+                &gettext("Tagged “{tag}”"),
+                &[("tag", &isolate(&one_line(&tag.name)))],
+            ),
+        }
+    }
+
+    /// The summary's button, which leaves the page.
+    fn done_label(&self) -> String {
+        match self {
+            Self::Deck { from, .. } | Self::Tag { from, .. } => from.done_label(),
+        }
+    }
+
+    /// The "all done" page's text: there was nothing to study.
+    fn nothing_to_study(&self) -> String {
+        match self {
+            // Translators: under "Nothing to Study"; {deck} is a deck's name.
+            Self::Deck { deck, .. } => i18n::fill(
+                &gettext("No cards of “{deck}” are left to study now."),
+                &[("deck", &isolate(&one_line(&deck.name)))],
+            ),
+            // Translators: under "Nothing to Study"; {tag} is a tag's name.
+            Self::Tag { tag, .. } => i18n::fill(
+                &gettext("No cards tagged “{tag}” are left to study now."),
+                &[("tag", &isolate(&one_line(&tag.name)))],
+            ),
+        }
+    }
+}
+
+/// The summary's three tiles: cards reviewed (or practised), pass rate and
+/// time, or `None` when no card was answered.
+fn summary_tiles(summary: &Summary, practising: bool) -> Option<[Tile; 3]> {
     let percent = summary.pass_percent().filter(|_| summary.cards > 0)?;
-    // Translators: the caption under the number of cards reviewed in a
-    // session's summary.
-    let cards_caption = ngettext("Card reviewed", "Cards reviewed", summary.cards);
+    let cards_caption = if practising {
+        // Translators: the caption under the number of cards practised in
+        // a practice's summary (nothing was rescheduled).
+        ngettext("Card practised", "Cards practised", summary.cards)
+    } else {
+        // Translators: the caption under the number of cards reviewed in a
+        // session's summary.
+        ngettext("Card reviewed", "Cards reviewed", summary.cards)
+    };
     let tile = |value: String, caption: String| Tile {
         // Translators: what a screen reader says for a headline figure:
         // {caption} is "Pass rate", {value} "91%".
@@ -1250,6 +2038,15 @@ mod tests {
 
     use super::*;
     use crate::render::MAX_SHOWN_BYTES;
+
+    #[test]
+    fn edit_card_leaves_the_header_of_a_narrow_window() {
+        assert!(edit_button_shown(true, false));
+        assert!(!edit_button_shown(true, true));
+        // No card on screen (the summary): no button at all.
+        assert!(!edit_button_shown(false, false));
+        assert!(!edit_button_shown(false, true));
+    }
 
     #[test]
     fn the_cut_note_follows_the_sides_on_screen() {
@@ -1581,6 +2378,134 @@ mod tests {
         });
     }
 
+    fn sides(n: usize) -> Vec<(String, String)> {
+        (0..n)
+            .map(|i| (format!("front {i}"), "back".to_owned()))
+            .collect()
+    }
+
+    /// Whether the Card Menu's Move to Deck… can be pressed, its menu
+    /// opened in a window so its action's state reaches it
+    /// (`testing::menu_item_sensitive`).
+    fn move_item_sensitive(page: &ReviewPage) -> bool {
+        let window = in_window(page);
+        window.present();
+        let sensitive =
+            crate::testing::menu_item_sensitive(&page.imp().card_menu_button, "Move to Deck…");
+        window.destroy();
+        sensitive
+    }
+
+    #[test]
+    fn move_to_deck_needs_another_deck() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, _) = page_of(2);
+            assert!(!page.imp().can_move.get(), "the only deck");
+            assert!(!move_item_sensitive(&page), "the menu item is insensitive");
+            // Even if the page thought there was a deck (a stale flag): the
+            // look at the decks finds none, says so and opens nothing.
+            page.imp().can_move.set(true);
+            page.move_current();
+            assert!(!page.imp().asking.get());
+            assert!(!page.imp().can_move.get(), "the flag is corrected");
+            let (_tmp2, state2) = crate::testing::temporary_state();
+            state2.create_deck("Other").unwrap();
+            let (page2, _) = page_over(&state2, &sides(1));
+            assert!(page2.imp().can_move.get(), "the deck has a neighbour");
+            assert!(move_item_sensitive(&page2));
+        });
+    }
+
+    #[test]
+    fn a_moved_card_leaves_the_session_like_a_suspended_one_and_undo_brings_it_back() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let other = state.create_deck("Other").unwrap();
+            let (page, _) = page_over(&state, &sides(3));
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            let from = state.card(&first).unwrap().deck_id;
+            let left = |page: &ReviewPage| {
+                page.imp()
+                    .session
+                    .borrow()
+                    .as_ref()
+                    .map_or(0, Run::remaining)
+            };
+            assert_eq!(left(&page), 3);
+
+            page.finish_move(&first, &other);
+            // In the other deck, no longer in the session, nothing answered.
+            assert_eq!(state.card(&first).unwrap().deck_id, other.id);
+            assert_ne!(current(&page).as_deref(), Some(first.as_str()));
+            assert_eq!(left(&page), 2);
+            assert_eq!(
+                page.imp()
+                    .session
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .summary()
+                    .cards,
+                0
+            );
+
+            let on_screen = current(&page);
+            // Undo: the card is back in its deck and comes next.
+            let moved = vec![rappel_core::storage::Moved {
+                card_id: first.clone(),
+                from: from.clone(),
+                to: other.id.clone(),
+            }];
+            undo_move(
+                &state,
+                &first,
+                state.unmove_cards(&moved),
+                &page.downgrade(),
+                None,
+            );
+            assert_eq!(state.card(&first).unwrap().deck_id, from);
+            assert_eq!(current(&page), on_screen, "it comes next, not at once");
+            assert_eq!(left(&page), 3);
+
+            // An Undo that could not move the card back (moved again since)
+            // puts nothing back.
+            page.finish_move(&first, &other);
+            let again = state.create_deck("Third").unwrap();
+            state
+                .move_cards(std::slice::from_ref(&first), &again.id)
+                .unwrap();
+            let moved = vec![rappel_core::storage::Moved {
+                card_id: first.clone(),
+                from,
+                to: other.id.clone(),
+            }];
+            undo_move(
+                &state,
+                &first,
+                state.unmove_cards(&moved),
+                &page.downgrade(),
+                None,
+            );
+            assert_ne!(current(&page).as_deref(), Some(first.as_str()));
+            assert_eq!(state.card(&first).unwrap().deck_id, again.id);
+        });
+    }
+
+    #[test]
+    fn a_card_deleted_elsewhere_leaves_the_session_instead_of_moving() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let other = state.create_deck("Other").unwrap();
+            let (page, _) = page_over(&state, &sides(2));
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            state.delete_card(&first).unwrap();
+            page.finish_move(&first, &other);
+            assert_ne!(current(&page).as_deref(), Some(first.as_str()));
+        });
+    }
+
     #[test]
     fn an_undo_after_the_page_is_gone_restores_the_card_only_in_the_database() {
         crate::testing::with_widgets(|| {
@@ -1759,7 +2684,7 @@ mod tests {
             .session
             .borrow()
             .as_ref()
-            .is_some_and(|s| s.last_answer().is_some());
+            .is_some_and(Run::can_undo);
         assert_eq!(enabled, in_session, "the Undo button follows the session");
         enabled
     }
@@ -1877,7 +2802,7 @@ mod tests {
         };
         let values = |tiles: [Tile; 3]| tiles.map(|t| (t.value, t.caption, t.accessible));
         assert_eq!(
-            values(summary_tiles(&summary).unwrap()),
+            values(summary_tiles(&summary, false).unwrap()),
             [
                 (
                     "1,234".to_owned(),
@@ -1902,7 +2827,7 @@ mod tests {
             passes: 0,
             time: Duration::from_secs(3),
         };
-        let [cards, passed, time] = summary_tiles(&one).unwrap();
+        let [cards, passed, time] = summary_tiles(&one, false).unwrap();
         assert_eq!(
             (cards.value.as_str(), cards.caption.as_str()),
             ("1", "Card reviewed")
@@ -1910,7 +2835,7 @@ mod tests {
         assert_eq!(passed.value, "0%");
         assert_eq!(time.value, "3 s");
         // Every card suspended or deleted: nothing to sum up.
-        assert_eq!(summary_tiles(&Summary::default()), None);
+        assert_eq!(summary_tiles(&Summary::default(), false), None);
     }
 
     #[test]
@@ -1951,26 +2876,31 @@ mod tests {
         );
     }
 
-    /// The hints under the buttons name keys the page binds to the same act,
-    /// and screen readers skip them.
+    /// The buttons' tooltips name the keys the page binds to the same act
+    /// (#105), and no hint is left on the page.
     #[test]
-    fn the_key_hints_match_the_keys() {
+    fn the_buttons_say_their_keys_in_their_tooltips() {
         crate::testing::with_widgets(|| {
             let page: ReviewPage = glib::Object::new();
             let imp = page.imp();
-            for (hint, trigger, act) in [
-                (&*imp.reveal_hint, "space", Act::Reveal),
-                (&*imp.fail_hint, "1", Act::Grade(Grade::Fail)),
-                (&*imp.pass_hint, "2", Act::Grade(Grade::Pass)),
+            for (button, tooltip, trigger, act) in [
+                (
+                    &*imp.reveal_button,
+                    "Show Answer (Space)",
+                    "space",
+                    Act::Reveal,
+                ),
+                (&*imp.fail_button, "Fail (1)", "1", Act::Grade(Grade::Fail)),
+                (&*imp.pass_button, "Pass (2)", "2", Act::Grade(Grade::Pass)),
+                (
+                    &*imp.undo_button,
+                    "Undo Last Answer (Ctrl+Z)",
+                    "<Control>z",
+                    Act::Undo,
+                ),
+                (&*imp.edit_button, "Edit Card (E)", "e", Act::Edit),
             ] {
-                assert_eq!(hint.accessible_role(), gtk::AccessibleRole::Presentation);
-                // The hint shows the key as GTK names it ("space" → "Space").
-                let (key, mods) = gtk::accelerator_parse(trigger).unwrap();
-                assert_eq!(
-                    hint.label(),
-                    gtk::accelerator_get_label(key, mods),
-                    "{trigger}"
-                );
+                assert_eq!(button.tooltip_text().as_deref(), Some(tooltip));
                 let (_, bound) = KEYS.iter().find(|(t, _)| *t == trigger).unwrap();
                 let revealed = act != Act::Reveal;
                 assert_eq!(key_action(*bound, revealed, true), Some(act), "{trigger}");
@@ -1981,6 +2911,9 @@ mod tests {
             key_action(Key::Space, true, true),
             Some(Act::Grade(Grade::Pass))
         );
+        // Nothing under or beside the buttons any more.
+        let blueprint = include_str!("../../data/review_page.blp");
+        assert!(!blueprint.contains("_hint"));
     }
 
     /// GTK has no public getter for an accessible description, so the
@@ -2290,9 +3223,251 @@ mod tests {
         });
     }
 
+    /// Adds a card to `deck` with `tags`, learned long ago so it is due.
+    fn due_card(state: &AppState, deck: &str, front: &str, tags: &[&str]) -> String {
+        let tags: Vec<String> = tags.iter().map(|&t| t.to_owned()).collect();
+        let id = state
+            .add_card_with_tags(deck, front, "back", &tags)
+            .unwrap()
+            .card
+            .id;
+        let now = rappel_core::time::now_ms();
+        let day = crate::ui::time::DAY_MS;
+        for at in [now - 60 * day, now - 60 * day + 11 * 60 * 1000] {
+            state
+                .record_review(&id, Grade::Pass, Duration::ZERO, at)
+                .unwrap();
+        }
+        id
+    }
+
+    fn tag_named(state: &AppState, name: &str) -> Tag {
+        state
+            .tags()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.name == name)
+            .unwrap()
+    }
+
+    /// A tag's session shows the tag in its title and studies its due
+    /// cards of every deck that is not archived, writing each answer to the
+    /// log like a deck's; it is no deck's session (ADR 0069).
+    #[test]
+    fn a_tag_session_studies_the_tagged_cards_of_every_active_deck() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let a = state.create_deck("A").unwrap();
+            let b = state.create_deck("B").unwrap();
+            let gone = state.create_deck("Gone").unwrap();
+            let a1 = due_card(&state, &a.id, "a1", &["verbs"]);
+            due_card(&state, &a.id, "a2", &["nouns"]);
+            let b1 = due_card(&state, &b.id, "b1", &["verbs", "x"]);
+            due_card(&state, &gone.id, "g1", &["verbs"]);
+            state.archive_deck(&gone.id).unwrap();
+            let tag = tag_named(&state, "verbs");
+            let page =
+                ReviewPage::for_tag(state.clone(), tag, StartedFrom::AllCards, |_| {}).unwrap();
+            let imp = page.imp();
+            assert_eq!(imp.window_title.title(), "Tagged “\u{2068}verbs\u{2069}”");
+            assert_eq!(page.deck_id(), None);
+            assert_eq!(
+                imp.done_button.label().as_deref(),
+                Some("_Back to All Cards")
+            );
+            let mut shown = Vec::new();
+            while let Some(id) = current(&page) {
+                assert!(shown.len() < 10, "the session does not end");
+                shown.push(id.clone());
+                pass(&page);
+                // Written as in a deck's session.
+                assert_eq!(state.review_events(&id).unwrap().len(), 3);
+            }
+            shown.sort();
+            let mut want = vec![a1, b1];
+            want.sort();
+            assert_eq!(shown, want);
+            assert_eq!(imp.summary_page.title(), "Session Complete");
+            assert!(imp.summary_figures.is_visible());
+        });
+    }
+
+    /// With nothing to study, a session opens on the "all done" page,
+    /// worded for its tag or deck, with the button back to where it began.
+    #[test]
+    fn a_session_with_nothing_to_study_says_so_for_its_tag_or_deck() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let deck = state.create_deck("Spanish").unwrap();
+            let gone = state.create_deck("Gone").unwrap();
+            due_card(&state, &gone.id, "g1", &["verbs"]);
+            state.archive_deck(&gone.id).unwrap();
+            let tag = tag_named(&state, "verbs");
+            let page =
+                ReviewPage::for_tag(state.clone(), tag, StartedFrom::DeckPage, |_| {}).unwrap();
+            let _window = in_window(&page);
+            let imp = page.imp();
+            assert_eq!(imp.stack.visible_child_name().as_deref(), Some("summary"));
+            assert!(!imp.summary_figures.is_visible());
+            assert_eq!(imp.summary_page.title(), "Nothing to Study");
+            assert_eq!(
+                imp.summary_page.description().as_deref(),
+                Some("No cards tagged “\u{2068}verbs\u{2069}” are left to study now.")
+            );
+            assert_eq!(imp.done_button.label().as_deref(), Some("_Back to Deck"));
+
+            let page = ReviewPage::new(state.clone(), deck, |_| {}).unwrap();
+            let _window = in_window(&page);
+            let imp = page.imp();
+            assert_eq!(imp.summary_page.title(), "Nothing to Study");
+            assert_eq!(
+                imp.summary_page.description().as_deref(),
+                Some("No cards of “\u{2068}Spanish\u{2069}” are left to study now.")
+            );
+            assert_eq!(imp.done_button.label().as_deref(), Some("_Back to Deck"));
+        });
+    }
+
+    /// A tag's name in the "all done" page's description, which is Pango
+    /// markup, is drawn as it is: escaped, never parsed.
+    #[test]
+    fn a_tag_name_in_the_all_done_page_is_not_markup() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let deck = state.create_deck("D").unwrap();
+            let card = state
+                .add_card_with_tags(&deck.id, "q", "a", &["a&b <i>".to_owned()])
+                .unwrap();
+            state.set_suspended(&[card.card.id], true).unwrap();
+            let tag = tag_named(&state, "a&b <i>");
+            let page =
+                ReviewPage::for_tag(state.clone(), tag, StartedFrom::AllCards, |_| {}).unwrap();
+            let mut texts = Vec::new();
+            texts.extend(crate::testing::label_texts(
+                page.imp().summary_page.upcast_ref(),
+            ));
+            assert!(
+                texts.contains(
+                    &"No cards tagged “\u{2068}a&b <i>\u{2069}” are left to study now.".to_owned()
+                ),
+                "{texts:?}"
+            );
+        });
+    }
+
+    /// Archiving a deck during a tag's session drops that deck's cards,
+    /// the one on screen too, which leaves as a suspended one does; the
+    /// other decks' cards stay (ADR 0068, 0069).
+    #[test]
+    fn a_deck_archived_during_a_tag_session_leaves_it() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let a = state.create_deck("A").unwrap();
+            let b = state.create_deck("B").unwrap();
+            let a_cards = [
+                due_card(&state, &a.id, "a1", &["t"]),
+                due_card(&state, &a.id, "a2", &["t"]),
+            ];
+            let b1 = due_card(&state, &b.id, "b1", &["t"]);
+            let page = ReviewPage::for_tag(
+                state.clone(),
+                tag_named(&state, "t"),
+                StartedFrom::AllCards,
+                |_| {},
+            )
+            .unwrap();
+            let on_screen = current(&page).unwrap();
+            let deck = state.card(&on_screen).unwrap().deck_id;
+            state.archive_deck(&deck).unwrap();
+            page.leave_deck(&deck);
+            let mut shown = Vec::new();
+            while let Some(id) = current(&page) {
+                assert!(shown.len() < 10, "the session does not end");
+                shown.push(id);
+                pass(&page);
+            }
+            let want: Vec<String> = if deck == a.id {
+                vec![b1]
+            } else {
+                a_cards.to_vec()
+            };
+            let mut shown_sorted = shown.clone();
+            shown_sorted.sort();
+            let mut want_sorted = want;
+            want_sorted.sort();
+            assert_eq!(shown_sorted, want_sorted);
+            // Nothing of the archived deck was answered.
+            assert_eq!(state.review_events(&on_screen).unwrap().len(), 2);
+            // A deck's own session is not changed by it.
+            let c = state.create_deck("C").unwrap();
+            due_card(&state, &c.id, "c1", &[]);
+            let deck_page = ReviewPage::new(state.clone(), c.clone(), |_| {}).unwrap();
+            let before = current(&deck_page);
+            assert!(before.is_some());
+            deck_page.leave_deck(&c.id);
+            assert_eq!(current(&deck_page), before);
+        });
+    }
+
+    /// After its deck is archived, a card does not come back into a tag's
+    /// session by an Undo of its answer (the log is undone, the card is not
+    /// shown) nor by the Undo of a Suspend, a Delete or a Move
+    /// (`put_back`), ADR 0069.
+    #[test]
+    fn an_undo_never_brings_back_a_card_of_a_deck_archived_since() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let mut by_deck = std::collections::HashMap::new();
+            for name in ["A", "B"] {
+                let deck = state.create_deck(name).unwrap();
+                let cards: Vec<String> = (0..2)
+                    .map(|i| due_card(&state, &deck.id, &format!("{name}{i}"), &["t"]))
+                    .collect();
+                by_deck.insert(deck.id, cards);
+            }
+            let page = ReviewPage::for_tag(
+                state.clone(),
+                tag_named(&state, "t"),
+                StartedFrom::AllCards,
+                |_| {},
+            )
+            .unwrap();
+            let first = current(&page).unwrap();
+            let deck = state.card(&first).unwrap().deck_id;
+            pass(&page);
+            state.archive_deck(&deck).unwrap();
+            page.leave_deck(&deck);
+            let archived = &by_deck[&deck];
+            // The Undo of the answer: written to the log, not shown again.
+            page.undo();
+            assert_eq!(undo_entries(&state, &first), 1);
+            assert!(current(&page).is_none_or(|c| !archived.contains(&c)));
+            // The Undo of a removal puts the card back: not this one.
+            let other = archived.iter().find(|c| **c != first).unwrap();
+            page.put_back(other);
+            let mut shown = Vec::new();
+            while let Some(id) = current(&page) {
+                assert!(shown.len() < 10, "the session does not end");
+                assert!(!archived.contains(&id), "{id} of the archived deck");
+                shown.push(id);
+                pass(&page);
+            }
+            assert_eq!(shown.len(), 2, "the other deck's cards");
+        });
+    }
+
+    #[test]
+    fn the_session_complete_title_matches_the_blueprint() {
+        assert!(
+            include_str!("../../data/review_page.blp")
+                .contains(&format!("title: _(\"{}\");", session_complete()))
+        );
+    }
+
     /// The action each key's menu item runs, for the hints' test.
     fn menu_action(key: Key) -> Option<&'static str> {
         match key {
+            Key::Edit => Some("review.edit"),
             Key::Info => Some("review.card-info"),
             Key::Suspend => Some("review.suspend"),
             Key::Delete => Some("review.delete"),
@@ -2326,8 +3501,13 @@ mod tests {
                 .expect("the card menu button has its menu");
             let mut items = Vec::new();
             menu_items(&menu, &mut items);
-            assert_eq!(items.len(), 3);
+            assert_eq!(items.len(), 5);
             for (action, accel) in items {
+                // Move to Deck… has no key.
+                if action == "review.move" {
+                    assert_eq!(accel, None);
+                    continue;
+                }
                 let accel = accel.unwrap_or_else(|| panic!("{action} shows no key"));
                 let bound = KEYS
                     .iter()
@@ -2360,11 +3540,418 @@ mod tests {
             assert_eq!(
                 shown,
                 [
+                    None,
                     Some("Delete".to_owned()),
+                    Some("e".to_owned()),
                     Some("i".to_owned()),
                     Some("s".to_owned())
                 ]
             );
+        });
+    }
+
+    /// The files a write would change (the database and its write-ahead
+    /// log, with their modification times; not the `-shm` index, where
+    /// readers keep their read marks) and another connection's
+    /// `data_version`, which changes when anything commits.
+    fn on_disk(state: &AppState, observer: &rusqlite::Connection) -> (Vec<Option<Vec<u8>>>, i64) {
+        let db = state.data_dir().join("rappel.sqlite3");
+        let wal = state.data_dir().join("rappel.sqlite3-wal");
+        let files = [db, wal]
+            .iter()
+            .flat_map(|path| {
+                let bytes = std::fs::read(path).ok();
+                let modified = std::fs::metadata(path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .map(|t| format!("{t:?}").into_bytes());
+                [bytes, modified]
+            })
+            .collect();
+        let version = observer
+            .query_row("PRAGMA data_version", [], |r| r.get(0))
+            .unwrap();
+        (files, version)
+    }
+
+    fn practice_of(state: &AppState, deck: &Deck) -> ReviewPage {
+        let studied = Studied::Deck {
+            deck: deck.clone(),
+            from: StartedFrom::DeckPage,
+        };
+        ReviewPage::practice(state.clone(), studied, |_| {}).unwrap()
+    }
+
+    /// A practice through the page, with fails, passes and undos (Ctrl+Z
+    /// and the summary's Undo), writes nothing: the database files and
+    /// every card's log are as they were, and no connection committed
+    /// (ADR 0070). Its banner and summary say so.
+    #[test]
+    fn a_practice_on_the_page_writes_nothing_and_says_so() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, ids) = page_of(3);
+            drop(page);
+            let deck = state.decks().unwrap().remove(0);
+            let observer =
+                rusqlite::Connection::open(state.data_dir().join("rappel.sqlite3")).unwrap();
+            let logs: Vec<usize> = ids
+                .iter()
+                .map(|id| state.review_events(id).unwrap().len())
+                .collect();
+            let before = on_disk(&state, &observer);
+            let changes = state.total_changes();
+
+            let page = practice_of(&state, &deck);
+            let _window = in_window(&page);
+            let imp = page.imp();
+            assert!(page.is_practice());
+            assert!(imp.banner.is_revealed());
+            assert_eq!(imp.banner.title(), "Practice — nothing is rescheduled");
+            assert_eq!(page.title(), "Practice");
+            assert_eq!(imp.window_title.title(), "Deck");
+            let mut steps = 0;
+            while current(&page).is_some() {
+                assert!(steps < 50, "the practice does not end");
+                page.reveal();
+                match steps % 4 {
+                    0 => page.grade(Grade::Fail),
+                    2 => {
+                        page.grade(Grade::Pass);
+                        assert_eq!(page.key(Key::Undo), glib::Propagation::Stop);
+                    }
+                    _ => page.grade(Grade::Pass),
+                }
+                steps += 1;
+            }
+            assert_eq!(imp.stack.visible_child_name().as_deref(), Some("summary"));
+            assert_eq!(imp.summary_page.title(), "Practice Complete");
+            assert_eq!(
+                imp.summary_page.description().as_deref(),
+                Some("Practice: nothing was rescheduled")
+            );
+            assert!(imp.summary_figures.get_visible());
+            assert_eq!(imp.cards_caption.label(), "Cards practised");
+            assert_eq!(imp.cards_value.label(), "3");
+            // The cards and the pass rate; the words replace the banner.
+            assert!(!imp.time_tile.get_visible());
+            assert!(!imp.banner.is_revealed());
+            // No Practice again from a practice.
+            assert!(!imp.practice_button.get_visible());
+            // Undo from the summary brings the last card back, in memory.
+            assert!(can_undo(&page));
+            page.undo();
+            assert!(current(&page).is_some());
+            assert!(imp.banner.is_revealed());
+
+            assert_eq!(on_disk(&state, &observer), before);
+            assert_eq!(state.total_changes(), changes);
+            let after: Vec<usize> = ids
+                .iter()
+                .map(|id| state.review_events(id).unwrap().len())
+                .collect();
+            assert_eq!(after, logs);
+        });
+    }
+
+    /// A practice shows every card, due or not: here none is due, and the
+    /// least well remembered comes first.
+    #[test]
+    fn a_practice_shows_cards_that_are_not_due_least_remembered_first() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let deck = state.create_deck("Deck").unwrap();
+            let now = rappel_core::time::now_ms();
+            let mut ids = Vec::new();
+            for (front, hours_ago) in [("fresh", 2), ("older", 6)] {
+                let id = state
+                    .add_card_with_tags(&deck.id, front, "b", &[])
+                    .unwrap()
+                    .card
+                    .id;
+                let at = now - hours_ago * 3_600_000;
+                for t in [at, at + 11 * 60 * 1000] {
+                    state
+                        .record_review(&id, Grade::Pass, Duration::ZERO, t)
+                        .unwrap();
+                }
+                ids.push(id);
+            }
+            assert!(
+                state
+                    .study_input(&StudyScope::deck(&deck.id), now)
+                    .unwrap()
+                    .is_empty()
+            );
+            let page = practice_of(&state, &deck);
+            assert_eq!(current(&page).as_ref(), Some(&ids[1]));
+            pass(&page);
+            assert_eq!(current(&page).as_ref(), Some(&ids[0]));
+        });
+    }
+
+    /// A Fail brings the card back a few cards later, as the core's
+    /// practice orders it, and Undo steps back to it.
+    #[test]
+    fn a_failed_card_comes_back_later_in_the_practice() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, _) = page_of(5);
+            drop(page);
+            let deck = state.decks().unwrap().remove(0);
+            let page = practice_of(&state, &deck);
+            let first = current(&page).unwrap();
+            page.reveal();
+            page.grade(Grade::Fail);
+            let mut shown = Vec::new();
+            for _ in 0..rappel_core::scheduling::RELEARN_GAP {
+                shown.push(current(&page).unwrap());
+                pass(&page);
+            }
+            assert!(!shown.contains(&first));
+            assert_eq!(current(&page), Some(first));
+            page.undo();
+            assert_eq!(current(&page).as_ref(), shown.last());
+        });
+    }
+
+    /// The "all done" page offers Practice (and so does "Session
+    /// Complete"), which takes the page's place: Back from the practice goes
+    /// where Back went. A scope with nothing to practise does not offer it.
+    #[test]
+    fn the_all_done_page_offers_practice_in_its_place() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let deck = state.create_deck("Spanish").unwrap();
+            let card = state.add_card_with_tags(&deck.id, "q", "a", &[]).unwrap();
+            let now = rappel_core::time::now_ms();
+            for t in [now - 60_000, now - 30_000] {
+                state
+                    .record_review(&card.card.id, Grade::Pass, Duration::ZERO, t)
+                    .unwrap();
+            }
+            let view = adw::NavigationView::new();
+            let window = adw::Window::builder().content(&view).build();
+            let root = adw::NavigationPage::builder().title("Root").build();
+            view.push(&root);
+            let page = ReviewPage::new(state.clone(), deck.clone(), |_| {}).unwrap();
+            view.push(&page);
+            window.present();
+            let imp = page.imp();
+            assert_eq!(imp.summary_page.title(), "Nothing to Study");
+            assert!(imp.practice_button.get_visible());
+            assert!(!imp.practice_button.has_css_class("suggested-action"));
+            assert!(!imp.banner.is_revealed());
+            page.activate_action("review.practice", None).unwrap();
+            let practice = view.visible_page().and_downcast::<ReviewPage>().unwrap();
+            assert!(practice.is_practice());
+            assert_ne!(practice, page);
+            assert_eq!(view.navigation_stack().n_items(), 2);
+            assert_eq!(current(&practice), Some(card.card.id.clone()));
+
+            // Nothing to practise: no button.
+            state.set_suspended(&[card.card.id], true).unwrap();
+            let page = ReviewPage::new(state.clone(), deck, |_| {}).unwrap();
+            assert_eq!(page.imp().summary_page.title(), "Nothing to Study");
+            assert!(!page.imp().practice_button.get_visible());
+            window.close();
+        });
+    }
+
+    #[test]
+    fn practice_is_offered_only_with_cards_and_not_from_a_practice() {
+        assert!(!practice_offered(0));
+        assert!(practice_offered(1));
+        assert!(practice_button_shown(false, true));
+        assert!(!practice_button_shown(false, false));
+        assert!(!practice_button_shown(true, true));
+        assert_eq!(StartedFrom::DeckPage.done_label(), "_Back to Deck");
+        assert_eq!(StartedFrom::AllCards.done_label(), "_Back to All Cards");
+        assert_eq!(StartedFrom::DeckList.done_label(), "_Back to Decks");
+    }
+
+    /// Suspend during a practice goes through the normal path: the card
+    /// leaves, nothing is counted, and its Undo brings it back next.
+    #[test]
+    fn a_card_suspended_during_a_practice_leaves_it_and_comes_back_by_undo() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, _) = page_of(2);
+            drop(page);
+            let deck = state.decks().unwrap().remove(0);
+            let page = practice_of(&state, &deck);
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            page.remove(&first, Removal::Suspend);
+            assert!(state.card(&first).unwrap().suspended);
+            assert_ne!(current(&page).as_ref(), Some(&first));
+            assert_eq!(page.imp().session.borrow().as_ref().unwrap().remaining(), 1);
+            state
+                .restore_suspended(std::slice::from_ref(&first), false)
+                .unwrap();
+            page.put_back(&first);
+            assert_eq!(page.imp().session.borrow().as_ref().unwrap().remaining(), 2);
+            assert_eq!(
+                page.imp()
+                    .session
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .summary()
+                    .cards,
+                0
+            );
+        });
+    }
+
+    /// A tag's practice: its title names the tag as plain text, its cards
+    /// come from every deck that is not archived, and a deck archived
+    /// meanwhile leaves it, as in a tag's session.
+    #[test]
+    fn a_tag_practice_covers_its_decks_and_leaves_an_archived_one() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let a = state.create_deck("A").unwrap();
+            let b = state.create_deck("B").unwrap();
+            let a1 = due_card(&state, &a.id, "a1", &["a&b <i>"]);
+            let b1 = due_card(&state, &b.id, "b1", &["a&b <i>"]);
+            let studied = Studied::Tag {
+                tag: tag_named(&state, "a&b <i>"),
+                from: StartedFrom::AllCards,
+            };
+            let page = ReviewPage::practice(state.clone(), studied, |_| {}).unwrap();
+            let imp = page.imp();
+            assert_eq!(imp.window_title.title(), "Tagged “\u{2068}a&b <i>\u{2069}”");
+            assert_eq!(
+                imp.done_button.label().as_deref(),
+                Some("_Back to All Cards")
+            );
+            assert_eq!(imp.session.borrow().as_ref().unwrap().remaining(), 2);
+            let on_screen = current(&page).unwrap();
+            let deck = state.card(&on_screen).unwrap().deck_id;
+            state.archive_deck(&deck).unwrap();
+            page.leave_deck(&deck);
+            let other = if on_screen == a1 { b1 } else { a1 };
+            assert_eq!(current(&page), Some(other));
+            pass(&page);
+            assert_eq!(imp.summary_page.title(), "Practice Complete");
+        });
+    }
+
+    /// Undo during a practice never brings back a card that can no longer
+    /// be practised (deleted or suspended since): its answer is taken back
+    /// silently and the step goes on to the answer before, or, with none,
+    /// the card on screen stays. No error toast, nothing written.
+    #[test]
+    fn a_practice_undo_steps_over_cards_deleted_or_suspended_since() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, _) = page_of(3);
+            drop(page);
+            let deck = state.decks().unwrap().remove(0);
+            let answers = |page: &ReviewPage| {
+                page.imp()
+                    .session
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .summary()
+                    .answers
+            };
+
+            // The latest answer's card was deleted: it is stepped over and
+            // the one before comes back.
+            let page = practice_of(&state, &deck);
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            pass(&page);
+            let second = current(&page).unwrap();
+            pass(&page);
+            state.delete_card(&second).unwrap();
+            assert_eq!(page.key(Key::Undo), glib::Propagation::Stop);
+            assert_eq!(current(&page), Some(first.clone()));
+            assert_eq!(answers(&page), 0);
+            assert!(!can_undo(&page));
+            assert!(page.imp().errors.is_empty(), "no error toast");
+            state.undelete_card(&second).unwrap();
+
+            // The only answer's card was suspended: Undo takes the answer
+            // back, and the card on screen stays as it was.
+            let page = practice_of(&state, &deck);
+            let _window = in_window(&page);
+            let answered = current(&page).unwrap();
+            pass(&page);
+            let on_screen = current(&page).unwrap();
+            page.reveal();
+            state
+                .set_suspended(std::slice::from_ref(&answered), true)
+                .unwrap();
+            page.undo();
+            assert_eq!(current(&page), Some(on_screen));
+            assert!(page.imp().revealed.get(), "the card was not shown again");
+            assert_eq!(answers(&page), 0);
+            assert!(!can_undo(&page));
+            assert!(page.imp().errors.is_empty(), "no error toast");
+            // Nothing of it comes back later either.
+            let mut rest = Vec::new();
+            while let Some(id) = current(&page) {
+                assert!(rest.len() < 10, "the practice does not end");
+                rest.push(id);
+                pass(&page);
+            }
+            assert!(!rest.contains(&answered));
+        });
+    }
+
+    /// Undo does not bring back a card moved out of the practised deck
+    /// since its answer, nor one that lost the practised tag: their answers
+    /// are stepped over as for a deleted card.
+    #[test]
+    fn a_practice_undo_steps_over_cards_moved_or_untagged_since() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, _) = page_of(3);
+            drop(page);
+            let deck = state.decks().unwrap().remove(0);
+            let other = state.create_deck("Other").unwrap();
+            let page = practice_of(&state, &deck);
+            let _window = in_window(&page);
+            let first = current(&page).unwrap();
+            pass(&page);
+            let second = current(&page).unwrap();
+            pass(&page);
+            let third = current(&page);
+            state
+                .move_cards(std::slice::from_ref(&second), &other.id)
+                .unwrap();
+            page.undo();
+            assert_eq!(current(&page), Some(first));
+            assert!(!can_undo(&page));
+            assert!(page.imp().errors.is_empty(), "no error toast");
+            let mut rest = Vec::new();
+            while let Some(id) = current(&page) {
+                assert!(rest.len() < 10, "the practice does not end");
+                rest.push(id);
+                pass(&page);
+            }
+            assert!(!rest.contains(&second));
+            assert!(third.is_some_and(|t| rest.contains(&t)));
+
+            // A tag's practice: a card untagged since is stepped over.
+            let a = due_card(&state, &other.id, "t1", &["t"]);
+            let b = due_card(&state, &other.id, "t2", &["t"]);
+            let studied = Studied::Tag {
+                tag: tag_named(&state, "t"),
+                from: StartedFrom::AllCards,
+            };
+            let page = ReviewPage::practice(state.clone(), studied, |_| {}).unwrap();
+            let _window = in_window(&page);
+            let answered = current(&page).unwrap();
+            pass(&page);
+            let on_screen = current(&page).unwrap();
+            assert!([&a, &b].contains(&&answered));
+            let card = state.card(&answered).unwrap();
+            state
+                .edit_card_with_tags(&answered, &card.front_md, &card.back_md, Some(&[]))
+                .unwrap();
+            page.undo();
+            assert_eq!(current(&page), Some(on_screen));
+            assert!(!can_undo(&page));
         });
     }
 }

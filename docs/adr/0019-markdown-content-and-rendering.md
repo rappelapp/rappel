@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-16
 - Amends: ADR 0014 (the review page shows rendered Markdown, not plain text)
-- Amended by: ADR 0045 (the review page shows card text larger than body text), ADR 0046 (the style class `dim-label` is now `dimmed`)
+- Amended by: ADR 0045 (the review page shows card text larger than body text), ADR 0046 (the style class `dim-label` is now `dimmed`), ADR 0064 (a table's border hugs its columns)
 - Amended: 2026-10-16, every side has the same layout (no large centred single paragraph); tables get a border and a header row
 
 ## Context
@@ -39,7 +39,7 @@ This UI is built from data, so it is the one place where widgets are made in Rus
 - **Links are not clickable.** There is no `<a>`, so there is no click, no hand cursor and no focusable link. A link is underlined, and its URL shows as the tooltip when the pointer rests on it: `query-tooltip` maps the pointer to a Pango layout index, and that index is looked up in the link ranges the markup builder recorded. No label is selectable or focusable, and neither is a table's scroller, so the review page's focus and keys (Space, Enter, 1, 2) keep working. Headings have the accessible role Heading and their level.
 - **Images.** A media image is a placeholder, `[image: alt]` in italics, until the media slice. Any other image is shown as the Markdown that was typed, never fetched (SPEC §4.3).
 - **Layout.** Every side looks the same whatever its structure: body text, normal weight, aligned to the start (amended: a one-paragraph side used to be large and centred, which made cards look different for no reason a user can see). Headings, code, quotes, tables and display math keep their own styles.
-- **Tables.** The grid has a border, lines between cells and a shaded header row. This is the app's only stylesheet (`data/style.css`, loaded by `AdwApplication` from the resource base path). It has no literal colours: lines and shading are the text colour at a low opacity, so they follow light and dark themes. In high contrast they are as faint as in normal mode; strengthening them needs a libadwaita newer than the 1.6 floor (ADR 0002).
+- **Tables.** The grid has a border, lines between cells and a shaded header row. It is as wide as its columns and aligned to the start (`gtk::Align::Start`), so the border hugs the table instead of leaving an empty strip inside it (amended 2026-11-02, ADR 0064); a wider one scrolls. This is the app's only stylesheet (`data/style.css`, loaded by `AdwApplication` from the resource base path). It has no literal colours: lines and shading are the text colour at a low opacity, so they follow light and dark themes. In high contrast they are as faint as in normal mode; strengthening them needs a libadwaita newer than the 1.6 floor (ADR 0002).
 - **Widget budget.** At most 2,000 widgets per side, counted per top-level block. A block that does not fit, and everything after it, is shown as plain text in one label. A hostile 1 MiB list would otherwise build hundreds of thousands of widgets.
 
 **Review.** The front is rendered when a card is shown and the back when it is revealed. If the back is empty (blank), the reveal shows no separator and no back, only Fail and Pass. The card area's accessible label is the front's plain text, and its description the back's once shown.

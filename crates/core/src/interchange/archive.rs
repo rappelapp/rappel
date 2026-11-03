@@ -356,6 +356,20 @@ impl<R: Read + Seek> Archive<R> {
         check_layout(&entries, directory_offset)?;
         let json = entries.iter().find(|e| e.role == Role::Json).cloned();
         let media = media_by_hash(&entries)?;
+        if let Some(json) = &json
+            && json.size > limits.json
+        {
+            // Refused from the size it declares, before a byte of it is
+            // read: a `cards.json` at the limit takes many seconds to read
+            // and refuse (ADR 0071). After the checks of the layout, so
+            // what was refused for another reason still is. A size that
+            // lies is still caught while reading, which is capped at the
+            // same limit.
+            return Err(ImportProblem::EntryTooLarge {
+                entry: JSON_ENTRY,
+                limit: limits.json,
+            });
+        }
         Ok(Self {
             reader,
             entries,

@@ -39,3 +39,7 @@ No new dependency; the Cargo feature stays `v1_8` (`AdwToggleGroup` 1.7, `AdwSho
 - In Preview mode on a narrow window the preview cannot be scrolled from the keyboard (it is not focusable, ADR 0022). A follow-up could make the preview pane focusable there.
 - The remove buttons are 24 px, below phase 2's 44 px touch target (SPEC §4.8); that audit comes with phone and touch.
 - `TagEntry` is ready for the All Cards "Add Tag…" dialog; that dialog decides whether it wants one tag or several.
+
+## Superseded in part
+
+The save hint under the fields is gone (ADR 0064, amended in phase 3a); Save's tooltip says the key.

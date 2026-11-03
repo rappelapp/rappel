@@ -5,7 +5,10 @@
 //! gives the same bytes (ADR 0017). Reading denies unknown fields: a file
 //! that does not match exactly is refused rather than half understood.
 
-use serde::{Deserialize, Serialize};
+use std::fmt;
+
+use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The format version this build writes, and the only one it reads.
 /// Version 1 was written by early test versions only (0.2.0-alpha) and is
@@ -54,10 +57,114 @@ pub(super) struct DeckRecord {
     pub name: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// When the deck was archived (ADR 0068). Always written, `null` when
+    /// it is not; a file without it (made before archiving existed) reads
+    /// as not archived. A value of any other type is kept to be reported
+    /// as a problem of this field.
+    #[serde(default)]
+    pub archived_at: ArchivedAt,
     /// Required, though it may be `null`: serde would otherwise read a
     /// missing field as `null`, which would make a deleted row live.
     #[serde(deserialize_with = "Option::deserialize")]
     pub deleted_at: Option<i64>,
+}
+
+/// A deck's `archived_at` as the file has it (ADR 0068). Any JSON value is
+/// read, so that one of the wrong type is refused as this field of its row
+/// (`FieldProblem::NotATimestamp`) rather than as malformed JSON; the
+/// range is checked by validation, as for every timestamp.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum ArchivedAt {
+    /// Missing or `null`: not archived.
+    #[default]
+    No,
+    /// A whole number that fits an `i64`.
+    At(i64),
+    /// A whole number too large for an `i64`.
+    TooLarge,
+    /// Not a whole number: a string, a fraction, a boolean, an array or
+    /// an object.
+    NotATime,
+}
+
+impl From<Option<i64>> for ArchivedAt {
+    fn from(value: Option<i64>) -> Self {
+        value.map_or(Self::No, Self::At)
+    }
+}
+
+impl Serialize for ArchivedAt {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match *self {
+            Self::No => serializer.serialize_none(),
+            Self::At(at) => serializer.serialize_i64(at),
+            // Read from a file only, and refused there: never written.
+            Self::TooLarge | Self::NotATime => Err(serde::ser::Error::custom(
+                "an archived_at that is not a timestamp cannot be written",
+            )),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ArchivedAt {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ArchivedAtVisitor)
+    }
+}
+
+/// Reads any JSON value as an [`ArchivedAt`]. An array or an object is
+/// skipped value by value (`IgnoredAny`), so nothing of it is kept; the
+/// reader bounds its strings and nesting (`stream::string_limit`).
+struct ArchivedAtVisitor;
+
+impl<'de> Visitor<'de> for ArchivedAtVisitor {
+    type Value = ArchivedAt;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a timestamp or null")
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<ArchivedAt, E> {
+        Ok(ArchivedAt::No)
+    }
+
+    fn visit_none<E: de::Error>(self) -> Result<ArchivedAt, E> {
+        Ok(ArchivedAt::No)
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<ArchivedAt, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_i64<E: de::Error>(self, v: i64) -> Result<ArchivedAt, E> {
+        Ok(ArchivedAt::At(v))
+    }
+
+    fn visit_u64<E: de::Error>(self, v: u64) -> Result<ArchivedAt, E> {
+        Ok(i64::try_from(v).map_or(ArchivedAt::TooLarge, ArchivedAt::At))
+    }
+
+    fn visit_f64<E: de::Error>(self, _: f64) -> Result<ArchivedAt, E> {
+        Ok(ArchivedAt::NotATime)
+    }
+
+    fn visit_bool<E: de::Error>(self, _: bool) -> Result<ArchivedAt, E> {
+        Ok(ArchivedAt::NotATime)
+    }
+
+    fn visit_str<E: de::Error>(self, _: &str) -> Result<ArchivedAt, E> {
+        Ok(ArchivedAt::NotATime)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<ArchivedAt, A::Error> {
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(ArchivedAt::NotATime)
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ArchivedAt, A::Error> {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(ArchivedAt::NotATime)
+    }
 }
 
 /// A `cards` row, deleted ones included. `seq` is internal and not

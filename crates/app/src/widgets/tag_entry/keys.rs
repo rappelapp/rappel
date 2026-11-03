@@ -128,12 +128,35 @@ pub fn tab_stop(current: Option<usize>, len: usize, forward: bool) -> Option<usi
     }
 }
 
-/// Whether the typed name becomes a pill once the focus has left the
-/// field: only if the window is still `active` (not just sent to the
-/// background) and the focus is not `inside` the field after all (the
-/// text, a pill, one of the text's popovers).
-pub fn should_split(active: bool, inside: bool) -> bool {
-    active && !inside
+/// What the field does once the focus has left it (and its pills and the
+/// text's popovers).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterLeave {
+    /// The focus is back inside, or the window only went to the background:
+    /// the typed name stays.
+    Nothing,
+    /// The focus went to another widget in an active window: the typed name
+    /// becomes a pill.
+    Split,
+    /// The focus fell back to a container around the field, which nobody
+    /// chose: the window was resized (a dialog's sheet takes the focus when
+    /// the on-screen keyboard shrinks the window, seen with libadwaita 1.10
+    /// at 360 × 330) or the dialog's background was clicked. The typed name
+    /// stays and the text takes the focus back.
+    Refocus,
+}
+
+/// Decides [`AfterLeave`] for a window that is `active` or not, the focus
+/// being `inside` the field, or on an `ancestor` of it (a container the
+/// field is in).
+pub fn after_leave(active: bool, inside: bool, ancestor: bool) -> AfterLeave {
+    if !active || inside {
+        AfterLeave::Nothing
+    } else if ancestor {
+        AfterLeave::Refocus
+    } else {
+        AfterLeave::Split
+    }
 }
 
 /// What a screen reader is told when the highlight lands on `name`.
@@ -318,10 +341,15 @@ mod tests {
 
     #[test]
     fn the_name_becomes_a_pill_only_when_the_focus_really_left() {
-        assert!(should_split(true, false));
-        assert!(!should_split(true, true));
-        assert!(!should_split(false, false));
-        assert!(!should_split(false, true));
+        use AfterLeave::{Nothing, Refocus, Split};
+        assert_eq!(after_leave(true, false, false), Split);
+        assert_eq!(after_leave(true, true, false), Nothing);
+        assert_eq!(after_leave(false, false, false), Nothing);
+        assert_eq!(after_leave(false, true, false), Nothing);
+        // A container around the field has the focus: nobody chose it.
+        assert_eq!(after_leave(true, false, true), Refocus);
+        // A window in the background does nothing, whatever has the focus.
+        assert_eq!(after_leave(false, false, true), Nothing);
     }
 
     #[test]

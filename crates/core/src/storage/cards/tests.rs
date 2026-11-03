@@ -9,7 +9,9 @@ const MISSING: &str = "01920000-0000-7000-8000-00000000dead";
 /// How many reviewed live cards of `deck` are due at any time: reviews
 /// and step cards in [`Store::study_input`].
 fn due_count(store: &Store, deck: &str) -> usize {
-    let input = store.study_input(deck, i64::MAX, 0).unwrap();
+    let input = store
+        .study_input(&crate::scheduling::StudyScope::deck(deck), i64::MAX, 0)
+        .unwrap();
     input.reviews.len() + input.steps.len()
 }
 

@@ -315,7 +315,8 @@ fn list(start: Option<u64>, items: &[Vec<Block>], lists: usize, side: &mut Side<
 
 /// A table in a horizontal scroller, so a wide one fits a narrow window.
 /// The grid has a border, a line between cells and a shaded header row,
-/// from the classes of [`table_cell_classes`] and `data/style.css`.
+/// from the classes of [`table_cell_classes`] and `data/style.css`. It is
+/// as wide as its columns, at the start, so the border hugs the table.
 fn table(
     align: &[Align],
     header: &[Cell],
@@ -324,6 +325,14 @@ fn table(
 ) -> gtk::ScrolledWindow {
     let grid = gtk::Grid::new();
     grid.add_css_class("card-table");
+    // The scroller's viewport gives its child at least its own width (the
+    // default `hscroll-policy` is `Minimum`, GtkScrollable docs), and the
+    // default `Fill` stretched the bordered grid across it, leaving an
+    // empty strip inside the border. `Start` keeps the grid at its natural
+    // width (GtkAlign docs: alignment applies when a widget gets a larger
+    // allocation than it needs). A table wider than the window still gets
+    // its full width, as its labels do not wrap, so it scrolls.
+    grid.set_halign(gtk::Align::Start);
     // GTK CSS has no `overflow`; this clips the shaded header to the
     // rounded border.
     grid.set_overflow(gtk::Overflow::Hidden);
@@ -591,16 +600,29 @@ mod tests {
 
     /// Every label under `widget`, in order.
     fn labels_under(widget: &gtk::Widget) -> Vec<gtk::Label> {
-        let mut out = Vec::new();
-        let mut child = widget.first_child();
-        while let Some(c) = child {
-            if let Ok(label) = c.clone().downcast::<gtk::Label>() {
-                out.push(label);
-            }
-            out.extend(labels_under(&c));
-            child = c.next_sibling();
-        }
-        out
+        crate::testing::descendants(widget)
+    }
+
+    /// A table's grid stays as wide as its columns (the border hugs it)
+    /// instead of filling the scroller (PR #32, ADR 0019).
+    #[test]
+    fn a_tables_grid_is_at_the_start_not_stretched() {
+        crate::testing::with_widgets(|| {
+            let md = "| a | b |\n|---|---|\n| 1 | 2 |\n";
+            let side = render(&rappel_core::content::parse(md), &Images::default());
+            let scroller = side
+                .first_child()
+                .and_downcast::<gtk::ScrolledWindow>()
+                .expect("a table is a scroller");
+            let grid = scroller
+                .child()
+                .and_then(|viewport| viewport.first_child())
+                .or_else(|| scroller.child())
+                .and_downcast::<gtk::Grid>()
+                .expect("the scroller holds the grid");
+            assert!(grid.has_css_class("card-table"));
+            assert_eq!(grid.halign(), gtk::Align::Start);
+        });
     }
 
     #[test]

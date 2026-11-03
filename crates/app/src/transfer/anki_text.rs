@@ -296,6 +296,9 @@ pub(super) fn anki_view(summary: &AnkiSummary) -> AnkiView {
             existing,
         ));
     }
+    if let Some(archived) = archived_sentence(summary.archived_decks) {
+        sentences.push(archived);
+    }
     let media = summary.new_media;
     if media > 0 {
         sentences.push(counted(
@@ -345,17 +348,56 @@ pub(super) struct DoneView {
     pub(super) report: Option<String>,
 }
 
+/// What the plan and the report say when cards go into `archived` archived
+/// decks of the same name (ADR 0068): they are not studied until the deck
+/// is unarchived. `None` for none.
+fn archived_sentence(archived: usize) -> Option<String> {
+    (archived > 0).then(|| {
+        counted(
+            // Translators: {count} is a number of the user's archived decks
+            // that have the name of a deck of the Anki package.
+            &ngettext(
+                "{count} of them is archived: its new cards are studied once you unarchive it.",
+                "{count} of them are archived: their new cards are studied once you unarchive them.",
+                archived,
+            ),
+            archived,
+        )
+    })
+}
+
 /// The toast after an Anki import.
 pub(super) fn anki_done(report: &AnkiReport) -> DoneView {
     let summary = decks_cards_reviews(report.new_decks, report.cards, report.reviews).map_or_else(
         || gettext("Nothing was imported: everything was already here"),
         |added| fill(&gettext("Imported {added}"), &[("added", &added)]),
     );
+    // Said behind Details with the rest, as the toast's title is short.
+    let summary = match archived_into_text(report.archived_decks) {
+        Some(archived) => format!("{summary}. {archived}"),
+        None => summary,
+    };
     DoneView {
         title: gettext("Import done"),
         summary,
         report: report_text(&report.skipped),
     }
+}
+
+/// After an Anki import: how many archived decks got cards (ADR 0068).
+fn archived_into_text(archived: usize) -> Option<String> {
+    (archived > 0).then(|| {
+        counted(
+            // Translators: after an Anki import; {count} is a number of the
+            // user's archived decks that got cards.
+            &ngettext(
+                "Cards went into {count} archived deck",
+                "Cards went into {count} archived decks",
+                archived,
+            ),
+            archived,
+        )
+    })
 }
 
 /// The toast after an Anki import without a report: the title, or the
@@ -416,6 +458,7 @@ mod tests {
             format: AnkiFormat::Current,
             new_decks: 2,
             existing_decks: 0,
+            archived_decks: 0,
             cards,
             suspended: 0,
             reviews: 30,
@@ -526,11 +569,41 @@ mod tests {
         assert_eq!(view.body, "No card of this package can be imported.");
     }
 
+    /// Cards going into an archived deck of the same name are said so, in
+    /// the question and after the import (ADR 0068).
+    #[test]
+    fn cards_going_into_an_archived_deck_are_said_so() {
+        let mut s = summary(4, Vec::new());
+        s.existing_decks = 2;
+        s.archived_decks = 1;
+        assert!(anki_view(&s).body.contains(
+            "Cards also go into 2 decks you already have. 1 of them is archived: its new cards \
+             are studied once you unarchive it."
+        ));
+        s.archived_decks = 2;
+        assert!(anki_view(&s).body.contains("2 of them are archived"));
+        let report = AnkiReport {
+            new_decks: 0,
+            archived_decks: 1,
+            cards: 4,
+            suspended: 0,
+            reviews: 0,
+            new_media: 0,
+            skipped: Vec::new(),
+            backup: None,
+        };
+        assert_eq!(
+            anki_done(&report).summary,
+            "Imported 4 cards. Cards went into 1 archived deck"
+        );
+    }
+
     #[test]
     fn the_done_toast_has_a_short_title_and_the_report_behind_details() {
         use crate::ui::toast::{TOAST_FITS_WITH_BUTTON, ToastText, toast_text};
         let report = AnkiReport {
             new_decks: 5,
+            archived_decks: 0,
             cards: 16,
             suspended: 1,
             reviews: 16,

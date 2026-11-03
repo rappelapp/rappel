@@ -24,11 +24,18 @@
 //! - Images and audio (ADR 0055, 0056): Insert Image… and Insert Audio…
 //!   beside each side's title, Ctrl+V of a picture or of media files, and
 //!   dropping them on a side ([`insert`]).
+//! - Other cards with the same front (#119, ADR 0072): once typing in the
+//!   front pauses ([`SAME_FRONT_DELAY`]), and when a card is loaded, one
+//!   lookup finds them; a note under the front says so
+//!   ([`same_front::note`]), announced when it changes, with Show Card,
+//!   which opens the first of them in Card Information. It never blocks
+//!   saving.
 
 mod format;
 mod insert;
 mod layout;
 mod media;
+mod same_front;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -41,6 +48,7 @@ use rappel_core::content;
 use rappel_core::domain::{Card, CardSide, MAX_CARD_SIDE_BYTES, TaggedCard, card_side_fits};
 use sourceview5::prelude::*;
 
+use crate::dialogs::card_info;
 use crate::i18n::{self, gettext};
 use crate::render::{Images, back_shown, clear, fill, shown_part};
 use crate::state::AppState;
@@ -48,7 +56,7 @@ use crate::ui::callback::Callback;
 use crate::ui::text::group_digits;
 use crate::ui::text::with_error;
 use crate::ui::toast::{info_toast, show_error};
-use crate::ui::{breakpoint, dialog, init_once};
+use crate::ui::{breakpoint, dialog, init_once, keys};
 use crate::widgets::tag_entry::field::{self as tags, TagsCheck};
 
 use self::layout::Mode;
@@ -58,6 +66,11 @@ use self::layout::Mode;
 /// rendered on every key.
 const PREVIEW_DELAY: Duration = Duration::from_millis(250);
 
+/// How long typing in the front must pause before the other cards with
+/// the same front are looked up again: one query, but not one per key,
+/// and a note that does not flicker while a word is half typed.
+const SAME_FRONT_DELAY: Duration = Duration::from_millis(400);
+
 /// The save keys, and whether each starts a new card after saving. The
 /// Keyboard Shortcuts dialog lists them (a test checks it).
 pub(crate) const SAVE_KEYS: [(&str, bool); 4] = [
@@ -66,6 +79,13 @@ pub(crate) const SAVE_KEYS: [(&str, bool); 4] = [
     ("<Control><Shift>Return", true),
     ("<Control><Shift>KP_Enter", true),
 ];
+
+/// The tooltip of Save: its name and the first of [`SAVE_KEYS`], "Save
+/// (Ctrl+Enter)".
+fn save_tooltip() -> Option<String> {
+    let (trigger, _) = SAVE_KEYS.first()?;
+    keys::label(trigger).map(|key| keys::tooltip(&gettext("Save"), &key))
+}
 
 /// The formatting keys and the marker each wraps the selection in.
 pub(crate) const FORMAT_KEYS: [(&str, &str); 2] =
@@ -99,6 +119,8 @@ mod imp {
         #[template_child]
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,
         #[template_child]
+        pub save_button: TemplateChild<gtk::Button>,
+        #[template_child]
         pub front_view: TemplateChild<sourceview5::View>,
         #[template_child]
         pub back_view: TemplateChild<sourceview5::View>,
@@ -122,6 +144,12 @@ mod imp {
         pub back_frame: TemplateChild<gtk::Frame>,
         #[template_child]
         pub back_error: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub front_same: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub front_same_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub front_same_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub tag_entry: TemplateChild<crate::widgets::TagEntry>,
         #[template_child]
@@ -148,6 +176,13 @@ mod imp {
         pub preview_back: TemplateChild<gtk::Box>,
         /// The preview refresh waiting for typing to pause.
         pub preview: Debounce,
+        /// The same-front lookup waiting for typing in the front to pause.
+        pub same_front: Debounce,
+        /// The front as last looked up, so a change elsewhere (or none)
+        /// does not query again; `None` before the first lookup.
+        pub same_front_looked: RefCell<Option<String>>,
+        /// The card Show Card opens: the first with the same front.
+        pub same_front_card: RefCell<Option<String>>,
         /// The last "image could not be added" (or audio) toast, replaced
         /// by the next.
         pub media_errors: ErrorSlot,
@@ -222,6 +257,7 @@ mod imp {
 
         fn dispose(&self) {
             self.preview.cancel();
+            self.same_front.cancel();
             if let Some(handler) = self.dark_handler.take() {
                 adw::StyleManager::default().disconnect(handler);
             }
@@ -299,11 +335,22 @@ impl CardEditor {
 
     fn setup(&self) {
         self.setup_shortcuts();
+        self.setup_save_tooltip();
         self.setup_views();
         self.setup_tags();
+        self.setup_same_front();
         self.setup_media();
         self.setup_layout();
         self.connect_close_attempt(Self::ask_discard);
+    }
+
+    /// Gives Save its key in its tooltip, "Save (Ctrl+Enter)" (#117, ADR
+    /// 0064): the key the editor binds, as GTK labels it, in the user's
+    /// language. There is no hint on the page any more.
+    fn setup_save_tooltip(&self) {
+        if let Some(tooltip) = save_tooltip() {
+            self.imp().save_button.set_tooltip_text(Some(&tooltip));
+        }
     }
 
     /// Ctrl+Enter, Ctrl+Shift+Enter, Ctrl+B and Ctrl+I.
@@ -375,6 +422,126 @@ impl CardEditor {
             move |style| editor.apply_scheme(style.is_dark())
         ));
         imp.dark_handler.replace(Some(handler));
+    }
+
+    /// Typing in the front looks for other cards with that front once it
+    /// pauses; Show Card opens the first of them.
+    fn setup_same_front(&self) {
+        let imp = self.imp();
+        imp.front_buffer.connect_changed(glib::clone!(
+            #[weak(rename_to = editor)]
+            self,
+            move |_| editor.schedule_same_front()
+        ));
+        imp.front_same_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = editor)]
+            self,
+            move |_| editor.show_same_front()
+        ));
+    }
+
+    /// Looks for other cards with the front once typing pauses.
+    fn schedule_same_front(&self) {
+        self.imp().same_front.restart(
+            SAME_FRONT_DELAY,
+            glib::clone!(
+                #[weak(rename_to = editor)]
+                self,
+                move || editor.check_same_front()
+            ),
+        );
+    }
+
+    /// Looks for the other live cards with the same front now, unless the
+    /// front is the one last looked up, and shows the note: one indexed
+    /// query (`Store::cards_with_front`), on the main thread as All Cards'
+    /// search is. A front over `MAX_SAME_FRONT_BYTES` (64 KiB) is not
+    /// parsed and has no note, so the pause never costs more than a few
+    /// milliseconds. A failure hides the note: it is only a hint.
+    fn check_same_front(&self) {
+        let imp = self.imp();
+        imp.same_front.cancel();
+        // The front alone: the back may be up to 1 MiB too.
+        let front = {
+            let buffer = &*imp.front_buffer;
+            let (start, end) = buffer.bounds();
+            buffer.text(&start, &end, false).to_string()
+        };
+        if imp.same_front_looked.borrow().as_deref() == Some(front.as_str()) {
+            return;
+        }
+        let Some(state) = imp.state.get() else {
+            return;
+        };
+        let card_id = imp.card_id.borrow().clone();
+        let same = state
+            .cards_with_front(&front, card_id.as_deref())
+            .unwrap_or_else(|err| {
+                tracing::warn!("the cards with the same front could not be read: {err}");
+                Vec::new()
+            });
+        imp.same_front_looked.replace(Some(front));
+        self.show_same_front_note(
+            same_front::note(&same),
+            same.into_iter().next().map(|s| s.card_id),
+        );
+    }
+
+    /// Shows `note` under the front, with Show Card opening `card_id`,
+    /// or hides it. A note that appears or changes is announced politely
+    /// (`gtk_accessible_announce` with
+    /// `GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM`, GTK 4.14), so a
+    /// screen reader hears it once, not on every key.
+    fn show_same_front_note(&self, note: Option<String>, card_id: Option<String>) {
+        let imp = self.imp();
+        imp.same_front_card.replace(card_id);
+        if let Some(text) = note {
+            if !imp.front_same.is_visible() || imp.front_same_label.label() != text {
+                imp.front_view
+                    .upcast_ref::<gtk::Widget>()
+                    .announce(&text, gtk::AccessibleAnnouncementPriority::Medium);
+            }
+            imp.front_same_label.set_label(&text);
+            imp.front_same.set_visible(true);
+        } else {
+            // The focus would be lost with the button: back to the text.
+            let had_focus = imp.front_same_button.has_focus();
+            imp.front_same.set_visible(false);
+            // The front stays described by the label: an old note must not
+            // be read out.
+            imp.front_same_label.set_label("");
+            if had_focus {
+                imp.front_view.grab_focus();
+            }
+        }
+    }
+
+    /// Opens the first card with the same front in Card Information, over
+    /// the editor: read-only, so nothing typed is lost or saved. Once it
+    /// closes, the focus goes back to Show Card.
+    fn show_same_front(&self) {
+        let imp = self.imp();
+        let (Some(state), Some(card_id)) = (imp.state.get(), imp.same_front_card.borrow().clone())
+        else {
+            return;
+        };
+        card_info::open(
+            self,
+            state,
+            &card_id,
+            glib::clone!(
+                #[weak(rename_to = editor)]
+                self,
+                move || {
+                    let imp = editor.imp();
+                    if imp.front_same.is_visible() {
+                        imp.front_same_button.grab_focus();
+                    } else {
+                        imp.front_view.grab_focus();
+                    }
+                }
+            ),
+        );
     }
 
     /// Changes of the tags field count as edits.
@@ -686,6 +853,9 @@ impl CardEditor {
         }
         self.update_actions();
         self.refresh_preview();
+        // Another card, or none: look again now, without waiting.
+        imp.same_front_looked.replace(None);
+        self.check_same_front();
     }
 
     fn texts(&self) -> (String, String) {
@@ -919,6 +1089,40 @@ fn wrap_selection(buffer: &sourceview5::Buffer, marker: &str) {
 pub(super) mod tests {
     use super::*;
 
+    /// Save says its key in its tooltip (#117), and nothing on the page
+    /// hints it any more: neither the keycap label nor its words.
+    #[test]
+    fn save_says_its_key_in_its_tooltip_and_nothing_else_hints_it() {
+        crate::testing::with_widgets(|| {
+            assert_eq!(save_tooltip().as_deref(), Some("Save (Ctrl+Enter)"));
+            // The key named is one the editor binds, to save and close.
+            assert_eq!(SAVE_KEYS[0], ("<Control>Return", false));
+            let (_tmp, _state, _deck, editor, _saved) = editor_over(None);
+            assert_eq!(
+                editor.imp().save_button.tooltip_text().as_deref(),
+                Some("Save (Ctrl+Enter)")
+            );
+            // No keycap label anywhere in the editor, and no caption.
+            let mut todo = vec![editor.clone().upcast::<gtk::Widget>()];
+            while let Some(widget) = todo.pop() {
+                assert_ne!(widget.type_().name(), "AdwShortcutLabel");
+                if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+                    assert_ne!(label.label(), "to save");
+                }
+                todo.extend(widget.first_child());
+                todo.extend(widget.next_sibling());
+            }
+            // GTK has no public getter for an accessible description, so
+            // the layout's source is checked, as for the review page.
+            let blueprint = include_str!("../../../data/card_editor.blp");
+            for gone in ["save_hint", "to save", "ShortcutLabel"] {
+                assert!(!blueprint.contains(gone), "{gone}");
+            }
+            assert!(blueprint.contains("description: _(\"Press Ctrl+Enter\");"));
+            assert!(!blueprint.contains("tooltip-text: _(\"Save"));
+        });
+    }
+
     #[test]
     fn the_scheme_follows_the_style() {
         assert_eq!(scheme_id(false), "Adwaita");
@@ -1135,6 +1339,134 @@ pub(super) mod tests {
             imp.tag_entry.accept_suggestion(0);
             assert_eq!(imp.tag_entry.pill_names(), ["maths", "algebra"]);
             assert!(editor.can_close());
+        });
+    }
+
+    /// The note under the front, if shown.
+    fn same_front_note(editor: &CardEditor) -> Option<String> {
+        let imp = editor.imp();
+        imp.front_same
+            .is_visible()
+            .then(|| imp.front_same_label.label().to_string())
+    }
+
+    #[test]
+    fn a_new_card_with_a_front_another_has_shows_a_note_once_typing_pauses() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, deck, editor, _saved) = editor_over(None);
+            let imp = editor.imp();
+            let other = state
+                .add_card_with_tags(&deck, "**El Niño**", "", &[])
+                .unwrap();
+            assert_eq!(same_front_note(&editor), None);
+            // Case, accents, Markdown and whitespace do not count.
+            imp.front_buffer.set_text("  el  nino\n");
+            assert_eq!(same_front_note(&editor), None, "not on the keystroke");
+            assert!(
+                crate::testing::settle_until(
+                    || same_front_note(&editor).is_some(),
+                    std::time::Duration::from_secs(5)
+                ),
+                "the note shows once typing pauses"
+            );
+            assert_eq!(
+                same_front_note(&editor).as_deref(),
+                Some("A card in “Deck” has the same front")
+            );
+            assert_eq!(
+                imp.same_front_card.borrow().as_deref(),
+                Some(other.card.id.as_str())
+            );
+            imp.front_buffer.set_text("el ninos");
+            editor.check_same_front();
+            assert_eq!(same_front_note(&editor), None);
+            assert_eq!(*imp.same_front_card.borrow(), None);
+            // Hidden, the label holds nothing a screen reader could read
+            // through the front's description.
+            assert_eq!(imp.front_same_label.label(), "");
+            // Saving is never blocked.
+            imp.front_buffer.set_text("el niño");
+            editor.check_same_front();
+            assert!(same_front_note(&editor).is_some());
+            editor.save(true);
+            assert_eq!(state.list_tagged_cards(&deck).unwrap().len(), 2);
+        });
+    }
+
+    #[test]
+    fn the_edited_card_is_not_its_own_duplicate_and_archived_decks_count() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, _deck, editor, _saved) = editor_over(Some(("hola", &[])));
+            assert_eq!(same_front_note(&editor), None);
+            let old = state.create_deck("a&b <i>").unwrap();
+            state.add_card_with_tags(&old.id, "Hola", "", &[]).unwrap();
+            state.archive_deck(&old.id).unwrap();
+            // Looked up again (the front did not change, so it would not be).
+            editor.imp().same_front_looked.replace(None);
+            editor.check_same_front();
+            // The deck name as it is: the label has no markup.
+            assert!(!editor.imp().front_same_label.uses_markup());
+            assert_eq!(
+                same_front_note(&editor).as_deref(),
+                Some("A card in the archived deck “a&b <i>” has the same front")
+            );
+        });
+    }
+
+    #[test]
+    fn a_card_saved_with_ctrl_shift_enter_is_found_by_the_next() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, _deck, editor, _saved) = editor_over(None);
+            let imp = editor.imp();
+            imp.front_buffer.set_text("hola");
+            editor.check_same_front();
+            assert_eq!(same_front_note(&editor), None);
+            editor.save(true);
+            // The next card starts without a note, then finds the first.
+            assert_eq!(same_front_note(&editor), None);
+            imp.front_buffer.set_text("Hola");
+            editor.check_same_front();
+            assert_eq!(
+                same_front_note(&editor).as_deref(),
+                Some("A card in “Deck” has the same front")
+            );
+            imp.front_buffer.set_text("");
+            editor.check_same_front();
+            assert_eq!(same_front_note(&editor), None);
+        });
+    }
+
+    #[test]
+    fn a_front_over_the_cap_is_not_looked_up() {
+        use rappel_core::storage::MAX_SAME_FRONT_BYTES;
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, deck, editor, _saved) = editor_over(None);
+            let imp = editor.imp();
+            let long = "word ".repeat(MAX_SAME_FRONT_BYTES / 5 + 1);
+            state.add_card_with_tags(&deck, &long, "", &[]).unwrap();
+            imp.front_buffer.set_text(&long);
+            editor.check_same_front();
+            assert_eq!(same_front_note(&editor), None);
+        });
+    }
+
+    #[test]
+    fn several_cards_with_the_same_front_are_counted_on_load() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, deck, _editor, _saved) = editor_over(None);
+            for _ in 0..2 {
+                state.add_card_with_tags(&deck, "hola", "", &[]).unwrap();
+            }
+            let card = state
+                .add_card_with_tags(&deck, "hola", "", &[])
+                .unwrap()
+                .card;
+            let editor = CardEditor::new(state.clone(), &deck, Some(&card), |_| {});
+            // Shown when the card is loaded, without typing.
+            assert_eq!(
+                same_front_note(&editor).as_deref(),
+                Some("2 cards in “Deck” have the same front")
+            );
         });
     }
 

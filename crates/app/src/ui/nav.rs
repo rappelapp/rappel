@@ -50,6 +50,23 @@ where
     Ok(true)
 }
 
+/// Puts `page` in the place of the visible page of `view`, keeping the
+/// pages under it, so Back from `page` goes where Back from the replaced
+/// one went (a practice started from a session's summary, ADR 0070).
+/// `adw_navigation_view_replace` sets the whole stack without an
+/// animation and removes the pages that left it (its docs in
+/// `Adw-1.gir`); `page`'s `shown` is still emitted, so it sets its focus
+/// there as after a push (tested below).
+pub fn replace_visible(view: &adw::NavigationView, page: &impl IsA<adw::NavigationPage>) {
+    let stack = view.navigation_stack();
+    let below = stack.n_items().saturating_sub(1);
+    let mut pages: Vec<adw::NavigationPage> = (0..below)
+        .filter_map(|i| stack.item(i).and_downcast::<adw::NavigationPage>())
+        .collect();
+    pages.push(page.clone().upcast());
+    view.replace(&pages);
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -119,6 +136,41 @@ mod tests {
                 Err("unreadable")
             );
             assert_eq!(view.visible_page(), None);
+        });
+    }
+
+    /// The replaced page leaves the stack, the pages under it stay, and the
+    /// new page is told it is shown, on screen, as after a push.
+    #[test]
+    fn a_replaced_page_takes_the_place_of_the_visible_one_and_is_shown() {
+        crate::testing::with_widgets(|| {
+            let view = adw::NavigationView::new();
+            let window = adw::Window::builder().content(&view).build();
+            let root = adw::NavigationPage::builder().title("Root").build();
+            let old = adw::NavigationPage::builder().title("Old").build();
+            view.push(&root);
+            view.push(&old);
+            window.present();
+            let new = adw::NavigationPage::builder().title("New").build();
+            let shown = std::rc::Rc::new(Cell::new(false));
+            new.connect_shown(glib::clone!(
+                #[strong]
+                shown,
+                move |_| shown.set(true)
+            ));
+            replace_visible(&view, &new);
+            assert!(crate::testing::settle_until(
+                || shown.get(),
+                std::time::Duration::from_secs(5)
+            ));
+            let stack = view.navigation_stack();
+            assert_eq!(stack.n_items(), 2);
+            assert_eq!(
+                stack.item(0).and_downcast::<adw::NavigationPage>(),
+                Some(root)
+            );
+            assert_eq!(view.visible_page(), Some(new));
+            window.close();
         });
     }
 }

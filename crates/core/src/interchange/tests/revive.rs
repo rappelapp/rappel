@@ -72,6 +72,7 @@ fn export_delete_all_import_revives_everything() {
                 revived: 0
             },
             media: TableCounts::default(),
+            cards_kept_in_their_deck: 0,
             settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }
@@ -150,6 +151,7 @@ fn a_mixed_import_revives_adds_and_skips() {
                 revived: 0
             },
             media: TableCounts::default(),
+            cards_kept_in_their_deck: 0,
             settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }
@@ -253,6 +255,7 @@ fn a_row_deleted_in_the_file_but_live_here_is_present() {
                 revived: 0
             },
             media: TableCounts::default(),
+            cards_kept_in_their_deck: 0,
             settings: SettingsImport::Unchanged,
             conflicts: vec![],
         }

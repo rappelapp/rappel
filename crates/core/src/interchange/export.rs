@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-use super::ExportSummary;
 use super::archive::ArchiveWriter;
 use super::format::{
     CardRecord, CardTagRecord, DeckRecord, Document, EventRecord, FORMAT_VERSION, MediaRecord,
     SettingsRecord, TagRecord,
 };
+use super::{ExportOptions, ExportSummary, Limits, MAX_ARCHIVE_BYTES};
 use crate::error::{Error, Result};
 use crate::media::{CopyFailure, MediaKind, MediaRef, copy_capped, parse_hex};
 use crate::storage::{Store, stored_settings};
@@ -34,28 +34,103 @@ impl Store {
     /// SQLite and IO errors, or [`Error::ExportFailed`]. On error `path`
     /// is left as it was.
     pub fn export_to(&self, path: &Path) -> Result<ExportSummary> {
+        self.export_to_with(path, ExportOptions::default())
+    }
+
+    /// [`Self::export_to`] with `options`: without media, the file has no
+    /// media entry and no media record (ADR 0071).
+    ///
+    /// # Errors
+    /// Those of [`Self::export_to`], and [`Error::ExportTooLarge`] if the
+    /// file came out larger than an import reads (what
+    /// [`media_too_large_for_import`] cannot know beforehand: the size of
+    /// `cards.json`); then `path` is left as it was.
+    pub fn export_to_with(&self, path: &Path, options: ExportOptions) -> Result<ExportSummary> {
+        self.export_to_limited(path, options, MAX_ARCHIVE_BYTES)
+    }
+
+    /// [`Self::export_to_with`] with the size an import reads as `limit`,
+    /// for tests.
+    pub(crate) fn export_to_limited(
+        &self,
+        path: &Path,
+        options: ExportOptions,
+        limit: u64,
+    ) -> Result<ExportSummary> {
         write_file_atomically(path, |file| {
             let mut out = BufWriter::with_capacity(64 << 10, file);
-            let summary = self.write_export(&mut out, now_ms())?;
+            let summary = self.write_export(&mut out, now_ms(), options)?;
             out.flush().map_err(|source| Error::Io {
                 path: path.to_path_buf(),
                 source,
             })?;
+            let bytes = out
+                .get_ref()
+                .metadata()
+                .map_err(|source| Error::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })?
+                .len();
+            if bytes > limit {
+                return Err(Error::ExportTooLarge { bytes, limit });
+            }
             Ok(summary)
+        })
+    }
+
+    /// The media an export would hold, for [`media_too_large_for_import`]:
+    /// how many files the database lists and their sizes together (the
+    /// `bytes` column). One cheap query; no file is touched.
+    ///
+    /// # Errors
+    /// SQLite errors.
+    pub fn media_totals(&self) -> Result<MediaTotals> {
+        let (bytes, files): (i64, i64) = self.conn.query_row(
+            "SELECT COALESCE(SUM(bytes), 0), COUNT(*) FROM media",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok(MediaTotals {
+            bytes: u64::try_from(bytes).unwrap_or(0),
+            files: usize::try_from(files).unwrap_or(0),
         })
     }
 
     /// The archive bytes of an export made at `now` (UTC milliseconds).
     #[cfg(test)]
     pub(crate) fn export_bytes_at(&self, now: i64) -> Result<(Vec<u8>, ExportSummary)> {
+        self.export_bytes_with(now, ExportOptions::default())
+    }
+
+    /// [`Self::export_bytes_at`] with `options`.
+    #[cfg(test)]
+    pub(crate) fn export_bytes_with(
+        &self,
+        now: i64,
+        options: ExportOptions,
+    ) -> Result<(Vec<u8>, ExportSummary)> {
         let mut out = io::Cursor::new(Vec::new());
-        let summary = self.write_export(&mut out, now)?;
+        let summary = self.write_export(&mut out, now, options)?;
         Ok((out.into_inner(), summary))
     }
 
     /// Writes the export made at `now` to `out`.
-    fn write_export<W: Write + Seek>(&self, out: W, now: i64) -> Result<ExportSummary> {
+    fn write_export<W: Write + Seek>(
+        &self,
+        out: W,
+        now: i64,
+        options: ExportOptions,
+    ) -> Result<ExportSummary> {
         let (mut document, rows) = read_document(&self.conn, now)?;
+        // Asked to leave the media out: no record, no entry, and the rows
+        // are counted as left out, not as missing.
+        let media_left_out = if options.include_media { 0 } else { rows.len() };
+        let rows = if options.include_media {
+            rows
+        } else {
+            Vec::new()
+        };
         // Only the files that are there and whole go in, with their
         // records, so the export stays importable.
         let mut files = Vec::with_capacity(rows.len());
@@ -81,6 +156,7 @@ impl Store {
             tags: document.tags.len(),
             review_events: document.review_events.len(),
             media: files.len(),
+            media_left_out,
             missing_media,
         };
         let mut json =
@@ -150,14 +226,18 @@ fn copy_media(path: &Path, media: &MediaRef, out: &mut impl Write) -> Result<()>
 fn read_document(conn: &Connection, now: i64) -> Result<(Document, Vec<MediaRow>)> {
     let tx = conn.unchecked_transaction()?;
     let decks = tx
-        .prepare("SELECT id, name, created_at, updated_at, deleted_at FROM decks ORDER BY id")?
+        .prepare(
+            "SELECT id, name, created_at, updated_at, archived_at, deleted_at
+             FROM decks ORDER BY id",
+        )?
         .query_map([], |r| {
             Ok(DeckRecord {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 created_at: r.get(2)?,
                 updated_at: r.get(3)?,
-                deleted_at: r.get(4)?,
+                archived_at: r.get::<_, Option<i64>>(4)?.into(),
+                deleted_at: r.get(5)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -315,4 +395,83 @@ fn partial_path(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".partial");
     PathBuf::from(name)
+}
+
+/// The media an export would hold (see [`Store::media_totals`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediaTotals {
+    /// The media files' sizes together, in bytes (the `bytes` column).
+    pub bytes: u64,
+    /// How many media files.
+    pub files: usize,
+}
+
+/// Why an export with its media could not be imported again
+/// ([`media_too_large_for_import`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaOverLimit {
+    /// The archive would take at least `at_least` bytes
+    /// (`export_size_at_least`), more than the 2 GiB an import reads
+    /// (`MAX_ARCHIVE_BYTES`).
+    Size {
+        /// The least the archive would take.
+        at_least: u64,
+    },
+    /// The archive would hold more entries than an import reads.
+    Files {
+        /// How many media files.
+        files: usize,
+    },
+}
+
+/// The least a zip entry takes besides its data in an archive Rappel
+/// writes (no extra field, no comment, no data descriptor): the local
+/// header (30 bytes) and the central record (46) with the name twice. The
+/// shortest name is `media/` + 64 hex digits + `.` + a three-letter
+/// extension (`MediaKind::extension`) = 74 bytes.
+const MEDIA_ENTRY_OVERHEAD: u64 = 30 + 46 + 2 * 74;
+
+/// The bytes of an archive besides its media and the data of
+/// `cards.json`: the directory entry `media/` (30 + 46 + 2 × 6),
+/// `cards.json`'s headers (30 + 46 + 2 × 10) and the end record (22).
+const ARCHIVE_OVERHEAD: u64 = (30 + 46 + 12) + (30 + 46 + 20) + 22;
+
+/// The least the archive of an export with `media` takes: the media, their
+/// entries' headers and the archive's own, with `cards.json` taken as
+/// empty. A lower bound, so that what it refuses is refused rightly: the
+/// compressed size of `cards.json` cannot be known without writing it, and
+/// any upper bound of it is far above the real size (Deflate shrinks the
+/// repeated keys and ids many times), which would turn away exports that
+/// import fine (ADR 0071).
+#[must_use]
+pub(crate) fn export_size_at_least(media: MediaTotals) -> u64 {
+    let files = u64::try_from(media.files).unwrap_or(u64::MAX);
+    media
+        .bytes
+        .saturating_add(files.saturating_mul(MEDIA_ENTRY_OVERHEAD))
+        .saturating_add(ARCHIVE_OVERHEAD)
+}
+
+/// Why an import would refuse an export with `media`, for what leaving the
+/// media out mends, or `None`: `export_size_at_least` past the 2 GiB an
+/// import reads (`MAX_ARCHIVE_BYTES`), else more entries (the media files, `cards.json`
+/// and `media/`) than an import reads. Both are lower bounds, so a `Some`
+/// is always right for the media the database lists (a file missing from
+/// the media folder is left out of the export, which is then smaller).
+/// A `None` is not a promise: `cards.json` may push the file over, which
+/// the export finds once it has written it ([`Error::ExportTooLarge`]).
+/// The app asks before exporting (ADR 0071).
+#[must_use]
+pub fn media_too_large_for_import(media: MediaTotals) -> Option<MediaOverLimit> {
+    let at_least = export_size_at_least(media);
+    let entries = u64::try_from(media.files)
+        .unwrap_or(u64::MAX)
+        .saturating_add(2);
+    if at_least > MAX_ARCHIVE_BYTES {
+        Some(MediaOverLimit::Size { at_least })
+    } else if entries > Limits::DEFAULT.entries {
+        Some(MediaOverLimit::Files { files: media.files })
+    } else {
+        None
+    }
 }

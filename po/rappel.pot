@@ -10,22 +10,38 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
+#: crates/app/data/archived_page.blp
+#: crates/app/data/browser_page.blp
+#: crates/app/data/decks_page.blp
+msgid "Archived Decks"
+msgstr ""
+
+#: crates/app/data/archived_page.blp
+msgid "No Archived Decks"
+msgstr ""
+
+#: crates/app/data/archived_page.blp
+msgid "Decks you archive show up here"
+msgstr ""
+
 #: crates/app/data/backup_row.blp
 #: crates/app/data/restore_dialog.blp
 msgid "_Restore"
 msgstr ""
 
 #: crates/app/data/browser_dialogs.blp
-#: crates/app/data/browser_page.blp
 #: crates/app/data/card_editor.blp
 #: crates/app/data/clean_up_media_dialog.blp
 #: crates/app/data/deck_name_dialog.blp
 #: crates/app/data/delete_card_dialog.blp
+#: crates/app/data/export_media_dialog.blp
 #: crates/app/data/import_dialog.blp
+#: crates/app/data/merge_deck_dialog.blp
 #: crates/app/data/restore_dialog.blp
 #: crates/app/data/retention_dialog.blp
+#: crates/app/data/selection_header.blp
 #: crates/app/data/start_fresh_dialog.blp
-#: crates/app/src/transfer/anki.rs
+#: crates/app/src/transfer/progress.rs
 msgid "_Cancel"
 msgstr ""
 
@@ -51,20 +67,13 @@ msgid "Search cards"
 msgstr ""
 
 #: crates/app/data/browser_page.blp
-#: crates/app/data/shortcuts-dialog.blp
-msgid "Select All"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "Select _All"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-#: crates/app/src/pages/browser_page/text.rs
+#: crates/app/data/deck_page.blp
+#: crates/app/src/ui/selection/text.rs
 msgid "Select Cards"
 msgstr ""
 
 #: crates/app/data/browser_page.blp
+#: crates/app/data/shortcuts-dialog.blp
 msgid "Deck"
 msgstr ""
 
@@ -105,74 +114,12 @@ msgstr ""
 msgid "Cards"
 msgstr ""
 
-#: crates/app/data/browser_page.blp
-msgid "Move to Deck"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "Move selected cards to a deck"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "Move…"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-#: crates/app/data/card_editor.blp
-#: crates/app/data/card_info_dialog.blp
-#: crates/app/data/shortcuts-dialog.blp
-#: crates/app/src/widgets/tag_entry.rs
-msgid "Tags"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "Tags of selected cards"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-#: crates/app/src/pages/browser_page/text.rs
-msgid "Suspend"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-#: crates/app/src/pages/browser_page/text.rs
-msgid "Suspend selected cards"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "Delete"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "Delete selected cards"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "Reset Progress"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "Reset progress of selected cards"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "Reset"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "_Add Tags…"
-msgstr ""
-
-#: crates/app/data/browser_page.blp
-msgid "_Remove Tag…"
-msgstr ""
-
 #: crates/app/data/card_editor.blp
 msgid "_Save"
 msgstr ""
 
 #: crates/app/data/card_editor.blp
-msgid "Save (Ctrl+Enter)"
+msgid "Press Ctrl+Enter"
 msgstr ""
 
 #: crates/app/data/card_editor.blp
@@ -198,6 +145,10 @@ msgid "Insert Audio in Front"
 msgstr ""
 
 #: crates/app/data/card_editor.blp
+msgid "Show Card"
+msgstr ""
+
+#: crates/app/data/card_editor.blp
 msgid "Back"
 msgstr ""
 
@@ -212,11 +163,15 @@ msgid "Insert Audio in Back"
 msgstr ""
 
 #: crates/app/data/card_editor.blp
-msgid "Press Enter or type a comma after each tag"
+#: crates/app/data/card_info_dialog.blp
+#: crates/app/data/selection_bar.blp
+#: crates/app/data/shortcuts-dialog.blp
+#: crates/app/src/widgets/tag_entry.rs
+msgid "Tags"
 msgstr ""
 
 #: crates/app/data/card_editor.blp
-msgid "to save"
+msgid "Press Enter or type a comma after each tag"
 msgstr ""
 
 #: crates/app/data/card_editor.blp
@@ -319,6 +274,11 @@ msgid "_Reset Progress"
 msgstr ""
 
 #: crates/app/data/card_row.blp
+#: crates/app/data/review_page.blp
+msgid "_Move to Deck…"
+msgstr ""
+
+#: crates/app/data/card_row.blp
 #: crates/app/data/deck_row.blp
 #: crates/app/data/delete_card_dialog.blp
 msgid "_Delete"
@@ -381,8 +341,24 @@ msgid "Study"
 msgstr ""
 
 #: crates/app/data/deck_page.blp
+#: crates/app/data/deck_row.blp
+#: crates/app/data/review_page.blp
+msgid "_Practice"
+msgstr ""
+
+#: crates/app/data/deck_page.blp
 #: crates/app/data/decks_page.blp
 msgid "_Statistics"
+msgstr ""
+
+#: crates/app/data/deck_page.blp
+#: crates/app/data/deck_row.blp
+msgid "_Merge Into…"
+msgstr ""
+
+#: crates/app/data/deck_page.blp
+#: crates/app/data/deck_row.blp
+msgid "_Archive"
 msgstr ""
 
 #: crates/app/data/deck_row.blp
@@ -413,14 +389,6 @@ msgstr ""
 #: crates/app/data/decks_page.blp
 #: crates/app/data/shortcuts-dialog.blp
 msgid "Search All Cards"
-msgstr ""
-
-#: crates/app/data/decks_page.blp
-msgid "No Decks Yet"
-msgstr ""
-
-#: crates/app/data/decks_page.blp
-msgid "Create a deck to start adding cards"
 msgstr ""
 
 #: crates/app/data/decks_page.blp
@@ -475,8 +443,24 @@ msgstr ""
 msgid "_Discard"
 msgstr ""
 
+#: crates/app/data/export_media_dialog.blp
+msgid "Export Without Media?"
+msgstr ""
+
+#: crates/app/data/export_media_dialog.blp
+msgid "_Export Without Media"
+msgstr ""
+
 #: crates/app/data/import_dialog.blp
 msgid "_Import"
+msgstr ""
+
+#: crates/app/data/merge_deck_dialog.blp
+msgid "Merge Deck?"
+msgstr ""
+
+#: crates/app/data/merge_deck_dialog.blp
+msgid "_Merge"
 msgstr ""
 
 #: crates/app/data/preferences_dialog.blp
@@ -599,11 +583,8 @@ msgid "Study"
 msgstr ""
 
 #: crates/app/data/review_page.blp
-msgid "Undo Last Answer (Ctrl+Z)"
-msgstr ""
-
-#: crates/app/data/review_page.blp
 #: crates/app/data/shortcuts-dialog.blp
+#: crates/app/src/pages/review_page.rs
 msgid "Undo Last Answer"
 msgstr ""
 
@@ -612,13 +593,14 @@ msgid "Card Menu"
 msgstr ""
 
 #: crates/app/data/review_page.blp
-msgid "Edit Card (E)"
+#: crates/app/data/shortcuts-dialog.blp
+#: crates/app/src/dialogs/card_editor/mod.rs
+#: crates/app/src/pages/review_page.rs
+msgid "Edit Card"
 msgstr ""
 
 #: crates/app/data/review_page.blp
-#: crates/app/data/shortcuts-dialog.blp
-#: crates/app/src/dialogs/card_editor/mod.rs
-msgid "Edit Card"
+msgid "Practice — nothing is rescheduled"
 msgstr ""
 
 #: crates/app/data/review_page.blp
@@ -627,12 +609,18 @@ msgid "This card is long: only its start is shown. Edit it to see all of it."
 msgstr ""
 
 #: crates/app/data/review_page.blp
+#: crates/app/src/pages/review_page.rs
 msgid "Session Complete"
 msgstr ""
 
 #: crates/app/data/review_page.blp
+#: crates/app/src/pages/review_page.rs
 #: crates/app/src/pages/stats_page/text.rs
 msgid "_Back to Deck"
+msgstr ""
+
+#: crates/app/data/review_page.blp
+msgid "Go over the cards again without rescheduling them"
 msgstr ""
 
 #: crates/app/data/review_page.blp
@@ -643,22 +631,12 @@ msgstr ""
 msgid "Press Space"
 msgstr ""
 
-#. Translators: the name of the Space key, shown under Show Answer.
-#: crates/app/data/review_page.blp
-msgid "Space"
-msgstr ""
-
 #: crates/app/data/review_page.blp
 msgid "_Fail"
 msgstr ""
 
 #: crates/app/data/review_page.blp
 msgid "Press 1"
-msgstr ""
-
-#. Translators: the key that answers Fail; keep it as it is.
-#: crates/app/data/review_page.blp
-msgid "1"
 msgstr ""
 
 #: crates/app/data/review_page.blp
@@ -669,9 +647,8 @@ msgstr ""
 msgid "Press 2 or Space"
 msgstr ""
 
-#. Translators: the key that answers Pass; keep it as it is.
 #: crates/app/data/review_page.blp
-msgid "2"
+msgid "_Edit Card"
 msgstr ""
 
 #: crates/app/data/review_page.blp
@@ -680,6 +657,69 @@ msgstr ""
 
 #: crates/app/data/review_page.blp
 msgid "_Delete Card…"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "Move to Deck"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "Move selected cards to a deck"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "Move…"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "Tags of selected cards"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+#: crates/app/src/ui/selection/text.rs
+msgid "Suspend"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+#: crates/app/src/ui/selection/text.rs
+msgid "Suspend selected cards"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "Delete"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "Delete selected cards"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "Reset Progress"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "Reset progress of selected cards"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "Reset"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "_Add Tags…"
+msgstr ""
+
+#: crates/app/data/selection_bar.blp
+msgid "_Remove Tag…"
+msgstr ""
+
+#: crates/app/data/selection_header.blp
+#: crates/app/data/shortcuts-dialog.blp
+msgid "Select All"
+msgstr ""
+
+#: crates/app/data/selection_header.blp
+msgid "Select _All"
 msgstr ""
 
 #: crates/app/data/setting_page.blp
@@ -715,14 +755,17 @@ msgid "Studying"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
+#: crates/app/src/pages/review_page.rs
 msgid "Show Answer"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
+#: crates/app/src/pages/review_page.rs
 msgid "Fail"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
+#: crates/app/src/pages/review_page.rs
 msgid "Pass"
 msgstr ""
 
@@ -747,6 +790,7 @@ msgid "Card Editor"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
+#: crates/app/src/dialogs/card_editor/mod.rs
 msgid "Save"
 msgstr ""
 
@@ -811,12 +855,24 @@ msgid "In an empty tag field"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
-#: crates/app/src/pages/browser_page.rs
+#: crates/app/src/ui/selection.rs
 msgid "Remove Tag"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
 msgid "On a tag’s remove button"
+msgstr ""
+
+#: crates/app/data/shortcuts-dialog.blp
+msgid "Select or Deselect Card"
+msgstr ""
+
+#: crates/app/data/shortcuts-dialog.blp
+msgid "While selecting cards"
+msgstr ""
+
+#: crates/app/data/shortcuts-dialog.blp
+msgid "Stop Selecting"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
@@ -829,14 +885,6 @@ msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
 msgid "Open Card"
-msgstr ""
-
-#: crates/app/data/shortcuts-dialog.blp
-msgid "Select or Deselect Card"
-msgstr ""
-
-#: crates/app/data/shortcuts-dialog.blp
-msgid "While selecting cards"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
@@ -1027,6 +1075,44 @@ msgstr ""
 msgid "The back is too long (the limit is {limit} bytes)"
 msgstr ""
 
+#. Translators: under the front in the card editor. {deck} is a deck's name.
+#: crates/app/src/dialogs/card_editor/same_front.rs
+msgid "A card in “{deck}” has the same front"
+msgstr ""
+
+#. Translators: under the front in the card editor. {deck} is a deck's name.
+#: crates/app/src/dialogs/card_editor/same_front.rs
+msgid "A card in the archived deck “{deck}” has the same front"
+msgstr ""
+
+#. Translators: under the front in the card editor, for two or more cards. {deck} is a deck's name.
+#: crates/app/src/dialogs/card_editor/same_front.rs
+msgid "{count} card in “{deck}” has the same front"
+msgid_plural "{count} cards in “{deck}” have the same front"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: under the front in the card editor, for two or more cards. {deck} is a deck's name.
+#: crates/app/src/dialogs/card_editor/same_front.rs
+msgid "{count} card in the archived deck “{deck}” has the same front"
+msgid_plural "{count} cards in the archived deck “{deck}” have the same front"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: under the front in the card editor, for two or more cards in two or more decks.
+#: crates/app/src/dialogs/card_editor/same_front.rs
+msgid "{count} card in several decks has the same front"
+msgid_plural "{count} cards in several decks have the same front"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: under the front in the card editor, for two or more cards in two or more decks, one of them at least archived.
+#: crates/app/src/dialogs/card_editor/same_front.rs
+msgid "{count} card in several decks has the same front, archived decks included"
+msgid_plural "{count} cards in several decks have the same front, archived decks included"
+msgstr[0] ""
+msgstr[1] ""
+
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/dialogs/card_info.rs
 msgid "The card’s information could not be read: {error}"
@@ -1149,6 +1235,11 @@ msgstr ""
 msgid "A deck named “{name}” already exists"
 msgstr ""
 
+#. Translators: {name} is the name of one of the user's decks, which is archived (in Archived Decks, at the end of the deck list).
+#: crates/app/src/dialogs/deck_name_dialog.rs
+msgid "An archived deck is named “{name}”"
+msgstr ""
+
 #. Translators: {limit} is a number of bytes (1,024).
 #: crates/app/src/dialogs/deck_name_dialog.rs
 msgid "The name is too long (the limit is {limit} bytes)"
@@ -1160,6 +1251,91 @@ msgstr ""
 
 #: crates/app/src/dialogs/deck_name_dialog.rs
 msgid "_Rename"
+msgstr ""
+
+#. Translators: the text of the Merge Deck dialog when the deck has no cards; {source} is the deck being merged, {target} the deck chosen to merge it into. Deck names are shown in quotes.
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "“{source}” has no cards to move into “{target}”. Remove “{source}”?"
+msgstr ""
+
+#. Translators: the text of the Merge Deck dialog; {count} is a number of cards, {source} the deck being merged, {target} the deck chosen to merge it into. Deck names are shown in quotes.
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "Move {count} card from “{source}” into “{target}” and remove “{source}”?"
+msgid_plural "Move {count} cards from “{source}” into “{target}” and remove “{source}”?"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "Decks merged"
+msgstr ""
+
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "No other deck to merge it into"
+msgstr ""
+
+#. Translators: the accessible name of the list of decks in the Merge Deck dialog.
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "Merge Into"
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/dialogs/merge_deck.rs
+#: crates/app/src/pages/archived_page.rs
+#: crates/app/src/pages/browser_page.rs
+#: crates/app/src/pages/deck_page.rs
+#: crates/app/src/pages/decks_page.rs
+#: crates/app/src/ui/selection.rs
+msgid "The decks could not be read: {error}"
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "The decks could not be merged: {error}"
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {name} is the deck that was merged, {target} the deck it was merged into, which was deleted since.
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "“{name}” could not be restored: “{target}” was deleted since."
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {name} is a deck's name.
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "“{name}” could not be restored: it was deleted again since."
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {name} is a deck's name.
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "“{name}” could not be restored: another deck has its name now."
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {name} is a deck's name.
+#: crates/app/src/dialogs/merge_deck.rs
+msgid "“{name}” could not be restored: an archived deck has its name now."
+msgstr ""
+
+#: crates/app/src/dialogs/move_card.rs
+msgid "Move Card"
+msgstr ""
+
+#: crates/app/src/dialogs/move_card.rs
+msgid "Choose the deck to move this card to."
+msgstr ""
+
+#: crates/app/src/dialogs/move_card.rs
+msgid "Card moved"
+msgstr ""
+
+#: crates/app/src/dialogs/move_card.rs
+msgid "The card could not be moved back"
+msgstr ""
+
+#: crates/app/src/dialogs/move_card.rs
+msgid "No other deck to move it to"
+msgstr ""
+
+#: crates/app/src/dialogs/move_card.rs
+#: crates/app/src/ui/selection.rs
+msgid "_Move"
 msgstr ""
 
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
@@ -1195,10 +1371,70 @@ msgstr ""
 msgid "The backup folder could not be opened: {error}"
 msgstr ""
 
+#. Translators: read with the "Archived Decks" row of the deck list; {count} is how many decks are archived.
+#. Translators: {count} is a number of decks.
+#: crates/app/src/pages/archived_page/text.rs
+#: crates/app/src/ui/text.rs
+msgid "{count} deck"
+msgid_plural "{count} decks"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/app/src/pages/archived_page/text.rs
+msgid "No Decks Yet"
+msgstr ""
+
+#: crates/app/src/pages/archived_page/text.rs
+msgid "Create a deck to start adding cards"
+msgstr ""
+
+#: crates/app/src/pages/archived_page/text.rs
+msgid "Every Deck Is Archived"
+msgstr ""
+
+#: crates/app/src/pages/archived_page/text.rs
+msgid "Create a deck, or unarchive one to study it again"
+msgstr ""
+
+#: crates/app/src/pages/archived_page/text.rs
+#: crates/app/src/pages/browser_page/text.rs
+msgid "No cards"
+msgstr ""
+
+#. Translators: {count} is a number of cards.
+#: crates/app/src/pages/archived_page/text.rs
+#: crates/app/src/pages/browser_page/text.rs
+#: crates/app/src/ui/text.rs
+msgid "{count} card"
+msgid_plural "{count} cards"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/app/src/pages/archived_page/text.rs
+msgid "Unarchive"
+msgstr ""
+
+#. Translators: the tooltip of an archived deck's Unarchive button; {name} is the deck's name.
+#: crates/app/src/pages/archived_page/text.rs
+msgid "Unarchive “{name}”"
+msgstr ""
+
+#: crates/app/src/pages/archived_page/text.rs
+msgid "Deck archived"
+msgstr ""
+
+#: crates/app/src/pages/archived_page/text.rs
+msgid "Deck unarchived"
+msgstr ""
+
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
-#: crates/app/src/pages/browser_page.rs
-#: crates/app/src/pages/decks_page.rs
-msgid "The decks could not be read: {error}"
+#: crates/app/src/pages/archived_page/text.rs
+msgid "The deck could not be archived: {error}"
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/pages/archived_page/text.rs
+msgid "The deck could not be unarchived: {error}"
 msgstr ""
 
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
@@ -1211,35 +1447,20 @@ msgstr ""
 
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/pages/browser_page.rs
-msgid "The tags could not be read: {error}"
-msgstr ""
-
-#: crates/app/src/pages/browser_page.rs
-msgid "Move Cards"
-msgstr ""
-
-#: crates/app/src/pages/browser_page.rs
-msgid "_Move"
-msgstr ""
-
-#: crates/app/src/pages/browser_page.rs
-msgid "_Remove"
+#: crates/app/src/pages/deck_page.rs
+#: crates/app/src/pages/decks_page.rs
+#: crates/app/src/pages/review_page.rs
+msgid "The session could not start: {error}"
 msgstr ""
 
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/pages/browser_page.rs
-msgid "The cards could not be changed: {error}"
+msgid "The tags could not be read: {error}"
 msgstr ""
 
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/pages/browser_page.rs
 msgid "The decks and tags could not be read: {error}"
-msgstr ""
-
-#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
-#: crates/app/src/pages/browser_page.rs
-#: crates/app/src/pages/deck_page.rs
-msgid "The change could not be undone: {error}"
 msgstr ""
 
 #. Translators: a card's status; {when} is "in 3 days".
@@ -1257,33 +1478,6 @@ msgstr ""
 msgid "{card}, deck: {deck}, {status}"
 msgstr ""
 
-#. Translators: {row} is a card as a screen reader says it, while cards are being chosen.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{row}, selected"
-msgstr ""
-
-#. Translators: {row} is a card as a screen reader says it, while cards are being chosen.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{row}, not selected"
-msgstr ""
-
-#: crates/app/src/pages/browser_page/text.rs
-msgid "No cards"
-msgstr ""
-
-#. Translators: the title while cards are being chosen; {count} is how many are.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{count} Selected"
-msgid_plural "{count} Selected"
-msgstr[0] ""
-msgstr[1] ""
-
-#: crates/app/src/pages/browser_page/text.rs
-msgid "This card has no progress to reset"
-msgid_plural "These cards have no progress to reset"
-msgstr[0] ""
-msgstr[1] ""
-
 #: crates/app/src/pages/browser_page/text.rs
 msgid "Cards you add to your decks will show up here"
 msgstr ""
@@ -1294,6 +1488,18 @@ msgstr ""
 
 #: crates/app/src/pages/browser_page/text.rs
 msgid "Try a different search or other filters"
+msgstr ""
+
+#: crates/app/src/pages/browser_page/text.rs
+msgid "Only Archived Cards"
+msgstr ""
+
+#: crates/app/src/pages/browser_page/text.rs
+msgid "The cards of archived decks are hidden"
+msgstr ""
+
+#: crates/app/src/pages/browser_page/text.rs
+msgid "_Show Archived Decks"
 msgstr ""
 
 #: crates/app/src/pages/browser_page/text.rs
@@ -1312,8 +1518,19 @@ msgstr ""
 msgid "_Clear Search and Filters"
 msgstr ""
 
+#. Translators: All Cards' filter of archived decks: their cards are not listed. Short: it shares a phone's width with three other filters.
 #: crates/app/src/pages/browser_page/text.rs
-msgid "The list was out of date; nothing was changed"
+msgid "Archived Hidden"
+msgstr ""
+
+#. Translators: All Cards' filter of archived decks: their cards are listed too.
+#: crates/app/src/pages/browser_page/text.rs
+msgid "Archived Shown"
+msgstr ""
+
+#. Translators: an archived deck in All Cards' deck filter; {name} is the deck's name.
+#: crates/app/src/pages/browser_page/text.rs
+msgid "{name} (archived)"
 msgstr ""
 
 #: crates/app/src/pages/browser_page/text.rs
@@ -1325,127 +1542,9 @@ msgstr ""
 msgid "All Tags"
 msgstr ""
 
-#: crates/app/src/pages/browser_page/text.rs
-msgid "Unsuspend"
-msgstr ""
-
-#: crates/app/src/pages/browser_page/text.rs
-msgid "Unsuspend selected cards"
-msgstr ""
-
-#. Translators: {count} is the number of cards chosen.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "Choose the deck to move {count} card to."
-msgid_plural "Choose the deck to move {count} cards to."
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: {count} is the number of cards chosen.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "Choose the tags to put on {count} card. Press Enter or type a comma after each one."
-msgid_plural "Choose the tags to put on {count} cards. Press Enter or type a comma after each one."
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: {count} is the number of cards chosen.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "Choose the tag to take off {count} card."
-msgid_plural "Choose the tag to take off {count} cards."
-msgstr[0] ""
-msgstr[1] ""
-
-#: crates/app/src/pages/browser_page/text.rs
-msgid "The chosen cards have no tags"
-msgstr ""
-
-#. Translators: {count} is a number of cards.
-#: crates/app/src/pages/browser_page/text.rs
-#: crates/app/src/ui/text.rs
-msgid "{count} card"
-msgid_plural "{count} cards"
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone); {count} is a number of cards.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{count} card moved"
-msgid_plural "{count} cards moved"
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone); {count} is a number of cards.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{count} card tagged"
-msgid_plural "{count} cards tagged"
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: a toast: its first sentence is its title, the rest is behind Details. {count} is a number of cards, {limit} the most tags a card can have (100).
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{count} card left out. A card can have at most {limit} tags"
-msgid_plural "{count} cards left out. A card can have at most {limit} tags"
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: a toast: what is before ";" is its title, the rest is behind Details. {limit} is the most tags a card can have (100).
-#: crates/app/src/pages/browser_page/text.rs
-msgid "No tags added; a card can have at most {limit} tags"
-msgstr ""
-
-#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone); {count} is a number of cards.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{count} card untagged"
-msgid_plural "{count} cards untagged"
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone).
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{count} card suspended"
-msgid_plural "{count} cards suspended"
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone).
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{count} card unsuspended"
-msgid_plural "{count} cards unsuspended"
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: an Undo toast after Reset Progress, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone).
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{count} card reset"
-msgid_plural "{count} cards reset"
-msgstr[0] ""
-msgstr[1] ""
-
-#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone).
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{count} card deleted"
-msgid_plural "{count} cards deleted"
-msgstr[0] ""
-msgstr[1] ""
-
-#: crates/app/src/pages/browser_page/text.rs
-msgid "Nothing changed; the cards were already like that"
-msgstr ""
-
-#. Translators: a toast: what is before ";" is its title, the rest is behind Details. {done} of {count} cards came back.
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{done} of {count} card restored; the others changed since"
-msgid_plural "{done} of {count} cards restored; the others changed since"
-msgstr[0] ""
-msgstr[1] ""
-
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/pages/deck_page.rs
 msgid "What to study could not be read: {error}"
-msgstr ""
-
-#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
-#: crates/app/src/pages/deck_page.rs
-msgid "The session could not start: {error}"
 msgstr ""
 
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
@@ -1462,6 +1561,12 @@ msgstr ""
 #: crates/app/src/pages/deck_page.rs
 #: crates/app/src/pages/review_page.rs
 msgid "Card deleted"
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/pages/deck_page.rs
+#: crates/app/src/pages/review_page.rs
+msgid "The card could not be moved: {error}"
 msgstr ""
 
 #: crates/app/src/pages/deck_page.rs
@@ -1505,8 +1610,19 @@ msgstr ""
 
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/pages/deck_page.rs
+#: crates/app/src/ui/selection.rs
+msgid "The change could not be undone: {error}"
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/pages/deck_page.rs
 #: crates/app/src/pages/review_page.rs
 msgid "The card could not be restored: {error}"
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/pages/deck_page.rs
+msgid "The card could not be moved back: {error}"
 msgstr ""
 
 #: crates/app/src/pages/deck_page.rs
@@ -1536,11 +1652,6 @@ msgstr ""
 
 #: crates/app/src/pages/decks_page.rs
 msgid "Deck deleted"
-msgstr ""
-
-#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {name} is a deck's name, {error} why, in English.
-#: crates/app/src/pages/decks_page.rs
-msgid "“{name}” could not be restored: {error}"
 msgstr ""
 
 #. Translators: {error} is why, in English.
@@ -1626,6 +1737,11 @@ msgstr ""
 msgid "Finishing the restore failed: {error}"
 msgstr ""
 
+#: crates/app/src/pages/review_page.rs
+msgctxt "page title"
+msgid "Practice"
+msgstr ""
+
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/pages/review_page.rs
 msgid "A card could not be read and was skipped: {error}"
@@ -1637,6 +1753,10 @@ msgstr ""
 
 #: crates/app/src/pages/review_page.rs
 msgid "The card was already gone"
+msgstr ""
+
+#: crates/app/src/pages/review_page.rs
+msgid "The card was already moved"
 msgstr ""
 
 #: crates/app/src/pages/review_page.rs
@@ -1663,6 +1783,50 @@ msgstr[1] ""
 #: crates/app/src/pages/review_page.rs
 msgid "No cards were reviewed"
 msgstr ""
+
+#. Translators: the title of the review page when a deck or a tag has no card to study now.
+#: crates/app/src/pages/review_page.rs
+msgid "Nothing to Study"
+msgstr ""
+
+#: crates/app/src/pages/review_page.rs
+msgid "_Back to All Cards"
+msgstr ""
+
+#: crates/app/src/pages/review_page.rs
+#: crates/app/src/pages/stats_page/text.rs
+msgid "_Back to Decks"
+msgstr ""
+
+#: crates/app/src/pages/review_page.rs
+msgid "Practice Complete"
+msgstr ""
+
+#: crates/app/src/pages/review_page.rs
+msgid "Practice: nothing was rescheduled"
+msgstr ""
+
+#. Translators: the title of the review page while studying the cards that carry a tag, in every deck; {tag} is its name.
+#: crates/app/src/pages/review_page.rs
+msgid "Tagged “{tag}”"
+msgstr ""
+
+#. Translators: under "Nothing to Study"; {deck} is a deck's name.
+#: crates/app/src/pages/review_page.rs
+msgid "No cards of “{deck}” are left to study now."
+msgstr ""
+
+#. Translators: under "Nothing to Study"; {tag} is a tag's name.
+#: crates/app/src/pages/review_page.rs
+msgid "No cards tagged “{tag}” are left to study now."
+msgstr ""
+
+#. Translators: the caption under the number of cards practised in a practice's summary (nothing was rescheduled).
+#: crates/app/src/pages/review_page.rs
+msgid "Card practised"
+msgid_plural "Cards practised"
+msgstr[0] ""
+msgstr[1] ""
 
 #. Translators: the caption under the number of cards reviewed in a session's summary.
 #: crates/app/src/pages/review_page.rs
@@ -1701,10 +1865,6 @@ msgstr ""
 
 #: crates/app/src/pages/stats_page/text.rs
 msgid "Due Forecast"
-msgstr ""
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "_Back to Decks"
 msgstr ""
 
 #: crates/app/src/pages/stats_page/text.rs
@@ -2270,6 +2430,13 @@ msgctxt "sentence separator"
 msgid " "
 msgstr ""
 
+#. Translators: {count} is a number of the user's archived decks that have the name of a deck of the Anki package.
+#: crates/app/src/transfer/anki_text.rs
+msgid "{count} of them is archived: its new cards are studied once you unarchive it."
+msgid_plural "{count} of them are archived: their new cards are studied once you unarchive them."
+msgstr[0] ""
+msgstr[1] ""
+
 #: crates/app/src/transfer/anki_text.rs
 #: crates/app/src/transfer/text.rs
 msgid "Nothing was imported: everything was already here"
@@ -2286,6 +2453,13 @@ msgstr ""
 #: crates/app/src/transfer/text.rs
 msgid "Import done"
 msgstr ""
+
+#. Translators: after an Anki import; {count} is a number of the user's archived decks that got cards.
+#: crates/app/src/transfer/anki_text.rs
+msgid "Cards went into {count} archived deck"
+msgid_plural "Cards went into {count} archived decks"
+msgstr[0] ""
+msgstr[1] ""
 
 #: crates/app/src/transfer/anki_text.rs
 msgid "Newer Anki package. Export it again in Anki with “Support older Anki versions” checked, then import that file"
@@ -2322,6 +2496,10 @@ msgstr ""
 
 #: crates/app/src/transfer/mod.rs
 msgid "The export stopped unexpectedly"
+msgstr ""
+
+#: crates/app/src/transfer/mod.rs
+msgid "The export could not start: its question could not be shown"
 msgstr ""
 
 #: crates/app/src/transfer/mod.rs
@@ -2365,8 +2543,47 @@ msgid_plural "Media files left out. Exported to “{name}”, without {count} me
 msgstr[0] ""
 msgstr[1] ""
 
+#. Translators: a toast: its first sentence is its title, the rest is behind Details. {name} is the file's name, {count} a number of media files (images, sounds).
+#: crates/app/src/transfer/text.rs
+msgid "Media left out. Exported to “{name}” without its {count} media file"
+msgid_plural "Media left out. Exported to “{name}” without its {count} media files"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: the start of a question's body. {size} is a size such as "2.4 GiB". An import reads at most 2 GiB from one file.
+#: crates/app/src/transfer/text.rs
+msgid "With its media files, the export would take at least {size}, more than the 2 GiB that Rappel reads from one file, so Rappel could not import it again."
+msgstr ""
+
+#. Translators: the start of a question's body. {count} is a number of media files (images, sounds), always very large.
+#: crates/app/src/transfer/text.rs
+msgid "The export would hold {count} media file, too many files for Rappel to read from one export, so Rappel could not import it again."
+msgid_plural "The export would hold {count} media files, too many files for Rappel to read from one export, so Rappel could not import it again."
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: the start of a question's body. {size} is a size such as "2.4 GiB". An import reads at most 2 GiB from one file.
+#: crates/app/src/transfer/text.rs
+msgid "The export came to {size}, more than the 2 GiB that Rappel reads from one file, so Rappel could not import it again. It was not saved."
+msgstr ""
+
+#. Translators: the end of the question's body, after why it is asked.
+#: crates/app/src/transfer/text.rs
+msgid "Export without the media instead? Decks, cards and their history are exported; the media files stay where they are, and cards keep their references to them."
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {size} is a size such as "2.4 GiB".
+#: crates/app/src/transfer/text.rs
+msgid "The export failed: even without its media it came to {size}, more than the 2 GiB that Rappel reads from one file. It was not saved."
+msgstr ""
+
 #: crates/app/src/transfer/text.rs
 msgid "Early test version. This file was made by an early test version of Rappel and cannot be imported"
+msgstr ""
+
+#. Translators: a toast with a Cancel button while an export file is checked before importing it; keep it short (it must fit a phone's width).
+#: crates/app/src/transfer/text.rs
+msgid "Checking the file…"
 msgstr ""
 
 #: crates/app/src/transfer/text.rs
@@ -2459,6 +2676,13 @@ msgstr ""
 msgid "Import Data?"
 msgstr ""
 
+#. Translators: {count} is a number of cards that the imported file has in another deck; the import leaves them where they are.
+#: crates/app/src/transfer/text.rs
+msgid "{count} card is in another deck in the file and stays in the one it is in now."
+msgid_plural "{count} cards are in another deck in the file and stay in the ones they are in now."
+msgstr[0] ""
+msgstr[1] ""
+
 #. Translators: {present} is a list of counts ("2 decks and 3 cards"); the plural follows their total.
 #: crates/app/src/transfer/text.rs
 msgid "{present} is already here and will be skipped."
@@ -2501,6 +2725,11 @@ msgstr ""
 msgid "The file has another deck named “{name}”"
 msgstr ""
 
+#. Translators: {name} is the name of one of the user's decks, which is archived.
+#: crates/app/src/transfer/text.rs
+msgid "The file has another deck named “{name}”, like your archived deck"
+msgstr ""
+
 #: crates/app/src/transfer/text.rs
 msgid "The file has another deck with the name of one of yours"
 msgstr ""
@@ -2524,10 +2753,166 @@ msgid_plural "and {count} more"
 msgstr[0] ""
 msgstr[1] ""
 
+#. Translators: the tooltip of a button that a key also presses. {name} is the button ("Pass"), {key} the key ("2").
+#: crates/app/src/ui/keys.rs
+msgid "{name} ({key})"
+msgstr ""
+
+#. Translators: the Return key as a tooltip names it, after the modifiers: "Ctrl+Enter".
+#: crates/app/src/ui/keys.rs
+msgctxt "key name"
+msgid "Enter"
+msgstr ""
+
 #. Translators: the accessible name of a row's menu button; {name} is a deck's name or a card's front.
 #: crates/app/src/ui/rows.rs
 msgid "Actions for {name}"
 msgstr ""
+
+#: crates/app/src/ui/selection.rs
+msgid "Move Cards"
+msgstr ""
+
+#: crates/app/src/ui/selection.rs
+msgid "_Remove"
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/ui/selection.rs
+msgid "The cards could not be changed: {error}"
+msgstr ""
+
+#. Translators: {row} is a card as a screen reader says it, while cards are being chosen.
+#: crates/app/src/ui/selection/text.rs
+msgid "{row}, selected"
+msgstr ""
+
+#. Translators: {row} is a card as a screen reader says it, while cards are being chosen.
+#: crates/app/src/ui/selection/text.rs
+msgid "{row}, not selected"
+msgstr ""
+
+#. Translators: the title while cards are being chosen; {count} is how many are.
+#: crates/app/src/ui/selection/text.rs
+msgid "{count} Selected"
+msgid_plural "{count} Selected"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/app/src/ui/selection/text.rs
+msgid "This card has no progress to reset"
+msgid_plural "These cards have no progress to reset"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/app/src/ui/selection/text.rs
+msgid "The list was out of date; nothing was changed"
+msgstr ""
+
+#: crates/app/src/ui/selection/text.rs
+msgid "Unsuspend"
+msgstr ""
+
+#: crates/app/src/ui/selection/text.rs
+msgid "Unsuspend selected cards"
+msgstr ""
+
+#. Translators: {count} is the number of cards chosen.
+#: crates/app/src/ui/selection/text.rs
+msgid "Choose the deck to move {count} card to."
+msgid_plural "Choose the deck to move {count} cards to."
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: {count} is the number of cards chosen.
+#: crates/app/src/ui/selection/text.rs
+msgid "Choose the tags to put on {count} card. Press Enter or type a comma after each one."
+msgid_plural "Choose the tags to put on {count} cards. Press Enter or type a comma after each one."
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: {count} is the number of cards chosen.
+#: crates/app/src/ui/selection/text.rs
+msgid "Choose the tag to take off {count} card."
+msgid_plural "Choose the tag to take off {count} cards."
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/app/src/ui/selection/text.rs
+msgid "The chosen cards have no tags"
+msgstr ""
+
+#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone); {count} is a number of cards.
+#: crates/app/src/ui/selection/text.rs
+msgid "{count} card moved"
+msgid_plural "{count} cards moved"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone); {count} is a number of cards.
+#: crates/app/src/ui/selection/text.rs
+msgid "{count} card tagged"
+msgid_plural "{count} cards tagged"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: a toast: its first sentence is its title, the rest is behind Details. {count} is a number of cards, {limit} the most tags a card can have (100).
+#: crates/app/src/ui/selection/text.rs
+msgid "{count} card left out. A card can have at most {limit} tags"
+msgid_plural "{count} cards left out. A card can have at most {limit} tags"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: a toast: what is before ";" is its title, the rest is behind Details. {limit} is the most tags a card can have (100).
+#: crates/app/src/ui/selection/text.rs
+msgid "No tags added; a card can have at most {limit} tags"
+msgstr ""
+
+#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone); {count} is a number of cards.
+#: crates/app/src/ui/selection/text.rs
+msgid "{count} card untagged"
+msgid_plural "{count} cards untagged"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone).
+#: crates/app/src/ui/selection/text.rs
+msgid "{count} card suspended"
+msgid_plural "{count} cards suspended"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone).
+#: crates/app/src/ui/selection/text.rs
+msgid "{count} card unsuspended"
+msgid_plural "{count} cards unsuspended"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: an Undo toast after Reset Progress, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone).
+#: crates/app/src/ui/selection/text.rs
+msgid "{count} card reset"
+msgid_plural "{count} cards reset"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: an Undo toast, at most 24 characters with 99,999 cards (it must fit beside Undo on a phone).
+#: crates/app/src/ui/selection/text.rs
+msgid "{count} card deleted"
+msgid_plural "{count} cards deleted"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/app/src/ui/selection/text.rs
+msgid "Nothing changed; the cards were already like that"
+msgstr ""
+
+#. Translators: a toast: what is before ";" is its title, the rest is behind Details. {done} of {count} cards came back.
+#: crates/app/src/ui/selection/text.rs
+msgid "{done} of {count} card restored; the others changed since"
+msgid_plural "{done} of {count} cards restored; the others changed since"
+msgstr[0] ""
+msgstr[1] ""
 
 #. Translators: what separates the items of a list of names ("maths, physics, history"); keep the space if your language has one.
 #: crates/app/src/ui/text.rs
@@ -2552,6 +2937,11 @@ msgctxt "decimal separator"
 msgid "."
 msgstr ""
 
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {name} is a deck's name, {error} why, in English.
+#: crates/app/src/ui/text.rs
+msgid "“{name}” could not be restored: {error}"
+msgstr ""
+
 #. Translators: {count} is a number of cards to review now ("12 due"), shown under a deck's name.
 #: crates/app/src/ui/text.rs
 msgid "{count} due"
@@ -2570,13 +2960,6 @@ msgstr[1] ""
 #: crates/app/src/ui/text.rs
 msgid "{due} · {new}"
 msgstr ""
-
-#. Translators: {count} is a number of decks.
-#: crates/app/src/ui/text.rs
-msgid "{count} deck"
-msgid_plural "{count} decks"
-msgstr[0] ""
-msgstr[1] ""
 
 #. Translators: a time in seconds ("45 s").
 #: crates/app/src/ui/text.rs
@@ -2725,6 +3108,28 @@ msgstr ""
 #: crates/app/src/widgets/card_row/text.rs
 msgid "suspended"
 msgstr ""
+
+#. Translators: starts a study session over the cards that carry a tag, in every deck; {tag} is the tag's name.
+#: crates/app/src/widgets/card_row/text.rs
+msgid "Study Cards Tagged “{tag}”"
+msgstr ""
+
+#. Translators: All Cards' button that starts a study session over the cards that carry a tag, in every deck, whatever deck the filter shows; {tag} is the tag's name.
+#: crates/app/src/widgets/card_row/text.rs
+msgid "Study Cards Tagged “{tag}” in Every Deck"
+msgstr ""
+
+#. Translators: a submenu listing a card's or a deck's tags; choosing one studies the cards that carry it, in every deck.
+#: crates/app/src/widgets/card_row/text.rs
+msgid "Study Cards _Tagged"
+msgstr ""
+
+#. Translators: the last entry of the Deck Menu's list of tags when it is too long to show; it opens All Cards, whose tag filter lists every tag.
+#: crates/app/src/widgets/card_row/text.rs
+msgid "{count} More Tag in All Cards…"
+msgid_plural "{count} More Tags in All Cards…"
+msgstr[0] ""
+msgstr[1] ""
 
 #: crates/app/src/widgets/chart_card.rs
 msgid "Select a day to see its values"

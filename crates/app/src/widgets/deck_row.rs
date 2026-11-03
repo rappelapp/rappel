@@ -1,10 +1,13 @@
 //! One deck in the deck list: name, what it has to study (or when it next
-//! will, `text`) and a menu with Rename and Delete. Layout in
-//! `data/deck_row.blp` (ADR 0041).
+//! will, `text`) and a menu with Practice, then Rename, Merge Into…,
+//! Archive and Delete. Layout in `data/deck_row.blp` (ADR 0041, 0066,
+//! 0068, 0070).
 //!
-//! The menu items activate the row's own `row.rename` / `row.delete`
-//! actions, which forward to the page's `decks.rename` / `decks.delete`
-//! with this row's deck id (see `ui::rows`).
+//! The menu items activate the row's own `row.practice` / `row.rename` /
+//! `row.merge` / `row.archive` / `row.delete` actions, which forward to the
+//! page's `decks.practice` / `decks.rename` / `decks.merge` /
+//! `decks.archive` / `decks.delete` with this row's deck id (see
+//! `ui::rows`).
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -16,7 +19,7 @@ use crate::ui::rows;
 pub mod text;
 
 mod imp {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     use adw::subclass::prelude::*;
     use gtk::glib;
@@ -35,6 +38,8 @@ mod imp {
         #[template_child]
         pub menu_button: TemplateChild<gtk::MenuButton>,
         pub deck_id: RefCell<String>,
+        /// Merge Into… is enabled (`set_can_merge`).
+        pub can_merge: Cell<bool>,
         /// The accessible label last set, "Scratch, 12 due, 5 new".
         pub accessible_label: RefCell<String>,
     }
@@ -47,8 +52,17 @@ mod imp {
 
         fn class_init(klass: &mut Self::Class) {
             klass.bind_template();
+            klass.install_action("row.practice", None, |row, _, _| {
+                row.forward("decks.practice");
+            });
             klass.install_action("row.rename", None, |row, _, _| {
                 row.forward("decks.rename");
+            });
+            klass.install_action("row.merge", None, |row, _, _| {
+                row.forward("decks.merge");
+            });
+            klass.install_action("row.archive", None, |row, _, _| {
+                row.forward("decks.archive");
             });
             klass.install_action("row.delete", None, |row, _, _| {
                 row.forward("decks.delete");
@@ -90,6 +104,11 @@ impl DeckRow {
         imp.name_label.set_label(name);
         set_part(&imp.due_label, line.due.as_deref());
         set_part(&imp.other_label, line.other.as_deref());
+        // Every live card that is not suspended can be practised (ADR 0070).
+        let practisable = summary.card_count.saturating_sub(summary.suspended_count);
+        let can =
+            crate::pages::practice_offered(usize::try_from(practisable).unwrap_or(usize::MAX));
+        self.action_set_enabled("row.practice", can);
         imp.separator_label.set_visible(line.has_separator());
         // The row is read as one: "Scratch, 12 due, 5 new" (the "·" and the
         // units in words).
@@ -102,6 +121,19 @@ impl DeckRow {
             rows::label_menu_button(&imp.menu_button, name);
             imp.accessible_label.replace(label);
         }
+    }
+
+    /// Enables Merge Into… in the row's menu (when there is another deck
+    /// to merge into, `merge_deck::offered`).
+    pub fn set_can_merge(&self, can: bool) {
+        self.imp().can_merge.set(can);
+        self.action_set_enabled("row.merge", can);
+    }
+
+    /// Whether Merge Into… is enabled in the row's menu.
+    #[cfg(test)]
+    pub fn can_merge(&self) -> bool {
+        self.imp().can_merge.get()
     }
 
     /// The id of the deck this row shows.
@@ -118,4 +150,42 @@ impl DeckRow {
 fn set_part(label: &gtk::Label, text: Option<&str>) {
     label.set_label(text.unwrap_or_default());
     label.set_visible(text.is_some());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Practice in a row's menu is offered while the deck has a live card
+    /// that is not suspended (ADR 0070).
+    #[test]
+    fn practice_is_offered_while_the_deck_has_a_card_to_practise() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let deck = state.create_deck("Spanish").unwrap();
+            let now = rappel_core::time::now_ms();
+            let list = gtk::ListBox::new();
+            let window = gtk::Window::builder().child(&list).build();
+            window.present();
+            // The row's menu, as drawn: its Practice item follows the
+            // `row.practice` action's enabled state.
+            let practice_enabled = |state: &crate::state::AppState| {
+                let decks = state.list_decks(now).unwrap();
+                let row = DeckRow::new(&decks[0], now, now + 1);
+                list.remove_all();
+                list.append(&row);
+                crate::testing::menu_item_sensitive(&row.imp().menu_button, "Practice")
+            };
+            assert!(!practice_enabled(&state));
+            let card = state
+                .add_card_with_tags(&deck.id, "q", "a", &[])
+                .unwrap()
+                .card
+                .id;
+            assert!(practice_enabled(&state));
+            state.set_suspended(&[card], true).unwrap();
+            assert!(!practice_enabled(&state));
+            window.destroy();
+        });
+    }
 }

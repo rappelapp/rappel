@@ -671,10 +671,14 @@ fn zip64_fields_at_the_extremes_are_refused() {
         let mut bytes = plain.clone();
         bytes[extra + at..extra + at + 8].copy_from_slice(&value.to_le_bytes());
         let problem = refused(Env::new().plan(&bytes));
-        assert!(
-            matches!(problem, ImportProblem::InvalidArchive(_)),
-            "field {at} = {value}: {problem}"
-        );
+        // An uncompressed size past the limit is refused for its size,
+        // before the data is looked at (ADR 0071); the rest are damage.
+        let expected = if at == 4 && value == u64::MAX {
+            matches!(problem, ImportProblem::EntryTooLarge { .. })
+        } else {
+            matches!(problem, ImportProblem::InvalidArchive(_))
+        };
+        assert!(expected, "field {at} = {value}: {problem}");
     }
     // The extra field's own length says 8 where 24 are needed.
     let mut short = plain.clone();

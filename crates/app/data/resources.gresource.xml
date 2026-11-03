@@ -10,6 +10,7 @@
     <file preprocess="xml-stripblanks">start_fresh_dialog.ui</file>
     <file preprocess="xml-stripblanks">decks_page.ui</file>
     <file preprocess="xml-stripblanks">deck_row.ui</file>
+    <file preprocess="xml-stripblanks">archived_page.ui</file>
     <file preprocess="xml-stripblanks">deck_name_dialog.ui</file>
     <file preprocess="xml-stripblanks">deck_page.ui</file>
     <file preprocess="xml-stripblanks">card_row.ui</file>
@@ -17,12 +18,16 @@
     <file preprocess="xml-stripblanks">tag_entry.ui</file>
     <file preprocess="xml-stripblanks">browser_page.ui</file>
     <file preprocess="xml-stripblanks">browser_dialogs.ui</file>
+    <file preprocess="xml-stripblanks">merge_deck_dialog.ui</file>
+    <file preprocess="xml-stripblanks">selection_header.ui</file>
+    <file preprocess="xml-stripblanks">selection_bar.ui</file>
     <file preprocess="xml-stripblanks">card_editor.ui</file>
     <file preprocess="xml-stripblanks">image_dialog.ui</file>
     <file preprocess="xml-stripblanks">tag_suggestions.ui</file>
     <file preprocess="xml-stripblanks">discard_dialog.ui</file>
     <file preprocess="xml-stripblanks">review_page.ui</file>
     <file preprocess="xml-stripblanks">delete_card_dialog.ui</file>
+    <file preprocess="xml-stripblanks">export_media_dialog.ui</file>
     <file preprocess="xml-stripblanks">import_dialog.ui</file>
     <file preprocess="xml-stripblanks">preferences_dialog.ui</file>
     <file preprocess="xml-stripblanks">retention_dialog.ui</file>

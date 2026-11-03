@@ -180,6 +180,60 @@ fn a_file_over_two_gib_is_refused_by_its_size() {
     );
 }
 
+/// `bytes` with the uncompressed size its first central record (that of
+/// `cards.json`) declares set to `size`: a lie, since the data is the same.
+fn declaring_json_size(bytes: &[u8], size: u32) -> Vec<u8> {
+    let at = bytes
+        .windows(4)
+        .position(|w| w == b"PK\x01\x02")
+        .expect("an archive has a central directory");
+    let mut out = bytes.to_vec();
+    out[at + 24..at + 28].copy_from_slice(&size.to_le_bytes());
+    out
+}
+
+/// A `cards.json` that declares more than the limit (256 MiB) is refused
+/// from the central directory, before any of it is read (ADR 0071): its
+/// data here is small and valid, so only the declared size can refuse it
+/// with this error (reading it would find the size differs). Before, a
+/// real one took about 21 s to read and refuse. Only the end record, the
+/// list and the local headers are read.
+#[test]
+fn a_cards_json_declaring_more_than_the_limit_is_refused_unread() {
+    let bytes = declaring_json_size(
+        &Env::new().export(),
+        u32::try_from(Limits::DEFAULT.json + 1).unwrap(),
+    );
+    let (used, result) =
+        crate::test_support::cpu_time_of(|| open(&bytes, &Limits::DEFAULT).map(|_| ()));
+    assert_eq!(
+        result.unwrap_err(),
+        ImportProblem::EntryTooLarge {
+            entry: "cards.json",
+            limit: Limits::DEFAULT.json
+        }
+    );
+    crate::test_support::assert_cpu_within(used, Duration::from_millis(500), "the refusal");
+    // Through the whole plan, from a file, nothing is written either.
+    let env = Env::new();
+    let path = env.tmp.path().join("lying.rappel");
+    fs::write(&path, &bytes).unwrap();
+    assert_eq!(
+        refused(env.store.plan_import(&path)),
+        ImportProblem::EntryTooLarge {
+            entry: "cards.json",
+            limit: Limits::DEFAULT.json
+        }
+    );
+    assert_eq!(env.store.decks().unwrap(), []);
+    // At the limit exactly, the entry is not refused for its size.
+    let at_limit = declaring_json_size(
+        &Env::new().export(),
+        u32::try_from(Limits::DEFAULT.json).unwrap(),
+    );
+    assert!(open(&at_limit, &Limits::DEFAULT).is_ok());
+}
+
 #[test]
 fn a_window_ends_where_it_is_told() {
     let mut window = Window::new(Cursor::new(b"abcdef".to_vec()), 4).unwrap();

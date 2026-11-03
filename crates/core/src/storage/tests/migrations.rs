@@ -630,3 +630,113 @@ fn migration_0011_adds_the_media_table_and_keeps_everything_else() {
     // The pre-migration backup is the version-10 database.
     assert_eq!(e.backups().len(), 1);
 }
+
+/// Every deck row with the columns version 11 has, by id.
+fn old_decks(conn: &Connection) -> Vec<(String, String, String, i64, i64, Option<i64>)> {
+    conn.prepare(
+        "SELECT id, name, name_key, created_at, updated_at, deleted_at FROM decks ORDER BY id",
+    )
+    .unwrap()
+    .query_map([], |r| {
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+        ))
+    })
+    .unwrap()
+    .collect::<rusqlite::Result<_>>()
+    .unwrap()
+}
+
+/// The media rows, by hash.
+fn media_rows(conn: &Connection) -> Vec<(String, String, i64, i64)> {
+    conn.prepare("SELECT hash, mime, bytes, created_at FROM media ORDER BY hash")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+/// Migration 0012 on a version 11 database (what 0.3.0-beta.1 made): every
+/// deck, deleted ones included, is not archived, and everything else is as
+/// it was (deck rows, cards, log, schedule, tags, a stored setting, the
+/// search index, the media table, the deck list).
+#[test]
+fn migration_0012_adds_archived_decks_and_keeps_everything_else() {
+    use crate::domain::Settings;
+    use crate::test_support::schedule_table;
+
+    const GONE: &str = "01920000-0000-7000-8000-00000000000b";
+    let e = env();
+    let before = {
+        let mut v11 = e.open_with(DAY0, &MIGRATIONS[..11]).unwrap();
+        insert_sample(&v11.conn);
+        v11.add_tag(CARD, "Algebra").unwrap();
+        v11.set_max_new_per_day(7).unwrap();
+        v11.conn
+            .execute(
+                "INSERT INTO decks (id, name, name_key, created_at, updated_at, deleted_at)
+                 VALUES (?1, 'Gone', 'gone', 1, 1, 5)",
+                [GONE],
+            )
+            .unwrap();
+        v11.conn
+            .execute(
+                "INSERT INTO media (hash, mime, bytes, created_at) VALUES (?1, 'image/png', 12, 3)",
+                ["ab".repeat(32)],
+            )
+            .unwrap();
+        let has_column: bool = v11
+            .conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('decks') WHERE name = 'archived_at'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!has_column);
+        (
+            schedule_table(&v11),
+            v11.review_events(CARD).unwrap(),
+            old_cards(&v11.conn),
+            v11.settings().unwrap(),
+            v11.card_tags(CARD).unwrap(),
+            count(&v11.conn, "cards_fts"),
+            old_decks(&v11.conn),
+            media_rows(&v11.conn),
+        )
+    };
+    assert_ne!(before.3, Settings::default(), "the stored setting is kept");
+    assert_eq!(before.3.max_new_per_day, 7);
+    assert_eq!(before.6.len(), 2);
+    assert_eq!(before.7.len(), 1);
+    let store = e.open_with(DAY0, &MIGRATIONS[..12]).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 12);
+    assert_eq!(count(&store.conn, "decks WHERE archived_at IS NULL"), 2);
+    assert_eq!(
+        (
+            schedule_table(&store),
+            store.review_events(CARD).unwrap(),
+            old_cards(&store.conn),
+            store.settings().unwrap(),
+            store.card_tags(CARD).unwrap(),
+            count(&store.conn, "cards_fts"),
+            old_decks(&store.conn),
+            media_rows(&store.conn),
+        ),
+        before
+    );
+    // The live deck is listed as before, and none is archived.
+    let decks = store.decks().unwrap();
+    assert_eq!(decks.len(), 1);
+    assert_eq!(decks[0].id, DECK);
+    assert_eq!(decks[0].archived_at, None);
+    assert_eq!(store.archived_decks().unwrap(), []);
+    // The pre-migration backup is the version-11 database.
+    assert_eq!(e.backups().len(), 1);
+}
