@@ -1,5 +1,5 @@
 //! Tests of the desktop integration drafts in `data/` (ADR 0060): the
-//! `.desktop` entry, the `AppStream` metainfo, the placeholder icons and the
+//! `.desktop` entry, the `AppStream` metainfo, the icons (ADR 0074) and the
 //! store screenshots. Packaging (Meson, Flatpak) is a later phase; until
 //! then these tests keep the drafts valid and in step with the code:
 //!
@@ -12,7 +12,8 @@
 //!   dates, newest first;
 //! - every screenshot listed is a committed PNG within Flathub's size, and
 //!   every committed one is listed;
-//! - the icons are plain SVG: no scripts, no pictures, no links.
+//! - the icons are plain SVG: no scripts, no pictures, no links, and a
+//!   `url(…)` only to the file's own gradients.
 //!
 //! The validators come from the `appstream` and `desktop-file-utils`
 //! packages (README.md); CI installs them, so these tests never skip.
@@ -432,6 +433,44 @@ fn event_attributes_are_found() {
     ));
 }
 
+/// Whether every `url(…)` in `svg` points inside the file: `url(#id)`, with
+/// `id` defined as `id="id"`. That is how a shape uses one of the file's own
+/// gradients (ADR 0074); a `url(` to anything else could load a resource.
+/// CSS reads `URL(` as `url(`, so the check ignores case.
+fn urls_stay_in_file(svg: &str) -> bool {
+    let svg = svg.to_ascii_lowercase();
+    svg.match_indices("url(").all(|(at, _)| {
+        let rest = &svg[at + 4..];
+        let Some(inside) = rest.strip_prefix('#') else {
+            return false;
+        };
+        let Some(end) = inside.find(')') else {
+            return false;
+        };
+        let id = &inside[..end];
+        !id.is_empty()
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            && svg.contains(&format!("id=\"{id}\""))
+    })
+}
+
+#[test]
+fn only_urls_to_the_files_own_ids_pass() {
+    let gradient = r#"<linearGradient id="g_1"/><rect fill="url(#g_1)"/>"#;
+    assert!(urls_stay_in_file(gradient));
+    assert!(urls_stay_in_file("<rect fill=\"#fff\"/>"));
+    assert!(!urls_stay_in_file(r#"<rect fill="url(#missing)"/>"#));
+    assert!(!urls_stay_in_file(r#"<rect fill="url(other.svg#g)"/>"#));
+    assert!(!urls_stay_in_file(r#"<rect fill="URL(other.svg#g)"/>"#));
+    assert!(!urls_stay_in_file(r#"<rect fill="url( #g)"/><g id="g"/>"#));
+    assert!(!urls_stay_in_file(r#"<rect fill="url(#g"/><g id="g"/>"#));
+    assert!(!urls_stay_in_file(
+        r#"<rect fill="url(#a.b)"/><g id="a.b"/>"#
+    ));
+}
+
 #[test]
 fn the_icons_are_plain_svg_named_after_the_app() {
     let root = repo().join("data/icons/hicolor");
@@ -454,18 +493,23 @@ fn the_icons_are_plain_svg_named_after_the_app() {
             "<script",
             "<image",
             "href",
-            "url(",
             "http",
             "<foreignObject",
             "<style",
             "<!DOCTYPE",
             "<!ENTITY",
+            // A character reference could spell `url(` or `http` in disguise.
+            "&#",
         ] {
             assert!(
                 !bare.contains(banned),
                 "{name} has {banned:?}: an app icon is plain shapes"
             );
         }
+        assert!(
+            urls_stay_in_file(&svg),
+            "{name} has a url(…) that is not one of its own ids: an app icon is plain shapes"
+        );
         assert!(
             !has_event_attribute(&svg),
             "{name} has an event attribute (onload=…): an app icon is plain shapes"

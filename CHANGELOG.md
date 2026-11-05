@@ -6,6 +6,9 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Rappel has its real icon**: a white index card and a red one on a ring, drawn by the maintainer in GNOME's style, and a matching symbolic icon. They replace the placeholders in `data/icons/` (ADR 0074).
+
 ## [0.4.0-beta.1] — 2026-11-03
 
 The beta of phase 3a, organising and studying. Cards can be selected on a deck's page as on All Cards, moved one at a time from their menu or during review, and decks can be merged into another or archived, each with Undo. Cards can be studied by tag across decks, and practised without rescheduling anything. The card editor says when another card has the same front. Phase 2's leftovers are done: nothing is cut at 360 px in French, an export too large to import again says so first, and checking an import can be cancelled. An export made before moving cards or merging decks imports again. The database is upgraded on first start (a backup is made first), and 0.3.0-beta.1 cannot import exports from this version.
