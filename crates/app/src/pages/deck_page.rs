@@ -61,7 +61,7 @@ mod imp {
 
     #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::DeckPage)]
-    #[template(resource = "/io/github/rsmirke/Rappel/deck_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/deck_page.ui")]
     pub struct DeckPage {
         #[template_child]
         pub empty_short: TemplateChild<adw::Breakpoint>,

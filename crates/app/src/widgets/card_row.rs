@@ -50,7 +50,7 @@ mod imp {
 
     #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::CardRow)]
-    #[template(resource = "/io/github/rsmirke/Rappel/card_row.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/card_row.ui")]
     pub struct CardRow {
         #[template_child]
         pub check: TemplateChild<gtk::CheckButton>,

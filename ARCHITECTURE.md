@@ -215,7 +215,7 @@ data/*.blp ──blueprint-compiler──▶ $OUT_DIR/ui/*.ui ──glib-compile
                                          gio::resources_register_include! ◀───────┘ (embedded in the binary)
 ```
 
-`crates/app/build.rs` drives both steps; `data/resources.gresource.xml` lists the files under the resource prefix `/io/github/rsmirke/Rappel/`. Widgets load their template with `#[template(resource = "/io/github/rsmirke/Rappel/<name>.ui")]`.
+`crates/app/build.rs` drives both steps; `data/resources.gresource.xml` lists the files under the resource prefix `/io/github/rappelapp/Rappel/`. Widgets load their template with `#[template(resource = "/io/github/rappelapp/Rappel/<name>.ui")]`.
 
 `build.rs` also compiles each language of `po/LINGUAS` (the repository's `po/` folder: `LINGUAS`, `POTFILES.in`, `rappel.pot`, `<lang>.po`) into `$OUT_DIR/locale/<lang>/LC_MESSAGES/rappel.mo` with `i18n/po.rs`, rerunning when `po/` changes; a debug build reads its translations from there (ADR 0059). Strings in `.blp` files are marked `_("…")` or `C_("context", "…")`; `GtkBuilder` looks them up in the default domain.
 
@@ -225,7 +225,7 @@ Files of two kinds live in `data/`: composite templates (a `template` block, loa
 
 ## Desktop integration drafts
 
-The top-level `data/` folder (not `crates/app/data/`, which is compiled into the binary) holds what packaging will install (ADR 0060): `io.github.rsmirke.Rappel.desktop.in`, `io.github.rsmirke.Rappel.metainfo.xml.in` (description, releases, content rating, screenshots by URL), the app icon and its symbolic icon in `icons/hicolor/{scalable,symbolic}/apps/` (ADR 0074), and the committed store screenshots in `screenshots/`. Nothing builds or installs them yet (packaging is phase 3b); their translatable texts are in `po/POTFILES.in` and `po/rappel.pot`. `crates/app/src/desktop_files.rs` (tests only) runs `desktop-file-validate` and `appstreamcli validate --no-net --pedantic` on them in English and with French merged in, and checks that the ids, binary, icon name, gettext domain, licence and links are the code's, that the releases are `CHANGELOG.md`'s versions, that the screenshots are committed PNGs within Flathub's size, and that the icons are plain SVG (their only `url(…)` references are to their own gradients). `fill_scratch_db --demo` makes the data the screenshots show.
+The top-level `data/` folder (not `crates/app/data/`, which is compiled into the binary) holds what packaging will install (ADR 0060): `io.github.rappelapp.Rappel.desktop.in`, `io.github.rappelapp.Rappel.metainfo.xml.in` (description, releases, content rating, screenshots by URL), the app icon and its symbolic icon in `icons/hicolor/{scalable,symbolic}/apps/` (ADR 0074), and the committed store screenshots in `screenshots/`. Nothing builds or installs them yet (packaging is phase 3b); their translatable texts are in `po/POTFILES.in` and `po/rappel.pot`. `crates/app/src/desktop_files.rs` (tests only) runs `desktop-file-validate` and `appstreamcli validate --no-net --pedantic` on them in English and with French merged in, and checks that the ids, binary, icon name, gettext domain, licence and links are the code's, that the releases are `CHANGELOG.md`'s versions, that the screenshots are committed PNGs within Flathub's size, and that the icons are plain SVG (their only `url(…)` references are to their own gradients). `fill_scratch_db --demo` makes the data the screenshots show.
 
 ## Quality gate
 

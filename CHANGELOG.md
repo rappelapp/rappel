@@ -7,6 +7,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **The app ID is now `io.github.rappelapp.Rappel`** (was `io.github.rsmirke.Rappel`), and every link points to `https://github.com/rappelapp/rappel`. The developer is shown as "The Rappel Project" in About and the metainfo. The data directory does **not** change: it stays `~/.local/share/rappel/` (ADR 0075, #130).
 - **Phase 3b is planned**: its brief and two mockups are in `docs/briefs/`, SPEC.md splits the old phase 3b into 3b (polish and the first Snap, ends in 0.4.0) and 3c (Flatpak bundle, translation workflow, hardening, ends in 1.0), and the maintainer's answers to the phase 3a questions are recorded.
 - **Rappel has its real icon**: a white index card and a red one on a ring, drawn by the maintainer in GNOME's style, and a matching symbolic icon. They replace the placeholders in `data/icons/` (ADR 0074).
 
@@ -355,9 +356,9 @@ The beta of phase 2, media and mobile. Cards can show images and play audio, and
 ### Removed
 - `Store::due_cards` and `Store::new_cards` in `cards-core`: unused since `Store::study_input`.
 
-[Unreleased]: https://github.com/rsmirke/rappel/compare/v0.4.0-beta.1...HEAD
-[0.4.0-beta.1]: https://github.com/rsmirke/rappel/compare/v0.3.0-beta.1...v0.4.0-beta.1
-[0.3.0-beta.1]: https://github.com/rsmirke/rappel/compare/v0.2.0-beta.1...v0.3.0-beta.1
-[0.2.0-beta.1]: https://github.com/rsmirke/rappel/compare/v0.2.0-alpha.3...v0.2.0-beta.1
-[0.2.0-alpha.3]: https://github.com/rsmirke/rappel/compare/v0.2.0-alpha.1...v0.2.0-alpha.3
-[0.1.0]: https://github.com/rsmirke/rappel/releases/tag/v0.1.0
+[Unreleased]: https://github.com/rappelapp/rappel/compare/v0.4.0-beta.1...HEAD
+[0.4.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.3.0-beta.1...v0.4.0-beta.1
+[0.3.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.2.0-beta.1...v0.3.0-beta.1
+[0.2.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.2.0-alpha.3...v0.2.0-beta.1
+[0.2.0-alpha.3]: https://github.com/rappelapp/rappel/compare/v0.2.0-alpha.1...v0.2.0-alpha.3
+[0.1.0]: https://github.com/rappelapp/rappel/releases/tag/v0.1.0

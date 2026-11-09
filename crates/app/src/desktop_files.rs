@@ -41,7 +41,7 @@ const BINARY: &str = env!("CARGO_BIN_NAME");
 /// Where the store finds the committed screenshots: the raw files of the
 /// repository's `main` branch.
 const SCREENSHOT_URL: &str =
-    "https://raw.githubusercontent.com/rsmirke/rappel/main/data/screenshots/";
+    "https://raw.githubusercontent.com/rappelapp/rappel/main/data/screenshots/";
 
 /// Flathub's largest window for a screenshot, in logical pixels (its
 /// quality guidelines: "1000x700 pixels or smaller").
@@ -52,7 +52,7 @@ const MAX_SCREENSHOT_BYTES: u64 = 300 * 1024;
 
 /// The issue `appstreamcli --pedantic` raises that Rappel keeps on
 /// purpose: the component id has capitals, because it is the app id
-/// (`io.github.rsmirke.Rappel`, fixed since ADR 0020).
+/// (`io.github.rappelapp.Rappel`, fixed since ADR 0020).
 const ACCEPTED_APPSTREAM_ISSUES: [&str; 1] = ["cid-contains-uppercase-letter"];
 
 fn desktop_source() -> String {

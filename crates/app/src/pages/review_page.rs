@@ -76,7 +76,7 @@ mod imp {
     use crate::ui::toast::ErrorSlot;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/review_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/review_page.ui")]
     pub struct ReviewPage {
         #[template_child]
         pub window_title: TemplateChild<adw::WindowTitle>,

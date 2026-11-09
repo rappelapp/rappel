@@ -44,7 +44,7 @@ mod imp {
     use crate::state::AppState;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/window.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/window.ui")]
     pub struct RappelWindow {
         #[template_child]
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,

@@ -31,7 +31,7 @@ mod imp {
     use crate::state::AppState;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/archived_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/archived_page.ui")]
     pub struct ArchivedPage {
         #[template_child]
         pub empty_short: TemplateChild<adw::Breakpoint>,

@@ -72,7 +72,7 @@ mod imp {
 
     #[derive(Debug, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::TagPills)]
-    #[template(resource = "/io/github/rsmirke/Rappel/tag_pills.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/tag_pills.ui")]
     pub struct TagPills {
         #[template_child]
         pub wrap_box: TemplateChild<adw::WrapBox>,

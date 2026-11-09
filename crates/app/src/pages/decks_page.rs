@@ -53,7 +53,7 @@ mod imp {
     use crate::ui::toast::ErrorSlot;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/decks_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/decks_page.ui")]
     pub struct DecksPage {
         #[template_child]
         pub empty_short: TemplateChild<adw::Breakpoint>,

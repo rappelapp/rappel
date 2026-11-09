@@ -25,7 +25,7 @@ mod imp {
     use gtk::glib;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/deck_row.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/deck_row.ui")]
     pub struct DeckRow {
         #[template_child]
         pub name_label: TemplateChild<gtk::Label>,
