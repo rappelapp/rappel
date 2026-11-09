@@ -20,6 +20,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 use rappel_core::domain::Deck;
+use rappel_core::scheduling::StudyScope;
 
 use crate::dialogs::deck_name_dialog::{self, Purpose};
 use crate::dialogs::merge_deck;
@@ -29,9 +30,9 @@ use crate::pages::{
 };
 use crate::state::AppState;
 use crate::ui::focus::index_after_removal;
-use crate::ui::nav;
 use crate::ui::text::with_error;
 use crate::ui::toast::{Message, show_error, show_error_message, show_toast_from, undo_toast};
+use crate::ui::{keys, nav};
 use crate::widgets::DeckRow;
 use crate::widgets::deck_row::text::refresh_delay_ms;
 use crate::window::RappelWindow;
@@ -167,6 +168,7 @@ mod imp {
                 ));
             }
             page.connect_realize(super::DecksPage::watch_window);
+            page.add_study_key();
         }
     }
     impl WidgetImpl for DecksPage {}
@@ -307,6 +309,77 @@ impl DecksPage {
                 &gettext("The cards could not be read: {error}"),
                 &err,
             )),
+        }
+    }
+
+    /// S on a focused deck row studies that deck (ADR 0081), as the Study
+    /// button on its page does, without opening the page. Bubble phase (the
+    /// default of a `GtkEventControllerKey`, gtkeventcontrollerkey.c): a
+    /// focused menu button or text field has had the key first. The focus is on
+    /// "a row" when it is the row or its menu button (`gtk_widget_get_ancestor`
+    /// counts the widget itself).
+    fn add_study_key(&self) {
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, modifiers| {
+                let typing = keys::text_has_focus(&page);
+                let row = page
+                    .root()
+                    .and_then(|root| gtk::prelude::RootExt::focus(&root))
+                    .and_then(|focus| focus.ancestor(DeckRow::static_type()))
+                    .and_downcast::<DeckRow>();
+                match row {
+                    Some(row)
+                        if keys::study_key(key, modifiers, typing)
+                            == Some(keys::StudyKey::Start) =>
+                    {
+                        page.study(&row.deck_id());
+                        glib::Propagation::Stop
+                    }
+                    _ => glib::Propagation::Proceed,
+                }
+            }
+        ));
+        self.add_controller(keys);
+    }
+
+    /// Starts a session on deck `id` when it has something to study, else
+    /// does nothing (the Study button is disabled then).
+    fn study(&self, id: &str) {
+        let Some(state) = self.imp().state().cloned() else {
+            return;
+        };
+        let Some(view) = nav::navigation_view(self) else {
+            return;
+        };
+        let pushed = nav::push_unless_on_top(&view, || {
+            let deck = state.deck(id)?;
+            let scope = StudyScope::deck(&deck.id);
+            if state
+                .study_input(&scope, rappel_core::time::now_ms())?
+                .is_empty()
+            {
+                return Err(None);
+            }
+            let studied = Studied::Deck {
+                deck,
+                from: StartedFrom::DeckList,
+            };
+            // Nothing to refresh on a save: the list reads its counts again
+            // when it shows.
+            ReviewPage::study(state.clone(), studied, |_| {}).map_err(Some)
+        });
+        // `Err(None)`: nothing to study.
+        if let Err(Some(err)) = pushed {
+            // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+            self.error_toast(&with_error(
+                &gettext("The session could not start: {error}"),
+                &err,
+            ));
         }
     }
 

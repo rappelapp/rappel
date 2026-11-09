@@ -39,7 +39,7 @@ use crate::ui::text::due_new_line;
 use crate::ui::text::with_error;
 use crate::ui::toast::{info_toast, log_failure, show_error, show_toast_from, undo_toast};
 use crate::ui::undo::{self, UndoFailure};
-use crate::ui::{init_once, nav};
+use crate::ui::{init_once, keys, nav};
 use crate::widgets::{CardGroupHeader, CardGroups, CardObject, CardRow, card_row};
 use crate::window::RappelWindow;
 
@@ -93,6 +93,10 @@ mod imp {
         pub content_stack: TemplateChild<gtk::Stack>,
         #[template_child]
         pub study_bar: TemplateChild<gtk::ActionBar>,
+        #[template_child]
+        pub header_study_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub bar_study_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub card_list: TemplateChild<gtk::ListView>,
         #[template_child]
@@ -376,6 +380,7 @@ impl DeckPage {
         // Move… follows whether there is another deck.
         page.connect_can_move_notify(|page| page.selection().update());
         page.add_escape();
+        page.add_study_key();
 
         init_once(&imp.state, state);
         init_once(&imp.deck, deck);
@@ -421,6 +426,42 @@ impl DeckPage {
             }
         ));
         self.add_controller(keys);
+    }
+
+    /// S starts studying, as the Study button does (ADR 0081), and the
+    /// button's tooltip says so. The controller is in the bubble phase (the
+    /// default for a `GtkEventControllerKey`, gtkeventcontrollerkey.c): a
+    /// text field or a button that wants the letter has had it first; the
+    /// page also asks `study_key` whether a text field has the focus. While
+    /// cards are being chosen, S does nothing (the Study button is hidden
+    /// then); `deck.study` is disabled when there is nothing to study, and
+    /// activating a disabled action does nothing (`gtk_widget_activate_action`).
+    fn add_study_key(&self) {
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, modifiers| {
+                let typing = keys::text_has_focus(&page);
+                if keys::study_key(key, modifiers, typing) == Some(keys::StudyKey::Start)
+                    && !page.selecting()
+                    && page.activate_action("deck.study", None).is_ok()
+                {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
+        ));
+        self.add_controller(keys);
+        let imp = self.imp();
+        if let Some(label) = keys::label(keys::START_STUDY_TRIGGER) {
+            let tip = keys::tooltip(&gettext("Study"), &label);
+            imp.header_study_button.set_tooltip_text(Some(&tip));
+            imp.bar_study_button.set_tooltip_text(Some(&tip));
+        }
     }
 
     /// What Escape does: leave selection mode, or nothing (All Cards'

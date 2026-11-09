@@ -1251,6 +1251,9 @@ fn french_through_the_c_library() {
 /// other message as if it could, so a new message is checked unless it is
 /// listed here; one written inside a toast call cannot be listed.
 const NOT_TOASTS: &[&str] = &[
+    // The subtitle of Start Studying in the Keyboard Shortcuts dialog
+    // (ADR 0081).
+    "On a deck or the deck list",
     // The ends of "The automatic backup failed: {reason}" (ADR 0080),
     // behind its Details, never a title.
     "the backup folder is read-only",

@@ -18,8 +18,8 @@
 //! reschedule, so the summary stays true.
 //!
 //! Keys, in the bubble phase so a focused button keeps its own Space and
-//! Enter: Space or Enter shows the answer; then 1 is Fail, 2 or Space is
-//! Pass; E edits the card at any time; S suspends it and Delete deletes it
+//! Enter: Space or Enter shows the answer; then 1 is Fail, 2, 3, 4 or Space is
+//! Pass (`ui::keys::study_key`); E edits the card at any time; S suspends it and Delete deletes it
 //! (after a question), both at once out of the session with an Undo toast
 //! (ADR 0037); R plays the card's audio from its start (ADR 0056,
 //! [`replay_target`]); Ctrl+Z (and the header's Undo button)
@@ -374,7 +374,7 @@ enum Key {
 
 /// The page's keys (`setup_keys`). The Keyboard Shortcuts dialog and the
 /// Card Menu's hints list them; tests check both.
-const KEYS: [(&str, Key); 18] = [
+const KEYS: [(&str, Key); 22] = [
     ("space", Key::Space),
     ("Return", Key::Enter),
     ("KP_Enter", Key::Enter),
@@ -382,6 +382,11 @@ const KEYS: [(&str, Key); 18] = [
     ("KP_1", Key::Fail),
     ("2", Key::Pass),
     ("KP_2", Key::Pass),
+    // Anki's Good and Easy also mean Pass (ADR 0081).
+    ("3", Key::Pass),
+    ("KP_3", Key::Pass),
+    ("4", Key::Pass),
+    ("KP_4", Key::Pass),
     ("e", Key::Edit),
     ("<Shift>e", Key::Edit),
     ("i", Key::Info),
@@ -507,6 +512,19 @@ impl ReviewPage {
             deck,
             from: StartedFrom::DeckPage,
         };
+        Self::study(state, studied, on_saved)
+    }
+
+    /// A session over `studied`, a deck started from wherever `studied`
+    /// says (the deck list's S key starts one without its page, ADR 0081).
+    ///
+    /// # Errors
+    /// If what to study cannot be read.
+    pub fn study(
+        state: AppState,
+        studied: Studied,
+        on_saved: impl Fn(Saved) + 'static,
+    ) -> rappel_core::Result<Self> {
         Self::start(state, studied, Mode::Study, on_saved)
     }
 
@@ -2914,6 +2932,51 @@ mod tests {
         // Nothing under or beside the buttons any more.
         let blueprint = include_str!("../../data/review_page.blp");
         assert!(!blueprint.contains("_hint"));
+    }
+
+    /// The page's grade triggers and `ui::keys::study_key` (the tested
+    /// decision for 1 to 4 and the keypad) say the same (ADR 0081): 3 and 4
+    /// pass, as 2 does, before and after the answer is shown.
+    #[test]
+    fn the_grade_keys_agree_with_the_study_key_function() {
+        crate::testing::with_widgets(grade_keys_agree);
+    }
+
+    fn grade_keys_agree() {
+        use crate::ui::keys::{StudyKey, study_key};
+        let none = gtk::gdk::ModifierType::empty();
+        let mut grades = 0;
+        for (trigger, key) in KEYS {
+            let (keyval, _) = gtk::accelerator_parse(trigger).expect("a valid trigger");
+            let expected = match key {
+                Key::Fail => Some(StudyKey::Fail),
+                Key::Pass => Some(StudyKey::Pass),
+                _ => None,
+            };
+            // Space is bound to Pass but is not a digit: not a study key.
+            if keyval == gtk::gdk::Key::space {
+                continue;
+            }
+            if expected.is_some() {
+                grades += 1;
+            }
+            assert_eq!(
+                study_key(keyval, none, false),
+                expected.or(
+                    // S is Start on the deck pages and Suspend here.
+                    (keyval == gtk::gdk::Key::s).then_some(StudyKey::Start)
+                ),
+                "{trigger}"
+            );
+        }
+        assert_eq!(grades, 8, "1 and 2 to 4, each with the keypad's");
+        // The settle guard and the reveal apply to the new keys as to 2.
+        assert_eq!(key_action(Key::Pass, false, true), None);
+        assert_eq!(key_action(Key::Pass, true, false), None);
+        assert_eq!(
+            key_action(Key::Pass, true, true),
+            Some(Act::Grade(Grade::Pass))
+        );
     }
 
     /// GTK has no public getter for an accessible description, so the
