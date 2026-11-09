@@ -207,6 +207,7 @@ msgstr "Modifiée"
 
 #: crates/app/data/card_info_dialog.blp
 #: crates/app/data/preferences_dialog.blp
+#: crates/app/data/stats_page.blp
 msgid "Memory"
 msgstr "Mémoire"
 
@@ -289,16 +290,6 @@ msgstr "_Déplacer vers un paquet…"
 #: crates/app/data/delete_card_dialog.blp
 msgid "_Delete"
 msgstr "Su_pprimer"
-
-#: crates/app/data/chart_card.blp
-#: crates/app/src/dialogs/card_info/text.rs
-msgid "Passed"
-msgstr "Réussie"
-
-#: crates/app/data/chart_card.blp
-#: crates/app/src/dialogs/card_info/text.rs
-msgid "Failed"
-msgstr "Ratée"
 
 #: crates/app/data/clean_up_media_dialog.blp
 msgid "Clean Up Media?"
@@ -930,6 +921,42 @@ msgstr "Pas encore de statistiques"
 msgid "Study some cards to see your progress here"
 msgstr "Étudiez quelques cartes pour voir vos progrès ici"
 
+#: crates/app/data/stats_page.blp
+msgid "Chart View"
+msgstr "Vue du graphique"
+
+#: crates/app/data/stats_page.blp
+msgid "_Reviews"
+msgstr "_Révisions"
+
+#: crates/app/data/stats_page.blp
+msgid "_Time"
+msgstr "_Temps"
+
+#: crates/app/data/stats_page.blp
+msgid "_Forecast"
+msgstr "_Prévision"
+
+#: crates/app/data/stats_page.blp
+msgctxt "chart legend"
+msgid "Passed"
+msgstr "Réussies"
+
+#: crates/app/data/stats_page.blp
+msgctxt "chart legend"
+msgid "Failed"
+msgstr "Ratées"
+
+#: crates/app/data/stats_page.blp
+msgctxt "paging button"
+msgid "Previous 30 Days"
+msgstr "30 jours précédents"
+
+#: crates/app/data/stats_page.blp
+msgctxt "paging button"
+msgid "Next 30 Days"
+msgstr "30 jours suivants"
+
 #: crates/app/data/tag_suggestions.blp
 msgid "Tag suggestions"
 msgstr "Suggestions d’étiquettes"
@@ -1163,6 +1190,14 @@ msgstr "{date} · {relative}"
 #: crates/app/src/dialogs/card_info/text.rs
 msgid "New card"
 msgstr "Nouvelle carte"
+
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Passed"
+msgstr "Réussie"
+
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Failed"
+msgstr "Ratée"
 
 #. Translators: a review in a card's history: {date} is when, {time} how long the answer took ("4 s"), {interval} when the card came due again ("3 days").
 #: crates/app/src/dialogs/card_info/text.rs
@@ -1408,8 +1443,10 @@ msgid "No cards"
 msgstr "Aucune carte"
 
 #. Translators: {count} is a number of cards.
+#. Translators: {count} is a number of cards falling due ("12 cards").
 #: crates/app/src/pages/archived_page/text.rs
 #: crates/app/src/pages/browser_page/text.rs
+#: crates/app/src/pages/stats_page/text.rs
 #: crates/app/src/ui/text.rs
 msgid "{count} card"
 msgid_plural "{count} cards"
@@ -1561,6 +1598,7 @@ msgstr "Lecture des cartes à étudier impossible : {error}"
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/pages/deck_page.rs
 #: crates/app/src/pages/decks_page.rs
+#: crates/app/src/pages/stats_page.rs
 msgid "The statistics could not be read: {error}"
 msgstr "Lecture des statistiques impossible : {error}"
 
@@ -1847,9 +1885,7 @@ msgstr[0] "Carte révisée"
 msgstr[1] "Cartes révisées"
 
 #. Translators: what a screen reader says for a headline figure: {caption} is "Pass rate", {value} "91%".
-#. Translators: what a screen reader says for a headline figure: {caption} is "Pass rate, last 30 days", {value} "91%".
 #: crates/app/src/pages/review_page.rs
-#: crates/app/src/pages/stats_page/text.rs
 msgid "{caption}: {value}"
 msgstr "{caption} : {value}"
 
@@ -1871,14 +1907,6 @@ msgid "Resetting the setting stopped unexpectedly"
 msgstr "La réinitialisation du réglage s’est arrêtée de façon inattendue"
 
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Time Studied per Day"
-msgstr "Temps d’étude par jour"
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Due Forecast"
-msgstr "Prévision des révisions"
-
-#: crates/app/src/pages/stats_page/text.rs
 msgid "Expected retention"
 msgstr "Rétention attendue"
 
@@ -1898,6 +1926,35 @@ msgstr "aucune révision"
 msgid "Time studied, last 30 days"
 msgstr "Temps d’étude, 30 derniers jours"
 
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Time Studied per Day"
+msgstr "Temps d’étude par jour"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Due Forecast"
+msgstr "Prévision des révisions"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Today"
+msgstr "Aujourd’hui"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Tomorrow"
+msgstr "Demain"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Next 30 Days"
+msgstr "30 prochains jours"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Last 30 Days"
+msgstr "30 derniers jours"
+
+#. Translators: a period of the statistics; {first} and {last} are its first and last days, as "8 Sep" (or "8 Sep 2025" in another year).
+#: crates/app/src/pages/stats_page/text.rs
+msgid "{first} – {last}"
+msgstr "{first} – {last}"
+
 #. Translators: {count} is a number of reviews (answers given to cards).
 #: crates/app/src/pages/stats_page/text.rs
 #: crates/app/src/ui/text.rs
@@ -1906,10 +1963,19 @@ msgid_plural "{count} reviews"
 msgstr[0] "{count} révision"
 msgstr[1] "{count} révisions"
 
-#. Translators: the top of a chart's scale; {value} is a number.
+#. Translators: {count} is a number of failed reviews on a day ("3 failed"), under its number of reviews.
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Up to {value}"
-msgstr "Jusqu’à {value}"
+msgid "{count} failed"
+msgid_plural "{count} failed"
+msgstr[0] "{count} ratée"
+msgstr[1] "{count} ratées"
+
+#. Translators: {count} is a number of cards due on a day.
+#: crates/app/src/pages/stats_page/text.rs
+msgid "{count} card due"
+msgid_plural "{count} cards due"
+msgstr[0] "{count} carte à revoir"
+msgstr[1] "{count} cartes à revoir"
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
@@ -1921,22 +1987,15 @@ msgstr "{day} : aucune révision"
 msgid "{day}: {reviews}, {passed} passed, {failed} failed"
 msgstr "{day} : {reviews}, {passed} réussies, {failed} ratées"
 
+#. Translators: a chart's summary for screen readers; {period} is "Last 30 Days" or "8 Sep – 7 Oct".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: no reviews."
-msgstr "30 derniers jours : aucune révision."
+msgid "{period}: no reviews."
+msgstr "{period} : aucune révision."
 
-#. Translators: a chart's summary for screen readers: {reviews} is "120 reviews", {passed} a number, {day} "14 October", {most} a number of reviews.
+#. Translators: a chart's summary for screen readers: {period} is "Last 30 Days" or "8 Sep – 7 Oct", {reviews} "120 reviews", {passed} and {failed} numbers, {day} "14 October", {most} a number of reviews.
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: {reviews}, {passed} passed, busiest day {day} with {most}."
-msgstr "30 derniers jours : {reviews}, {passed} réussies, jour le plus chargé le {day} avec {most}."
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Today"
-msgstr "Aujourd’hui"
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "No reviews in the last 30 days"
-msgstr "Aucune révision ces 30 derniers jours"
+msgid "{period}: {reviews}, {passed} passed, {failed} failed, busiest day {day} with {most}."
+msgstr "{period} : {reviews}, {passed} réussies, {failed} ratées ; jour le plus chargé : {day}, avec {most}."
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
@@ -1948,74 +2007,40 @@ msgstr "{day} : aucun temps d’étude"
 msgid "{day}: {time} studied"
 msgstr "{day} : {time} d’étude"
 
+#. Translators: a chart's summary for screen readers; {period} is "Last 30 Days" or "8 Sep – 7 Oct".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: no time studied."
-msgstr "30 derniers jours : aucun temps d’étude."
+msgid "{period}: no time studied."
+msgstr "{period} : aucun temps d’étude."
 
-#. Translators: a chart's summary for screen readers: {time} is "3 h 12 min", {day} "14 October", {most} "25 min".
+#. Translators: a chart's summary for screen readers: {period} is "Last 30 Days" or "8 Sep – 7 Oct", {time} "3 h 12 min", {day} "14 October", {most} "25 min".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: {time} studied, longest day {day} with {most}."
-msgstr "30 derniers jours : {time} d’étude, jour le plus long le {day} avec {most}."
-
-#. Translators: the top of a chart's scale; {value} is a number of minutes.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Up to {value} min"
-msgstr "Jusqu’à {value} min"
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "No time studied in the last 30 days"
-msgstr "Aucun temps d’étude ces 30 derniers jours"
-
-#. Translators: {count} is a number of cards due on a day.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "{count} card due"
-msgid_plural "{count} cards due"
-msgstr[0] "{count} carte à revoir"
-msgstr[1] "{count} cartes à revoir"
+msgid "{period}: {time} studied, longest day {day} with {most}."
+msgstr "{period} : {time} d’étude ; jour le plus long : {day}, avec {most}."
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{day}: nothing due"
 msgstr "{day} : rien à revoir"
 
-#. Translators: a chart's day; {day} is "Today", {cards} "12 cards due", {overdue} a number.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "{day}: {cards}, {overdue} of them overdue"
-msgstr "{day} : {cards}, dont {overdue} en retard"
-
 #. Translators: a chart's day; {day} is "Tue 14 Oct", {cards} "12 cards due".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{day}: {cards}"
 msgstr "{day} : {cards}"
 
+#. Translators: a chart's summary for screen readers; {period} is "Next 30 Days".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Next 14 days: nothing due."
-msgstr "14 prochains jours : rien à revoir."
+msgid "{period}: nothing due."
+msgstr "{period} : rien à revoir."
 
 #: crates/app/src/pages/stats_page/text.rs
-msgid "today"
-msgstr "aujourd’hui"
+#: crates/app/src/widgets/deck_row/text.rs
+msgid "tomorrow"
+msgstr "demain"
 
-#. Translators: a chart's summary for screen readers: {cards} is "40 cards due", {overdue} a number, {day} "today" or "14 October", {most} a number of cards.
+#. Translators: a chart's summary for screen readers: {period} is "Next 30 Days", {cards} "40 cards due", {day} "tomorrow" or "14 October", {most} a number of cards.
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Next 14 days: {cards}, {overdue} of them overdue, busiest day {day} with {most}."
-msgstr "14 prochains jours : {cards}, dont {overdue} en retard ; jour le plus chargé : {day}, avec {most}."
-
-#. Translators: a chart's summary for screen readers: {cards} is "40 cards due", {day} "today" or "14 October", {most} a number of cards.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Next 14 days: {cards}, busiest day {day} with {most}."
-msgstr "14 prochains jours : {cards} ; jour le plus chargé : {day}, avec {most}."
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Nothing due in the next 14 days"
-msgstr "Rien à revoir dans les 14 prochains jours"
-
-#. Translators: under the forecast chart; {count} is a number of cards.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "{count} overdue card is counted under Today"
-msgid_plural "{count} overdue cards are counted under Today"
-msgstr[0] "{count} carte en retard est comptée dans Aujourd’hui"
-msgstr[1] "{count} cartes en retard sont comptées dans Aujourd’hui"
+msgid "{period}: {cards}, busiest day {day} with {most}."
+msgstr "{period} : {cards} ; jour le plus chargé : {day}, avec {most}."
 
 #: crates/app/src/render/audio.rs
 msgid "Play"
@@ -2987,6 +3012,11 @@ msgstr "{minutes} min {seconds} s"
 msgid "{hours} h {minutes} min"
 msgstr "{hours} h {minutes} min"
 
+#. Translators: a whole number of hours ("3 h"), on a chart's scale.
+#: crates/app/src/ui/text.rs
+msgid "{hours} h"
+msgstr "{hours} h"
+
 #. Translators: a time in minutes ("12 min").
 #: crates/app/src/ui/text.rs
 msgid "{minutes} min"
@@ -3049,6 +3079,12 @@ msgstr "%x %X"
 msgctxt "date format"
 msgid "%-d %b"
 msgstr "%-d %b"
+
+#. Translators: a day of another year in a period of the statistics, for g_date_time_format(): %-d is the day of the month, %b the short month name, %Y the year ("17 Sep 2025").
+#: crates/app/src/ui/time.rs
+msgctxt "date format"
+msgid "%-d %b %Y"
+msgstr "%-d %b %Y"
 
 #. Translators: a day in a chart's summary, for g_date_time_format(): %-d is the day of the month, %B the month name ("14 October").
 #: crates/app/src/ui/time.rs
@@ -3142,10 +3178,6 @@ msgid_plural "{count} More Tags in All Cards…"
 msgstr[0] "{count} étiquette de plus dans Toutes les cartes…"
 msgstr[1] "{count} étiquettes de plus dans Toutes les cartes…"
 
-#: crates/app/src/widgets/chart_card.rs
-msgid "Select a day to see its values"
-msgstr "Choisissez un jour pour voir ses valeurs"
-
 #. Translators: a deck row for screen readers: {name} is the deck's name, {line} "12 due, 5 new".
 #: crates/app/src/widgets/deck_row/text.rs
 msgid "{name}, {line}"
@@ -3202,10 +3234,6 @@ msgid "{count} hour"
 msgid_plural "{count} hours"
 msgstr[0] "{count} heure"
 msgstr[1] "{count} heures"
-
-#: crates/app/src/widgets/deck_row/text.rs
-msgid "tomorrow"
-msgstr "demain"
 
 #: crates/app/src/widgets/tag_entry.rs
 msgid "Add a tag"
@@ -3360,6 +3388,59 @@ msgstr "Voyez combien vous avez étudié et ce que vous retenez"
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr "Des images sur les cartes, sur un téléphone"
+
+#~ msgid "Chart"
+#~ msgstr "Graphique"
+
+#~ msgid "Up to {value}"
+#~ msgstr "Jusqu’à {value}"
+
+#~ msgid "Last 30 days: no reviews."
+#~ msgstr "30 derniers jours : aucune révision."
+
+#~ msgid "Last 30 days: {reviews}, {passed} passed, busiest day {day} with {most}."
+#~ msgstr "30 derniers jours : {reviews}, {passed} réussies, jour le plus chargé le {day} avec {most}."
+
+#~ msgid "No reviews in the last 30 days"
+#~ msgstr "Aucune révision ces 30 derniers jours"
+
+#~ msgid "Last 30 days: no time studied."
+#~ msgstr "30 derniers jours : aucun temps d’étude."
+
+#~ msgid "Last 30 days: {time} studied, longest day {day} with {most}."
+#~ msgstr "30 derniers jours : {time} d’étude, jour le plus long le {day} avec {most}."
+
+#~ msgid "Up to {value} min"
+#~ msgstr "Jusqu’à {value} min"
+
+#~ msgid "No time studied in the last 30 days"
+#~ msgstr "Aucun temps d’étude ces 30 derniers jours"
+
+#~ msgid "{day}: {cards}, {overdue} of them overdue"
+#~ msgstr "{day} : {cards}, dont {overdue} en retard"
+
+#~ msgid "Next 14 days: nothing due."
+#~ msgstr "14 prochains jours : rien à revoir."
+
+#~ msgid "today"
+#~ msgstr "aujourd’hui"
+
+#~ msgid "Next 14 days: {cards}, {overdue} of them overdue, busiest day {day} with {most}."
+#~ msgstr "14 prochains jours : {cards}, dont {overdue} en retard ; jour le plus chargé : {day}, avec {most}."
+
+#~ msgid "Next 14 days: {cards}, busiest day {day} with {most}."
+#~ msgstr "14 prochains jours : {cards} ; jour le plus chargé : {day}, avec {most}."
+
+#~ msgid "Nothing due in the next 14 days"
+#~ msgstr "Rien à revoir dans les 14 prochains jours"
+
+#~ msgid "{count} overdue card is counted under Today"
+#~ msgid_plural "{count} overdue cards are counted under Today"
+#~ msgstr[0] "{count} carte en retard est comptée dans Aujourd’hui"
+#~ msgstr[1] "{count} cartes en retard sont comptées dans Aujourd’hui"
+
+#~ msgid "Select a day to see its values"
+#~ msgstr "Choisissez un jour pour voir ses valeurs"
 
 #~ msgid "{deck} · {status}"
 #~ msgstr "{deck} · {status}"

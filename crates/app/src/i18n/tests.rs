@@ -1271,9 +1271,7 @@ const NOT_TOASTS: &[&str] = &[
     "{date} · {time} · next in {interval}",
     "Looking for files no card uses…",
     "Move selected cards to a deck",
-    "No reviews in the last 30 days",
     "Not a Rappel Database",
-    "Nothing due in the next 14 days",
     "On a tag’s remove button",
     "Pass rate, last 30 days",
     // The review page's banner during a practice (ADR 0070).
@@ -1281,7 +1279,6 @@ const NOT_TOASTS: &[&str] = &[
     "Reset progress of selected cards",
     "Restore Copy Cannot Be Used",
     "Save and Add Another",
-    "Select a day to see its values",
     "Select or Deselect Card",
     "Start With an Empty Database?",
     "Stop Selecting or Clear the Search",

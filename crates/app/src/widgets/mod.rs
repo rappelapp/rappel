@@ -7,7 +7,6 @@ mod browse_item;
 pub mod card_list_header;
 mod card_object;
 pub mod card_row;
-pub mod chart_card;
 pub mod deck_row;
 mod history_row;
 pub mod selection_bar;
@@ -44,7 +43,6 @@ pub fn register_types() {
     CardListHeader::ensure_type();
     CardObject::ensure_type();
     CardRow::ensure_type();
-    chart_card::ChartCard::ensure_type();
     DeckRow::ensure_type();
     HistoryRow::ensure_type();
     SelectionBar::ensure_type();

@@ -27,22 +27,30 @@ use rappel_core::storage::{
 
 use crate::clock::{local_day_bounds_ms, local_day_start_ms, local_next_day_start_ms};
 
-/// How many past days the statistics cover, today last (ADR 0032).
-pub const STATS_PAST_DAYS: usize = 30;
-/// How many days ahead the due forecast covers, today first.
-pub const STATS_AHEAD_DAYS: usize = 14;
+/// How many days a period of the statistics covers: the past ones, the
+/// current one ending today, and the forecast, from tomorrow (ADR 0032,
+/// 0078).
+pub const STATS_DAYS: usize = 30;
+/// The furthest period back the statistics read: about 82 years, so the
+/// day offsets stay small; the page stops at the first review anyway.
+pub const STATS_MAX_PERIOD: u32 = 1_000;
 
-/// The statistics of a deck or of everything, with the study days they
-/// are bucketed by.
+/// The statistics of a deck or of everything for one period, with the
+/// study days they are bucketed by.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatsData {
+    /// `days` are the period's; `forecast` the `STATS_DAYS` days from
+    /// tomorrow (today's due cards and the overdue ones are left out,
+    /// `overdue` still counts the latter).
     pub stats: Stats,
-    /// Where each of the past days begins, UTC milliseconds
-    /// (`STATS_PAST_DAYS` of them, oldest first).
+    /// Where each of the period's days begins, UTC milliseconds
+    /// (`STATS_DAYS` of them, oldest first).
     pub past_starts: Vec<i64>,
-    /// Where each of the days ahead begins, today first
-    /// (`STATS_AHEAD_DAYS` of them).
+    /// Where each of the forecast's days begins, tomorrow first
+    /// (`STATS_DAYS` of them).
     pub ahead_starts: Vec<i64>,
+    /// When the earliest review the activity counts was made, if any.
+    pub first_review_at: Option<i64>,
 }
 
 /// What the editor takes from a file or bytes (ADR 0055, 0056).
@@ -601,22 +609,35 @@ impl AppState {
         self.0.store.borrow().review_events(card_id)
     }
 
-    /// The statistics of `deck_id`, or of every deck for `None`, at `now`.
-    /// The days follow the settings' day start hour in local time: the last
-    /// `STATS_PAST_DAYS` ending with today, and `STATS_AHEAD_DAYS` starting
-    /// with today (see [`Store::stats`]).
+    /// The statistics of `deck_id`, or of every deck for `None`, at `now`,
+    /// for `period`: 0 is the `STATS_DAYS` days ending with today, 1 the
+    /// ones before them, and so on (clamped to `STATS_MAX_PERIOD`). The
+    /// forecast is the `STATS_DAYS` days from tomorrow whatever the period.
+    /// The days follow the settings' day start hour in local time (see
+    /// [`Store::stats`], [`Store::first_activity_at`]).
     ///
     /// # Errors
     /// A missing or deleted deck, or a failed read; a day grid that cannot
     /// be built (it always can, but core checks it).
-    pub fn stats(&self, deck_id: Option<&str>, now: i64) -> rappel_core::Result<StatsData> {
+    pub fn stats(
+        &self,
+        deck_id: Option<&str>,
+        now: i64,
+        period: u32,
+    ) -> rappel_core::Result<StatsData> {
         let store = self.0.store.borrow();
         let hour = store.settings()?.day_start_hour;
-        let first_past = 1 - i32::try_from(STATS_PAST_DAYS).unwrap_or(30);
-        let mut past_bounds = local_day_bounds_ms(now, hour, first_past, STATS_PAST_DAYS + 1);
-        let mut ahead_bounds = local_day_bounds_ms(now, hour, 0, STATS_AHEAD_DAYS + 1);
+        let days = i32::try_from(STATS_DAYS).unwrap_or(30);
+        // At most 1,001 periods of 30 days back: far inside an i32.
+        let back = i32::try_from(period.min(STATS_MAX_PERIOD)).unwrap_or(0) + 1;
+        let first_past = 1 - days * back;
+        let mut past_bounds = local_day_bounds_ms(now, hour, first_past, STATS_DAYS + 1);
+        // Today and the forecast's days: today takes the overdue cards
+        // (core's rule), so dropping it leaves the days from tomorrow
+        // with only what falls due on them.
+        let mut ahead_bounds = local_day_bounds_ms(now, hour, 0, STATS_DAYS + 2);
         let scope = deck_id.map_or(Scope::All, Scope::Deck);
-        let stats = store.stats(
+        let (mut stats, first_review_at) = store.stats_and_first_activity(
             scope,
             now,
             &DayGrid::new(past_bounds.clone())?,
@@ -624,10 +645,22 @@ impl AppState {
         )?;
         past_bounds.pop();
         ahead_bounds.pop();
+        // Today is dropped; `get(1..)` is `None` only for an empty list,
+        // which a grid core accepted never gives.
+        let ahead_bounds = ahead_bounds
+            .get(1..)
+            .map(<[i64]>::to_vec)
+            .unwrap_or_default();
+        stats.forecast = stats
+            .forecast
+            .get(1..)
+            .map(<[u32]>::to_vec)
+            .unwrap_or_default();
         Ok(StatsData {
             stats,
             past_starts: past_bounds,
             ahead_starts: ahead_bounds,
+            first_review_at,
         })
     }
 
@@ -781,18 +814,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_statistics_cover_thirty_past_days_ending_today_and_fourteen_ahead() {
+    fn the_statistics_cover_thirty_days_ending_today_and_thirty_from_tomorrow() {
         let (_tmp, state) = crate::testing::temporary_state();
         let now = rappel_core::time::now_ms();
-        let data = state.stats(None, now).unwrap();
-        assert_eq!(data.past_starts.len(), STATS_PAST_DAYS);
-        assert_eq!(data.ahead_starts.len(), STATS_AHEAD_DAYS);
-        assert_eq!(data.stats.days.len(), STATS_PAST_DAYS);
-        assert_eq!(data.stats.forecast.len(), STATS_AHEAD_DAYS);
-        // Today is the last past day and the first day ahead.
-        let today = data.past_starts[STATS_PAST_DAYS - 1];
-        assert_eq!(data.ahead_starts[0], today);
-        assert!(today <= now && now < data.ahead_starts[1]);
+        let data = state.stats(None, now, 0).unwrap();
+        assert_eq!(data.past_starts.len(), STATS_DAYS);
+        assert_eq!(data.ahead_starts.len(), STATS_DAYS);
+        assert_eq!(data.stats.days.len(), STATS_DAYS);
+        assert_eq!(data.stats.forecast.len(), STATS_DAYS);
+        assert_eq!(data.first_review_at, None);
+        // Today is the last past day; the forecast begins the day after.
+        let today = data.past_starts[STATS_DAYS - 1];
+        assert!(today <= now && now < data.ahead_starts[0]);
         assert!(data.past_starts.windows(2).all(|w| w[0] < w[1]));
+        assert!(data.ahead_starts.windows(2).all(|w| w[0] < w[1]));
+        // The period before ends exactly where this one begins: its days
+        // and the end of its last day are the 31 bounds before today's
+        // period.
+        let before = state.stats(None, now, 1).unwrap();
+        assert_eq!(before.past_starts.len(), STATS_DAYS);
+        let hour = state.settings().unwrap().day_start_hour;
+        let first = 1 - 2 * i32::try_from(STATS_DAYS).unwrap();
+        let bounds = local_day_bounds_ms(now, hour, first, STATS_DAYS + 1);
+        assert_eq!(bounds[..STATS_DAYS], before.past_starts[..]);
+        assert_eq!(bounds[STATS_DAYS], data.past_starts[0]);
+        assert_eq!(before.ahead_starts, data.ahead_starts);
+        // A period beyond the furthest is read as the furthest.
+        assert_eq!(
+            state.stats(None, now, u32::MAX).unwrap().past_starts,
+            state
+                .stats(None, now, STATS_MAX_PERIOD)
+                .unwrap()
+                .past_starts
+        );
+    }
+
+    #[test]
+    fn the_forecast_leaves_today_and_overdue_cards_out() {
+        let (_tmp, state) = crate::testing::temporary_state();
+        let deck = state.create_deck("Deck").unwrap();
+        let id = state
+            .add_card_with_tags(&deck.id, "front", "back", &[])
+            .unwrap()
+            .card
+            .id;
+        let now = rappel_core::time::now_ms();
+        let long_ago = now - 45 * crate::ui::time::DAY_MS;
+        state
+            .record_review(
+                &id,
+                rappel_core::domain::Grade::Fail,
+                Duration::from_secs(3),
+                long_ago,
+            )
+            .unwrap();
+        let data = state.stats(Some(&deck.id), now, 0).unwrap();
+        // Overdue now: counted as such, not on any day from tomorrow.
+        assert_eq!(data.stats.overdue, 1);
+        assert!(data.stats.forecast.iter().all(|&n| n == 0));
+        assert_eq!(data.first_review_at, Some(long_ago));
+        assert_eq!(data.stats.days.iter().map(|d| d.reviews).sum::<u32>(), 0);
+        let then = state.stats(Some(&deck.id), now, 1).unwrap();
+        assert_eq!(then.stats.days.iter().map(|d| d.reviews).sum::<u32>(), 1);
     }
 }

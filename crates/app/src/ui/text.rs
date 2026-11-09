@@ -239,8 +239,14 @@ fn hours_minutes(h: u64, m: u64) -> String {
     )
 }
 
+/// "3 h", a whole number of hours.
+pub fn hours(h: u64) -> String {
+    // Translators: a whole number of hours ("3 h"), on a chart's scale.
+    fill(&gettext("{hours} h"), &[("hours", &number(h))])
+}
+
 /// "12 min".
-fn minutes(m: u64) -> String {
+pub fn minutes(m: u64) -> String {
     // Translators: a time in minutes ("12 min").
     fill(&gettext("{minutes} min"), &[("minutes", &number(m))])
 }

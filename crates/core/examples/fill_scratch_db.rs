@@ -3,7 +3,7 @@
 //! try studying without waiting days (ADR 0014).
 //!
 //! ```text
-//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--anki PACKAGE] [--archived N]
+//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--anki PACKAGE] [--archived N] [--history DAYS]
 //! RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 //! ```
 //!
@@ -44,6 +44,10 @@
 //! With `--archived N`, the first N decks in the deck list's order are
 //! archived last (ADR 0068), for the Archived Decks page and All Cards'
 //! filter.
+//! With `--history DAYS`, it adds the deck "History": 40 cards reviewed
+//! on most of the past DAYS days and today, a few failed each day, so
+//! the statistics can be paged back a month at a time (ADR 0078); at
+//! most 3,650 days.
 //! The directory
 //! must be absolute and is never one of the
 //! app's own data directories, release or debug: this is for throwaway
@@ -79,7 +83,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<String, String> {
-    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--anki PACKAGE] [--archived N]";
+    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--anki PACKAGE] [--archived N] [--history DAYS]";
     let number = |arg: Option<std::ffi::OsString>| {
         arg.as_ref()
             .and_then(|n| n.to_str())
@@ -92,6 +96,7 @@ fn run() -> Result<String, String> {
     let (mut suspended, mut media, mut unused_media, mut demo) = (0, false, false, false);
     let (mut anki, mut archived, mut probability): (Option<PathBuf>, usize, bool) =
         (None, 0, false);
+    let mut history = 0;
     while let Some(arg) = args.next() {
         if arg == "--due" {
             due = number(args.next())?;
@@ -113,6 +118,9 @@ fn run() -> Result<String, String> {
             probability = true;
         } else if arg == "--archived" {
             archived = number(args.next())?;
+        } else if arg == "--history" {
+            // Ten years at most: about 17 reviews a day.
+            history = number(args.next())?.min(3_650);
         } else if arg == "--anki" {
             anki = Some(PathBuf::from(args.next().ok_or(usage)?));
         } else if count.is_none() {
@@ -122,14 +130,8 @@ fn run() -> Result<String, String> {
         }
     }
     let count = count.unwrap_or(DEFAULT_COUNT);
-    let decks_asked = markdown || math || media || unused_media || demo || probability;
-    if count == 0 && !decks_asked && anki.is_none() {
-        return Err(
-            "nothing to add: count is 0 and no --markdown, --math, --media, --unused-media, --demo, \
-             --probability or --anki"
-                .to_owned(),
-        );
-    }
+    let asked = markdown || math || media || unused_media || demo || probability || history > 0;
+    check_something(count, asked || anki.is_some())?;
     check_counts(count, due, suspended)?;
     check_dir(&dir)?;
     refuse_app_data_dirs(&dir)?;
@@ -169,6 +171,9 @@ fn run() -> Result<String, String> {
     if probability {
         added.push(fill_probability(&mut store)?);
     }
+    if history > 0 {
+        added.push(fill_history(&mut store, history)?);
+    }
     if let Some(package) = anki {
         added.push(import_anki(&mut store, &package)?);
     }
@@ -180,6 +185,18 @@ fn run() -> Result<String, String> {
         added.join(" and "),
         dir.display()
     ))
+}
+
+/// Refuses a run that would add nothing: no cards and no deck asked for.
+fn check_something(count: usize, decks_asked: bool) -> Result<(), String> {
+    if count == 0 && !decks_asked {
+        return Err(
+            "nothing to add: count is 0 and no --markdown, --math, --media, --unused-media, --demo, \
+             --probability, --history or --anki"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 /// Adds the deck `name` with `cards` (front, back), all new. Returns what
@@ -642,6 +659,57 @@ fn fill_demo(store: &mut Store) -> Result<String, String> {
     }
     add_deck(store, "Flags", &["geography"], &flags)?;
     Ok(format!("{cards} cards in 6 demo decks"))
+}
+
+/// The `--history DAYS` deck: 40 cards answered on most of the past
+/// `days` days and today (every seventh day skipped), between 3 and 31 a
+/// day, about one in eight failed, oldest first. Returns what to report.
+fn fill_history(store: &mut Store, days: usize) -> Result<String, String> {
+    const CARDS: usize = 40;
+    let now = now_ms();
+    let deck = store.create_deck("History").map_err(|e| e.to_string())?;
+    let mut ids = Vec::with_capacity(CARDS);
+    for i in 0..CARDS {
+        let card = store
+            .add_card(&deck.id, &format!("History {}", i + 1), "Answer")
+            .map_err(|e| e.to_string())?;
+        ids.push(card.id);
+    }
+    let mut reviews = 0;
+    for day in (0..=days).rev() {
+        if day % 7 == 3 {
+            continue;
+        }
+        let per_day = 3 + (day * 13) % 29;
+        let day_ms = i64::try_from(day).unwrap_or(0) * DAY_MS;
+        for n in 0..per_day {
+            // Today's reviews just before now, the others in the evening.
+            let offset = i64::try_from(per_day - n).unwrap_or(0) * 20_000;
+            let at = if day == 0 {
+                now - offset
+            } else {
+                now - day_ms - 3 * 3_600_000 - offset
+            };
+            let grade = if (day + n).is_multiple_of(8) {
+                Grade::Fail
+            } else {
+                Grade::Pass
+            };
+            let seconds = 3 + u64::try_from((day + n * 5) % 13).unwrap_or(0);
+            store
+                .record_review(
+                    &ids[(day * 7 + n) % CARDS],
+                    grade,
+                    Duration::from_secs(seconds),
+                    at,
+                )
+                .map_err(|e| e.to_string())?;
+            reviews += 1;
+        }
+    }
+    Ok(format!(
+        "{CARDS} cards with {reviews} reviews over {days} days to “History”"
+    ))
 }
 
 /// The past reviews of demo card `i`: (grade, time, seconds taken). Learned
