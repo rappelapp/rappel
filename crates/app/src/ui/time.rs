@@ -48,6 +48,14 @@ pub fn day_short(ms: i64) -> String {
     local_format(ms, &pgettext("date format", "%-d %b")).unwrap_or_default()
 }
 
+/// Day, short month and year: "17 Sep 2025" (a period of another year).
+pub fn day_short_year(ms: i64) -> String {
+    // Translators: a day of another year in a period of the statistics,
+    // for g_date_time_format(): %-d is the day of the month, %b the short
+    // month name, %Y the year ("17 Sep 2025").
+    local_format(ms, &pgettext("date format", "%-d %b %Y")).unwrap_or_default()
+}
+
 /// Day and month: "14 October" (chart summaries).
 pub fn day_long(ms: i64) -> String {
     // Translators: a day in a chart's summary, for g_date_time_format():
@@ -134,7 +142,12 @@ mod tests {
                 day_short(ms),
                 day_long(ms),
             );
-            let _ = (day_with_weekday(ms), day_number(ms), month_index(ms));
+            let _ = (
+                day_with_weekday(ms),
+                day_number(ms),
+                month_index(ms),
+                day_short_year(ms),
+            );
         }
         // 2023-11-14 22:13 UTC: the 14th or 15th, whatever the zone.
         let day = day_number(1_700_000_000_000);

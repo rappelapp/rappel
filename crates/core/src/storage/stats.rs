@@ -53,15 +53,32 @@ impl Store {
         past: &DayGrid,
         ahead: &DayGrid,
     ) -> Result<Stats> {
+        Ok(self.stats_and_first_activity(scope, now, past, ahead)?.0)
+    }
+
+    /// [`Store::stats`] and [`Store::first_activity_at`] in one read
+    /// transaction, so the two agree even while another connection writes
+    /// (ADR 0078).
+    ///
+    /// # Errors
+    /// As [`Store::stats`].
+    pub fn stats_and_first_activity(
+        &self,
+        scope: Scope<'_>,
+        now: i64,
+        past: &DayGrid,
+        ahead: &DayGrid,
+    ) -> Result<(Stats, Option<i64>)> {
         let tx = self.conn.unchecked_transaction()?;
         if let Scope::Deck(id) = scope {
             ensure_live_deck(&tx, id)?;
         }
         let reviews = activity_in_window(&tx, scope.deck(), past.start(), past.end())?;
         let cards = scheduled_cards(&tx, scope.deck())?;
+        let first = first_activity(&tx, scope.deck())?;
         // Read only: ending it commits nothing.
         tx.finish()?;
-        Ok(Stats::compute(past, ahead, now, reviews, cards))
+        Ok((Stats::compute(past, ahead, now, reviews, cards), first))
     }
 
     /// When the earliest review of `scope` that the activity counts was
@@ -78,7 +95,7 @@ impl Store {
         if let Scope::Deck(id) = scope {
             ensure_live_deck(&tx, id)?;
         }
-        let first = tx.query_row(FIRST_ACTIVITY, params![scope.deck()], |r| r.get(0))?;
+        let first = first_activity(&tx, scope.deck())?;
         // Read only: ending it commits nothing.
         tx.finish()?;
         Ok(first)
@@ -122,6 +139,11 @@ const FIRST_ACTIVITY: &str = "SELECT MIN(e.reviewed_at)
        AND (?1 IS NULL OR c.deck_id = ?1)
        AND e.kind = 'review'
        AND NOT EXISTS (SELECT 1 FROM review_events u WHERE u.undoes = e.id)";
+
+/// The time of the earliest review [`FIRST_ACTIVITY`] finds.
+fn first_activity(conn: &Connection, deck: Option<&str>) -> Result<Option<i64>> {
+    Ok(conn.query_row(FIRST_ACTIVITY, params![deck], |r| r.get(0))?)
+}
 
 /// The surviving reviews of live cards in live decks (of `deck`, if given)
 /// made in `[from, to)`.

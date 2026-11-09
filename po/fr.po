@@ -922,8 +922,8 @@ msgid "Study some cards to see your progress here"
 msgstr "Étudiez quelques cartes pour voir vos progrès ici"
 
 #: crates/app/data/stats_page.blp
-msgid "Chart"
-msgstr "Graphique"
+msgid "Chart View"
+msgstr "Vue du graphique"
 
 #: crates/app/data/stats_page.blp
 msgid "_Reviews"
@@ -938,14 +938,14 @@ msgid "_Forecast"
 msgstr "_Prévision"
 
 #: crates/app/data/stats_page.blp
-#: crates/app/src/dialogs/card_info/text.rs
+msgctxt "chart legend"
 msgid "Passed"
-msgstr "Réussie"
+msgstr "Réussies"
 
 #: crates/app/data/stats_page.blp
-#: crates/app/src/dialogs/card_info/text.rs
+msgctxt "chart legend"
 msgid "Failed"
-msgstr "Ratée"
+msgstr "Ratées"
 
 #: crates/app/data/stats_page.blp
 msgctxt "paging button"
@@ -1190,6 +1190,14 @@ msgstr "{date} · {relative}"
 #: crates/app/src/dialogs/card_info/text.rs
 msgid "New card"
 msgstr "Nouvelle carte"
+
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Passed"
+msgstr "Réussie"
+
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Failed"
+msgstr "Ratée"
 
 #. Translators: a review in a card's history: {date} is when, {time} how long the answer took ("4 s"), {interval} when the card came due again ("3 days").
 #: crates/app/src/dialogs/card_info/text.rs
@@ -1942,7 +1950,7 @@ msgstr "30 prochains jours"
 msgid "Last 30 Days"
 msgstr "30 derniers jours"
 
-#. Translators: a period of the statistics; {first} and {last} are its first and last days, as "8 Sep".
+#. Translators: a period of the statistics; {first} and {last} are its first and last days, as "8 Sep" (or "8 Sep 2025" in another year).
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{first} – {last}"
 msgstr "{first} – {last}"
@@ -3004,6 +3012,11 @@ msgstr "{minutes} min {seconds} s"
 msgid "{hours} h {minutes} min"
 msgstr "{hours} h {minutes} min"
 
+#. Translators: a whole number of hours ("3 h"), on a chart's scale.
+#: crates/app/src/ui/text.rs
+msgid "{hours} h"
+msgstr "{hours} h"
+
 #. Translators: a time in minutes ("12 min").
 #: crates/app/src/ui/text.rs
 msgid "{minutes} min"
@@ -3066,6 +3079,12 @@ msgstr "%x %X"
 msgctxt "date format"
 msgid "%-d %b"
 msgstr "%-d %b"
+
+#. Translators: a day of another year in a period of the statistics, for g_date_time_format(): %-d is the day of the month, %b the short month name, %Y the year ("17 Sep 2025").
+#: crates/app/src/ui/time.rs
+msgctxt "date format"
+msgid "%-d %b %Y"
+msgstr "%-d %b %Y"
 
 #. Translators: a day in a chart's summary, for g_date_time_format(): %-d is the day of the month, %B the month name ("14 October").
 #: crates/app/src/ui/time.rs
@@ -3369,6 +3388,9 @@ msgstr "Voyez combien vous avez étudié et ce que vous retenez"
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr "Des images sur les cartes, sur un téléphone"
+
+#~ msgid "Chart"
+#~ msgstr "Graphique"
 
 #~ msgid "Up to {value}"
 #~ msgstr "Jusqu’à {value}"

@@ -32,6 +32,7 @@ fn day_names() -> DayNames<'static> {
         short: &time::day_short,
         with_weekday: &time::day_with_weekday,
         long: &time::day_long,
+        short_with_year: &time::day_short_year,
         number: &time::day_number,
         month: &time::month_index,
     }

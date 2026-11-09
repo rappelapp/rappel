@@ -109,7 +109,7 @@ template $RappelStatsPage: Adw.NavigationPage {
                       homogeneous: true;
 
                       accessibility {
-                        label: _("Chart");
+                        label: _("Chart View");
                       }
 
                       Adw.Toggle {
@@ -204,7 +204,7 @@ template $RappelStatsPage: Adw.NavigationPage {
                         }
 
                         Gtk.Label {
-                          label: _("Passed");
+                          label: C_("chart legend", "Passed");
                           margin-end: 12;
 
                           styles [
@@ -220,7 +220,7 @@ template $RappelStatsPage: Adw.NavigationPage {
                         }
 
                         Gtk.Label {
-                          label: _("Failed");
+                          label: C_("chart legend", "Failed");
 
                           styles [
                             "caption",

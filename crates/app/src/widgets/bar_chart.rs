@@ -396,6 +396,30 @@ mod imp {
     }
 
     impl WidgetImpl for BarChart {
+        /// The text size changed (the font, its DPI or the font
+        /// configuration: Gtk-4.0.gir, `GtkSystemSetting`): the labels'
+        /// lines are taller or shorter, so the chart's height follows. The
+        /// parent's handler updates the widget's Pango context first.
+        fn system_setting_changed(&self, setting: &gtk::SystemSetting) {
+            self.parent_system_setting_changed(setting);
+            if matches!(
+                setting,
+                gtk::SystemSetting::Dpi
+                    | gtk::SystemSetting::FontName
+                    | gtk::SystemSetting::FontConfig
+            ) {
+                let chart = self.obj();
+                chart.set_content_height(self.height());
+                chart.queue_draw();
+            }
+        }
+
+        /// A new window may have another display and font settings.
+        fn root(&self) {
+            self.parent_root();
+            self.obj().set_content_height(self.height());
+        }
+
         /// The drawing area paints the shapes (`paint`, through the draw
         /// function, which its own snapshot calls whenever the widget is
         /// drawn again: Gtk-4.0.gir, `GtkDrawingArea`); the texts go on

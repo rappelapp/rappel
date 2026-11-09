@@ -411,6 +411,9 @@ proptest! {
         let (store, decks, ..) = run(&ops);
         assert_same(&stats_of(&store, Scope::All), &oracle(&store, None));
         prop_assert_eq!(store.first_activity_at(Scope::All).unwrap(), first_activity(&store, None));
+        let (both, first) = store.stats_and_first_activity(Scope::All, NOW, &past(), &ahead()).unwrap();
+        assert_same(&both, &stats_of(&store, Scope::All));
+        prop_assert_eq!(first, first_activity(&store, None));
         for deck in &decks {
             assert_same(&stats_of(&store, Scope::Deck(deck)), &oracle(&store, Some(deck)));
             prop_assert_eq!(

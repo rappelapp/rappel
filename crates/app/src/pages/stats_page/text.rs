@@ -6,7 +6,7 @@
 
 use crate::i18n::{fill, gettext, ngettext};
 use crate::state::{STATS_DAYS, STATS_MAX_PERIOD, StatsData};
-use crate::ui::text::{counted, group_digits, minutes, percent, studied_text};
+use crate::ui::text::{counted, group_digits, hours, minutes, percent, studied_text};
 use crate::widgets::bar_chart::layout::{Bar, ticks};
 use crate::widgets::bar_chart::{ChartBar, ChartModel, Tick};
 
@@ -18,9 +18,12 @@ pub struct DayNames<'a> {
     pub with_weekday: &'a dyn Fn(i64) -> String,
     /// "17 September", in a summary.
     pub long: &'a dyn Fn(i64) -> String,
+    /// "17 Sep 2025", for a period of another year.
+    pub short_with_year: &'a dyn Fn(i64) -> String,
     /// "17", under a chart within a month already named.
     pub number: &'a dyn Fn(i64) -> String,
-    /// The same number for two days of the same month.
+    /// `year * 12 + month` (month 1 to 12): the same number for two days
+    /// of the same month, and the year in it.
     pub month: &'a dyn Fn(i64) -> i64,
 }
 
@@ -255,6 +258,16 @@ pub fn chart(view: View, data: &StatsData, period: u32, names: &DayNames<'_>) ->
             count_label,
         ),
     };
+    let mut bars = bars;
+    let mut label = label;
+    let max = bars.iter().map(|b| b.bar.total()).fold(0.0, f64::max);
+    if view == View::Time && max > HOURS_ABOVE_MINUTES {
+        // Whole hours on the scale: "2 h", "4 h", not "100 min".
+        for bar in &mut bars {
+            bar.bar.lower /= 60.0;
+        }
+        label = hours_label;
+    }
     let axis = ticks(bars.iter().map(|b| b.bar.total()).fold(0.0, f64::max));
     ChartModel {
         ticks: axis
@@ -324,18 +337,36 @@ pub fn period_name(view: View, data: &StatsData, period: u32, names: &DayNames<'
         return gettext("Last 30 Days");
     }
     match (data.past_starts.first(), data.past_starts.last()) {
-        (Some(&first), Some(&last)) => fill(
-            // Translators: a period of the statistics; {first} and {last}
-            // are its first and last days, as "8 Sep".
-            &gettext("{first} – {last}"),
-            &[
-                ("first", &(names.short)(first)),
-                ("last", &(names.short)(last)),
-            ],
-        ),
+        (Some(&first), Some(&last)) => {
+            // Today is the instant before the forecast's first day.
+            let today = data.ahead_starts.first().map(|&t| t.saturating_sub(1));
+            let other_year = today.is_some_and(|t| {
+                year(names, first) != year(names, t) || year(names, last) != year(names, t)
+            });
+            let name = if other_year {
+                names.short_with_year
+            } else {
+                names.short
+            };
+            fill(
+                // Translators: a period of the statistics; {first} and
+                // {last} are its first and last days, as "8 Sep" (or "8
+                // Sep 2025" in another year).
+                &gettext("{first} – {last}"),
+                &[("first", &name(first)), ("last", &name(last))],
+            )
+        }
         _ => String::new(),
     }
 }
+
+/// The year of day `t`, from [`DayNames::month`].
+fn year(names: &DayNames<'_>, t: i64) -> i64 {
+    (names.month)(t).saturating_sub(1).div_euclid(12)
+}
+
+/// Above this many minutes the Time scale is in hours.
+const HOURS_ABOVE_MINUTES: f64 = 120.0;
 
 /// The sum of `counts`, stopping at `u32::MAX`: a day's counts come from
 /// the database and may each be as large as that (ADR 0050, row 23), and a
@@ -404,6 +435,11 @@ fn count_label(value: f64) -> String {
 /// A grid line's value in minutes: "20 min".
 fn minutes_label(value: f64) -> String {
     minutes(u64::try_from(whole(value)).unwrap_or(u64::MAX))
+}
+
+/// A grid line's value in hours: "2 h".
+fn hours_label(value: f64) -> String {
+    hours(u64::try_from(whole(value)).unwrap_or(u64::MAX))
 }
 
 /// The day with the largest value, the earliest of equal ones; `None` if
@@ -613,14 +649,22 @@ mod tests {
 
     use super::*;
 
-    /// Days 100.. are in month 1 until 113, then month 2.
+    /// Days 100.. are in January 2026 until 113, then February; days
+    /// before 100 are in December 2025.
     fn names() -> DayNames<'static> {
         DayNames {
             short: &|t| format!("d{t}"),
             with_weekday: &|t| format!("Day {t}"),
             long: &|t| format!("day {t}"),
+            short_with_year: &|t| format!("d{t}y"),
             number: &|t| format!("{}", t % 100),
-            month: &|t| i64::from(t >= 114),
+            month: &|t| {
+                if t < 100 {
+                    2025 * 12 + 12
+                } else {
+                    2026 * 12 + 1 + i64::from(t >= 114)
+                }
+            },
         }
     }
 
@@ -855,6 +899,33 @@ mod tests {
     }
 
     #[test]
+    fn a_period_of_another_year_names_its_year() {
+        let mut d = quiet();
+        // This year: no year.
+        assert_eq!(period_name(View::Reviews, &d, 1, &names()), "d100 – d129");
+        // Starting in December 2025 while today is in 2026.
+        d.past_starts = (90..120).collect();
+        assert_eq!(period_name(View::Reviews, &d, 1, &names()), "d90y – d119y");
+        // No forecast days to tell today by: as this year.
+        d.ahead_starts.clear();
+        assert_eq!(period_name(View::Reviews, &d, 1, &names()), "d90 – d119");
+    }
+
+    #[test]
+    fn the_time_scale_turns_to_hours_above_two_hours() {
+        let mut days = vec![day(0, 0, 0); 30];
+        days[3] = day(10, 8, 150 * 60_000);
+        days[4] = day(10, 8, 30 * 60_000);
+        let m = chart(View::Time, &data(days, vec![0; 30]), 0, &names());
+        assert_eq!(m.bars[3].bar.lower, 2.5);
+        assert_eq!(m.bars[4].bar.lower, 0.5);
+        let labels: Vec<&str> = m.ticks.iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(labels, ["0 h", "1 h", "2 h", "3 h"]);
+        // The captions keep their own times.
+        assert_eq!(m.bars[3].caption, "Day 103: 2 h 30 min studied");
+    }
+
+    #[test]
     fn the_time_chart_is_in_minutes() {
         let mut days = vec![day(0, 0, 0); 30];
         days[1] = day(10, 8, 90_000);
@@ -944,6 +1015,7 @@ mod tests {
             short: &crate::ui::time::day_short,
             with_weekday: &crate::ui::time::day_with_weekday,
             long: &crate::ui::time::day_long,
+            short_with_year: &crate::ui::time::day_short_year,
             number: &crate::ui::time::day_number,
             month: &crate::ui::time::month_index,
         };

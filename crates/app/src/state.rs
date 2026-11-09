@@ -637,19 +637,25 @@ impl AppState {
         // with only what falls due on them.
         let mut ahead_bounds = local_day_bounds_ms(now, hour, 0, STATS_DAYS + 2);
         let scope = deck_id.map_or(Scope::All, Scope::Deck);
-        let mut stats = store.stats(
+        let (mut stats, first_review_at) = store.stats_and_first_activity(
             scope,
             now,
             &DayGrid::new(past_bounds.clone())?,
             &DayGrid::new(ahead_bounds.clone())?,
         )?;
-        let first_review_at = store.first_activity_at(scope)?;
         past_bounds.pop();
         ahead_bounds.pop();
-        // Cannot panic: the grid of 32 bounds was accepted, so there are
-        // 31 bounds left and core gave one count per day (31).
-        ahead_bounds.remove(0);
-        stats.forecast.remove(0);
+        // Today is dropped; `get(1..)` is `None` only for an empty list,
+        // which a grid core accepted never gives.
+        let ahead_bounds = ahead_bounds
+            .get(1..)
+            .map(<[i64]>::to_vec)
+            .unwrap_or_default();
+        stats.forecast = stats
+            .forecast
+            .get(1..)
+            .map(<[u32]>::to_vec)
+            .unwrap_or_default();
         Ok(StatsData {
             stats,
             past_starts: past_bounds,
@@ -822,10 +828,16 @@ mod tests {
         assert!(today <= now && now < data.ahead_starts[0]);
         assert!(data.past_starts.windows(2).all(|w| w[0] < w[1]));
         assert!(data.ahead_starts.windows(2).all(|w| w[0] < w[1]));
-        // The period before ends where this one begins.
+        // The period before ends exactly where this one begins: its days
+        // and the end of its last day are the 31 bounds before today's
+        // period.
         let before = state.stats(None, now, 1).unwrap();
         assert_eq!(before.past_starts.len(), STATS_DAYS);
-        assert!(before.past_starts[STATS_DAYS - 1] < data.past_starts[0]);
+        let hour = state.settings().unwrap().day_start_hour;
+        let first = 1 - 2 * i32::try_from(STATS_DAYS).unwrap();
+        let bounds = local_day_bounds_ms(now, hour, first, STATS_DAYS + 1);
+        assert_eq!(bounds[..STATS_DAYS], before.past_starts[..]);
+        assert_eq!(bounds[STATS_DAYS], data.past_starts[0]);
         assert_eq!(before.ahead_starts, data.ahead_starts);
         // A period beyond the furthest is read as the furthest.
         assert_eq!(

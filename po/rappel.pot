@@ -920,7 +920,7 @@ msgid "Study some cards to see your progress here"
 msgstr ""
 
 #: crates/app/data/stats_page.blp
-msgid "Chart"
+msgid "Chart View"
 msgstr ""
 
 #: crates/app/data/stats_page.blp
@@ -936,12 +936,12 @@ msgid "_Forecast"
 msgstr ""
 
 #: crates/app/data/stats_page.blp
-#: crates/app/src/dialogs/card_info/text.rs
+msgctxt "chart legend"
 msgid "Passed"
 msgstr ""
 
 #: crates/app/data/stats_page.blp
-#: crates/app/src/dialogs/card_info/text.rs
+msgctxt "chart legend"
 msgid "Failed"
 msgstr ""
 
@@ -1187,6 +1187,14 @@ msgstr ""
 
 #: crates/app/src/dialogs/card_info/text.rs
 msgid "New card"
+msgstr ""
+
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Passed"
+msgstr ""
+
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Failed"
 msgstr ""
 
 #. Translators: a review in a card's history: {date} is when, {time} how long the answer took ("4 s"), {interval} when the card came due again ("3 days").
@@ -1940,7 +1948,7 @@ msgstr ""
 msgid "Last 30 Days"
 msgstr ""
 
-#. Translators: a period of the statistics; {first} and {last} are its first and last days, as "8 Sep".
+#. Translators: a period of the statistics; {first} and {last} are its first and last days, as "8 Sep" (or "8 Sep 2025" in another year).
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{first} – {last}"
 msgstr ""
@@ -3002,6 +3010,11 @@ msgstr ""
 msgid "{hours} h {minutes} min"
 msgstr ""
 
+#. Translators: a whole number of hours ("3 h"), on a chart's scale.
+#: crates/app/src/ui/text.rs
+msgid "{hours} h"
+msgstr ""
+
 #. Translators: a time in minutes ("12 min").
 #: crates/app/src/ui/text.rs
 msgid "{minutes} min"
@@ -3063,6 +3076,12 @@ msgstr ""
 #: crates/app/src/ui/time.rs
 msgctxt "date format"
 msgid "%-d %b"
+msgstr ""
+
+#. Translators: a day of another year in a period of the statistics, for g_date_time_format(): %-d is the day of the month, %b the short month name, %Y the year ("17 Sep 2025").
+#: crates/app/src/ui/time.rs
+msgctxt "date format"
+msgid "%-d %b %Y"
 msgstr ""
 
 #. Translators: a day in a chart's summary, for g_date_time_format(): %-d is the day of the month, %B the month name ("14 October").
