@@ -1,6 +1,6 @@
 # Phase 3b: brief for batch mode (target: v0.4.0 and the first Snap)
 
-*Lead engineer, 9 November 2026. Draft for the maintainer's approval. When approved, slice 0 commits it as `docs/briefs/phase-3b.md`.*
+*Lead engineer, 9 November 2026. Approved by the maintainer, 9 November 2026.*
 
 ## In short
 
@@ -70,7 +70,7 @@ Token savings that do not cost quality:
 - ADR 0075.
 - The report tells the maintainer how to remove the old desktop file and icons from `~/.local/share` after installing.
 
-**3. Card lists, proposition A** (#129, #128; Opus). Mockup: `docs/briefs/mockups/deck-page-mockups.html` (proposition A).
+**3. Card lists, proposition A** (#129, #128; Opus). Mockup: `docs/briefs/mockups/deck-page-mockups.html` (proposition A). The maintainer chose proposition A, although the mockup's own badge recommends B. Fonts and colours in the mockups are illustrative only: use libadwaita's.
 - One shared row widget for the deck page and All Cards, built on a boxed-list look inside a `GtkListView`, so 10,000 cards stay smooth.
 - Two-line rows: the front, then the back or the subtitle.
 - Tags shared by every listed card appear once above the list. Each row shows only its other tags, with "+N".
