@@ -335,6 +335,7 @@ msgid "_Add Card"
 msgstr ""
 
 #: crates/app/data/deck_page.blp
+#: crates/app/src/pages/deck_page.rs
 msgid "Study"
 msgstr ""
 
@@ -782,6 +783,14 @@ msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
 msgid "Studying"
+msgstr ""
+
+#: crates/app/data/shortcuts-dialog.blp
+msgid "Start Studying"
+msgstr ""
+
+#: crates/app/data/shortcuts-dialog.blp
+msgid "On a deck or the deck list"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp

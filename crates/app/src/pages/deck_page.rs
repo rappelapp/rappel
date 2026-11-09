@@ -39,7 +39,7 @@ use crate::ui::text::due_new_line;
 use crate::ui::text::with_error;
 use crate::ui::toast::{info_toast, log_failure, show_error, show_toast_from, undo_toast};
 use crate::ui::undo::{self, UndoFailure};
-use crate::ui::{init_once, nav};
+use crate::ui::{init_once, keys, nav};
 use crate::widgets::{CardGroupHeader, CardGroups, CardObject, CardRow, card_row};
 use crate::window::RappelWindow;
 
@@ -93,6 +93,12 @@ mod imp {
         pub content_stack: TemplateChild<gtk::Stack>,
         #[template_child]
         pub study_bar: TemplateChild<gtk::ActionBar>,
+        #[template_child]
+        pub header_study_button: TemplateChild<gtk::Button>,
+        /// S pressed and not yet released (`add_study_key`).
+        pub start_hold: crate::ui::keys::StartHold<()>,
+        #[template_child]
+        pub bar_study_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub card_list: TemplateChild<gtk::ListView>,
         #[template_child]
@@ -376,6 +382,7 @@ impl DeckPage {
         // Move… follows whether there is another deck.
         page.connect_can_move_notify(|page| page.selection().update());
         page.add_escape();
+        page.add_study_key();
 
         init_once(&imp.state, state);
         init_once(&imp.deck, deck);
@@ -421,6 +428,99 @@ impl DeckPage {
             }
         ));
         self.add_controller(keys);
+    }
+
+    /// S starts studying, as the Study button does (ADR 0081), and the
+    /// button's tooltip says so. S acts on its *release* (`keys::StartHold`:
+    /// a held S repeats, and the session's own S would suspend cards).
+    /// The controller is in the bubble phase (the default for a
+    /// `GtkEventControllerKey`, gtkeventcontrollerkey.c): a text field or a
+    /// button that wants the letter has had it first, and the page also asks
+    /// whether a text field has the focus. A popover or a dialog cannot
+    /// leak its S here: a popover's native surface stops key events at its
+    /// own root, and an `AdwDialog` is not a descendant of the page.
+    fn add_study_key(&self) {
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, modifiers| page.study_key_pressed(key, modifiers)
+        ));
+        keys.connect_key_released(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_, key, _, modifiers| page.study_key_released(key, modifiers)
+        ));
+        self.add_controller(keys);
+        // Every press, before any child can claim it (Return on a row or
+        // on a menu button never reaches the bubble phase above): anything
+        // but a plain S cancels a held S. Returns Proceed, so it claims
+        // neither the press nor its release (gtkeventcontrollerkey.c).
+        let observer = gtk::EventControllerKey::new();
+        observer.set_propagation_phase(gtk::PropagationPhase::Capture);
+        observer.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, modifiers| {
+                page.imp().start_hold.observe_press(key, modifiers);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.add_controller(observer);
+        // A hold left behind would start a session at a later release.
+        keys::when_left(self, |page| {
+            if let Some(page) = page.downcast_ref::<Self>() {
+                page.imp().start_hold.clear();
+            }
+        });
+        let imp = self.imp();
+        if let Some(label) = keys::label(keys::START_STUDY_TRIGGER) {
+            let tip = keys::tooltip(&gettext("Study"), &label);
+            imp.header_study_button.set_tooltip_text(Some(&tip));
+            imp.bar_study_button.set_tooltip_text(Some(&tip));
+        }
+    }
+
+    /// Every key press or repeat the page sees: S is swallowed (its release
+    /// starts the session) except while cards are being chosen, where it
+    /// does nothing; any other key cancels a held S.
+    fn study_key_pressed(
+        &self,
+        key: gtk::gdk::Key,
+        modifiers: gtk::gdk::ModifierType,
+    ) -> glib::Propagation {
+        let typing = keys::text_has_focus(self);
+        let target = (!self.selecting()).then_some(());
+        if self
+            .imp()
+            .start_hold
+            .pressed(key, modifiers, typing, target)
+        {
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    }
+
+    /// A key release: a plain S whose press was the last one seen here
+    /// activates `deck.study`. It is disabled when there is nothing to
+    /// study, and activating a disabled action does nothing
+    /// (`gtk_widget_activate_action`).
+    fn study_key_released(&self, key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) {
+        let typing = keys::text_has_focus(self);
+        let target = (!self.selecting()).then_some(&());
+        if self
+            .imp()
+            .start_hold
+            .released(key, modifiers, typing, target)
+        {
+            // Err: Study is disabled, there is nothing to start.
+            let _ = self.activate_action("deck.study", None);
+        }
     }
 
     /// What Escape does: leave selection mode, or nothing (All Cards'
@@ -2311,6 +2411,160 @@ mod tests {
                 .find(|row| row.card_id() == page.item(0).unwrap().card().id)
                 .unwrap();
             assert_eq!(first.imp().tag_pills.tags(), ["def", "maths"]);
+            window.destroy();
+        });
+    }
+
+    /// `page` in a navigation view in a presented window, with an entry
+    /// beside it for the tests that type.
+    fn in_view(page: &DeckPage) -> (gtk::Window, adw::NavigationView, gtk::Entry) {
+        let view = adw::NavigationView::new();
+        let entry = gtk::Entry::new();
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.append(&view);
+        column.append(&entry);
+        let window = gtk::Window::builder()
+            .default_width(600)
+            .default_height(500)
+            .child(&column)
+            .build();
+        window.present();
+        view.push(page);
+        (window, view, entry)
+    }
+
+    fn reviewing(view: &adw::NavigationView) -> bool {
+        view.visible_page().is_some_and(|p| p.is::<ReviewPage>())
+    }
+
+    /// S starts studying on its release, once, however long it was held
+    /// (ADR 0081): the repeats land on the deck page, so none reaches the
+    /// session's own S, which suspends cards.
+    #[test]
+    fn s_starts_studying_on_its_release() {
+        use gtk::gdk::{Key, ModifierType as M};
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, _ids) = page_of(3);
+            let (window, view, _entry) = in_view(&page);
+            crate::testing::settle();
+            // Pressed and repeated: swallowed, nothing starts.
+            for _ in 0..6 {
+                assert_eq!(
+                    page.study_key_pressed(Key::s, M::empty()),
+                    glib::Propagation::Stop
+                );
+            }
+            assert!(!reviewing(&view));
+            page.study_key_released(Key::s, M::empty());
+            assert!(reviewing(&view));
+            // A second release starts nothing more.
+            page.study_key_released(Key::s, M::empty());
+            assert_eq!(view.navigation_stack().n_items(), 2);
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn s_does_nothing_with_modifiers_unrelated_keys_or_a_release_alone() {
+        use gtk::gdk::{Key, ModifierType as M};
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, _ids) = page_of(3);
+            let (window, view, _entry) = in_view(&page);
+            crate::testing::settle();
+            for modifiers in [M::SHIFT_MASK, M::CONTROL_MASK, M::ALT_MASK] {
+                assert_eq!(
+                    page.study_key_pressed(Key::s, modifiers),
+                    glib::Propagation::Proceed
+                );
+            }
+            assert_eq!(
+                page.study_key_pressed(Key::a, M::empty()),
+                glib::Propagation::Proceed
+            );
+            page.study_key_released(Key::s, M::empty());
+            page.study_key_released(Key::a, M::empty());
+            assert!(!reviewing(&view));
+            window.destroy();
+        });
+    }
+
+    /// A hold does not outlive the press: another key's press, a modifier
+    /// on the release, or the page being hidden (a page pushed over it)
+    /// each make the release start nothing.
+    #[test]
+    fn a_stale_hold_starts_nothing() {
+        use gtk::gdk::{Key, ModifierType as M};
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, _ids) = page_of(3);
+            let (window, view, _entry) = in_view(&page);
+            crate::testing::settle();
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            let _ = page.study_key_pressed(Key::Control_L, M::empty());
+            page.study_key_released(Key::s, M::CONTROL_MASK);
+            assert!(!reviewing(&view));
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            page.study_key_released(Key::s, M::SHIFT_MASK);
+            assert!(!reviewing(&view));
+            // Hidden under another page and shown again.
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            view.push(&adw::NavigationPage::new(&gtk::Label::new(None), "Other"));
+            crate::testing::settle();
+            view.pop();
+            crate::testing::settle();
+            page.study_key_released(Key::s, M::empty());
+            assert!(!reviewing(&view));
+            // A fresh press and release still start.
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            page.study_key_released(Key::s, M::empty());
+            assert!(reviewing(&view));
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn s_does_nothing_in_selection_mode_or_an_empty_deck_or_a_text_field() {
+        use gtk::gdk::{Key, ModifierType as M};
+        crate::testing::with_widgets(|| {
+            // Selection mode.
+            let (_tmp, _state, page, _ids) = page_of(3);
+            let (window, view, entry) = in_view(&page);
+            crate::testing::settle();
+            page.selection().set_active(true);
+            assert!(page.selecting());
+            assert_eq!(
+                page.study_key_pressed(Key::s, M::empty()),
+                glib::Propagation::Proceed
+            );
+            page.study_key_released(Key::s, M::empty());
+            assert!(!reviewing(&view));
+            page.selection().set_active(false);
+            // A text field with the focus keeps the letter.
+            entry.grab_focus();
+            assert_eq!(
+                page.study_key_pressed(Key::s, M::empty()),
+                glib::Propagation::Proceed
+            );
+            page.study_key_released(Key::s, M::empty());
+            assert!(!reviewing(&view));
+            // Pressed on the page, then the focus moves into a text field:
+            // the release starts nothing.
+            page.imp().card_list.grab_focus();
+            assert_eq!(
+                page.study_key_pressed(Key::s, M::empty()),
+                glib::Propagation::Stop
+            );
+            entry.grab_focus();
+            page.study_key_released(Key::s, M::empty());
+            assert!(!reviewing(&view));
+            window.destroy();
+
+            // An empty deck has nothing to study: Study is disabled.
+            let (_tmp, _state, page, _ids) = page_of(0);
+            let (window, view, _entry) = in_view(&page);
+            crate::testing::settle();
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            page.study_key_released(Key::s, M::empty());
+            assert!(!reviewing(&view));
             window.destroy();
         });
     }

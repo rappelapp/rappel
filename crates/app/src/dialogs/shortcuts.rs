@@ -8,6 +8,7 @@
 
 use adw::prelude::*;
 use gtk::gio;
+use gtk::glib::translate::IntoGlib;
 
 use crate::dialogs::card_editor::{FORMAT_KEYS, SAVE_KEYS};
 use crate::pages::browser_text;
@@ -123,6 +124,9 @@ fn bound_keys() -> Vec<(&'static str, Vec<String>)> {
             "Studying",
             crate::pages::review_key_triggers()
                 .map(str::to_owned)
+                // S starts studying on the deck pages (ADR 0081); it is
+                // checked on its own below, since S also suspends a card.
+                .chain([crate::ui::keys::START_STUDY_TRIGGER.to_owned()])
                 .collect(),
         ),
         (
@@ -203,5 +207,37 @@ fn every_accelerator_parses_and_every_bound_key_is_listed_in_its_section() {
                 "section {title} is not checked against any key table"
             );
         }
+    });
+}
+
+/// S appears twice in Studying: Start Studying (deck pages) and Suspend
+/// Card (review), so the shared check above cannot tell them apart. And the
+/// Pass item lists every key that passes: 2, 3, 4 and Space.
+#[test]
+fn start_studying_and_the_pass_keys_are_listed_by_name() {
+    crate::testing::with_widgets(|| {
+        let sections = sections();
+        let (_, items) = sections
+            .iter()
+            .find(|(title, _)| title == "Studying")
+            .expect("the dialog has a Studying section");
+        let accels = |title: &str| -> Vec<Accel> {
+            let (_, accels) = items
+                .iter()
+                .find(|(t, _)| t == title)
+                .unwrap_or_else(|| panic!("no {title} item"));
+            let mut keys: Vec<_> = accels.iter().map(|a| normalised(a)).collect();
+            keys.sort_by_key(|(key, _)| key.into_glib());
+            keys
+        };
+        let none = gtk::gdk::ModifierType::empty();
+        assert_eq!(
+            accels("Start Studying"),
+            vec![normalised(crate::ui::keys::START_STUDY_TRIGGER)]
+        );
+        let mut pass: Vec<Accel> = ["2", "3", "4", "space"].map(normalised).to_vec();
+        pass.sort_by_key(|(key, _)| key.into_glib());
+        assert_eq!(accels("Pass"), pass);
+        assert!(pass.iter().all(|(_, mods)| *mods == none));
     });
 }

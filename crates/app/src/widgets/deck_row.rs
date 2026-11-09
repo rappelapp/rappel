@@ -141,6 +141,18 @@ impl DeckRow {
         self.imp().deck_id.borrow().clone()
     }
 
+    /// The deck's name as shown, for tests.
+    #[cfg(test)]
+    pub(crate) fn name(&self) -> String {
+        self.imp().name_label.label().to_string()
+    }
+
+    /// Gives the row's menu button the keyboard focus, for tests.
+    #[cfg(test)]
+    pub(crate) fn focus_menu_button(&self) {
+        self.imp().menu_button.grab_focus();
+    }
+
     fn forward(&self, action: &str) {
         rows::forward_id(self, action, &self.deck_id());
     }
