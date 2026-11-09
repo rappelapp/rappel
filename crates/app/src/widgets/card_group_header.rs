@@ -53,6 +53,17 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
             crate::widgets::card_list_header::add_overflow(&self.group_pills, &self.overflow);
+            // The header's own label says it whole: its parts are hidden
+            // from assistive technologies, so it is read once
+            // (`GTK_ACCESSIBLE_STATE_HIDDEN`, GtkAccessible docs).
+            for part in [
+                self.title_label.upcast_ref::<gtk::Widget>(),
+                self.group_pills.upcast_ref(),
+                self.count_label.upcast_ref(),
+                self.overflow.upcast_ref(),
+            ] {
+                part.update_state(&[gtk::accessible::State::Hidden(true)]);
+            }
         }
     }
     impl WidgetImpl for CardGroupHeader {}
@@ -109,6 +120,10 @@ mod tests {
                 gtk::AccessibleProperty::Label
             ));
             assert_eq!(header.accessible_role(), gtk::AccessibleRole::Heading);
+            assert!(gtk::test_accessible_has_state(
+                &*imp.count_label,
+                gtk::AccessibleState::Hidden
+            ));
             header.show(&[], true, 14);
             assert_eq!(imp.title_label.label(), "Only the shared tags");
             assert!(!imp.group_pills.is_visible());

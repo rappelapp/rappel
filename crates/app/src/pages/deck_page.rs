@@ -1317,6 +1317,10 @@ impl DeckPage {
     /// (`gtk_list_base_adjustment_value_changed_cb`), with the focus left
     /// on the first row. Nothing happens if the focus has left it by then.
     fn reveal_first_header(&self) {
+        // No header without groups: the first row is the top already.
+        if !self.grouped() {
+            return;
+        }
         let frames = Cell::new(0u8);
         self.imp().card_list.add_tick_callback(glib::clone!(
             #[weak(rename_to = page)]

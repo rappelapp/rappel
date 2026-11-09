@@ -3191,6 +3191,7 @@ msgstr ""
 msgid "suspended"
 msgstr ""
 
+#. Translators: what a screen reader says for a card never studied, at the end of its row's label.
 #: crates/app/src/widgets/card_row/text.rs
 msgctxt "card due"
 msgid "new"

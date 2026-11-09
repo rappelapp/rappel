@@ -3193,6 +3193,7 @@ msgstr "verso : {back}"
 msgid "suspended"
 msgstr "suspendue"
 
+#. Translators: what a screen reader says for a card never studied, at the end of its row's label.
 #: crates/app/src/widgets/card_row/text.rs
 msgctxt "card due"
 msgid "new"
@@ -3482,18 +3483,6 @@ msgstr "Voyez combien vous avez étudié et ce que vous retenez"
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr "Des images sur les cartes, sur un téléphone"
-
-#~ msgid "Also"
-#~ msgstr "Aussi"
-
-#~ msgid "Tagged"
-#~ msgstr "Étiquetées"
-
-#~ msgid "Only the shared tags"
-#~ msgstr "Seulement les étiquettes communes"
-
-#~ msgid "No tags"
-#~ msgstr "Sans étiquette"
 
 #~ msgid "{status} · {deck}"
 #~ msgstr "{status} · {deck}"

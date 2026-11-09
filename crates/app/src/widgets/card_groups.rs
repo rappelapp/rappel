@@ -149,7 +149,7 @@ impl CardGroups {
         drop(old);
         let was = imp.plan.replace(new_plan);
         let grouped = imp.plan.borrow().grouped();
-        let groups_changed = !plan::same_groups(&was.groups, &imp.plan.borrow().groups);
+        let groups_changed = !plan::same_headers(&was, &imp.plan.borrow());
         // `grouped` first, so every handler below reads the model whole.
         let grouped_changed = imp.grouped.replace(grouped) != grouped;
         if let Some((position, removed, added)) = span {
@@ -307,6 +307,48 @@ mod tests {
             store.remove_all();
             assert_eq!(model.n_items(), 0);
             assert!(!model.has_shared());
+        });
+    }
+
+    /// An empty store at first; a group's count changing with no card
+    /// moving; the last card of a group leaving, so grouping stops: the
+    /// headers are told each time, and `grouped` follows.
+    #[test]
+    fn the_headers_and_grouped_follow_every_kind_of_change() {
+        crate::testing::with_widgets(|| {
+            let store = gio::ListStore::new::<CardObject>();
+            let model = CardGroups::new(&store);
+            assert_eq!(model.n_items(), 0);
+            assert!(!model.grouped());
+            assert_eq!(model.section(0), (0, u32::MAX));
+            let sections: Rc<RefCell<Vec<(u32, u32)>>> = Rc::default();
+            let log = Rc::clone(&sections);
+            model.connect_sections_changed(move |_, p, n| log.borrow_mut().push((p, n)));
+            let notified: Rc<RefCell<Vec<bool>>> = Rc::default();
+            let seen = Rc::clone(&notified);
+            model.connect_grouped_notify(move |m| seen.borrow_mut().push(m.grouped()));
+            // Two groups: 2 without the extra tag, 2 with it (at the end).
+            store.extend_from_slice(&[
+                card(0, false),
+                card(1, false),
+                card(2, true),
+                card(3, true),
+            ]);
+            assert!(model.grouped());
+            assert_eq!(*notified.borrow(), [true]);
+            // A card added at the end of the last group: its count
+            // changes, no card moves.
+            sections.borrow_mut().clear();
+            store.append(&card(4, true));
+            assert_eq!(model.group_at(4).map(|g| g.len), Some(3));
+            assert_eq!(*sections.borrow(), [(0, 5)]);
+            // The extra tag's group empties: one group, grouping stops.
+            sections.borrow_mut().clear();
+            store.splice(2, 3, &[] as &[CardObject]);
+            assert!(!model.grouped());
+            assert_eq!(*notified.borrow(), [true, false]);
+            assert_eq!(*sections.borrow(), [(0, 2)]);
+            assert_eq!(model.section(1), (0, 2));
         });
     }
 

@@ -82,11 +82,16 @@ pub fn plan<'a>(cards: impl ExactSizeIterator<Item = &'a [Tag]> + Clone) -> Plan
     let mut sizes: Vec<usize> = Vec::new();
     let mut group_of: Vec<usize> = Vec::with_capacity(n);
     for tags in cards {
-        let key: Vec<&str> = tags
+        // Sorted, so the same set is one key whatever order a card's
+        // tags come in (each card's own order is by name key, but the
+        // key must not rely on it).
+        let mut key: Vec<&str> = tags
             .iter()
             .map(|t| t.id.as_str())
             .filter(|id| !shared_ids.contains(id))
             .collect();
+        key.sort_unstable();
+        key.dedup();
         let next = sizes.len();
         let group = *index.entry(key).or_insert(next);
         if group == next {
@@ -173,11 +178,14 @@ pub fn group_at(groups: &[Group], position: u32) -> Option<&Group> {
     (position < group.start.saturating_add(group.len)).then_some(group)
 }
 
-/// Compares two plans' groups for what their headers show: the same
-/// starts, sizes and tags.
-pub fn same_groups(a: &[Group], b: &[Group]) -> bool {
-    a.len() == b.len()
-        && a.iter().zip(b).all(|(a, b)| {
+/// Whether two plans' headers show the same: the same groups (starts,
+/// sizes and tags) and the same answer to "is any tag shared", which
+/// chooses between "Also" and "Tagged", "Only the shared tags" and "No
+/// tags".
+pub fn same_headers(a: &Plan, b: &Plan) -> bool {
+    a.shared.is_empty() == b.shared.is_empty()
+        && a.groups.len() == b.groups.len()
+        && a.groups.iter().zip(&b.groups).all(|(a, b)| {
             a.start == b.start
                 && a.len == b.len
                 && a.tags.len() == b.tags.len()
@@ -360,6 +368,72 @@ mod tests {
         assert!(!plan_of(&[tags(&["a"]), tags(&["a"])]).grouped());
         assert!(!plan_of(&[tags(&["a"])]).grouped());
         assert_eq!(plan_of(&[]), Plan::default());
+    }
+
+    /// The same set in another order is one group.
+    #[test]
+    fn a_set_is_one_group_whatever_its_order() {
+        let (a, b, s) = (tag("a"), tag("b"), tag("s"));
+        let cards = vec![
+            vec![s.clone(), a.clone(), b.clone()],
+            vec![s.clone(), b.clone(), a.clone()],
+            vec![s.clone()],
+            vec![s.clone()],
+        ];
+        let plan = plan_of(&cards);
+        assert_eq!(plan.groups.len(), 2, "{plan:?}");
+        assert_eq!(plan.groups[1].len, 2);
+    }
+
+    #[test]
+    fn headers_change_with_whether_a_tag_is_shared() {
+        let shared = plan_of(&[
+            tags(&["s"]),
+            tags(&["s"]),
+            tags(&["s", "x"]),
+            tags(&["s", "x"]),
+        ]);
+        let mut none = shared.clone();
+        none.shared.clear();
+        assert!(same_headers(&shared, &shared));
+        assert!(!same_headers(&shared, &none));
+        let mut moved = shared.clone();
+        moved.groups[0].len = 1;
+        assert!(!same_headers(&shared, &moved));
+    }
+
+    /// 10,000 cards with 10,000 different sets: the walk stops past the
+    /// cap, nothing is grouped, quickly.
+    #[test]
+    fn ten_thousand_tag_sets_stop_early() {
+        let cards: Vec<Vec<Tag>> = (0..10_000)
+            .map(|i| vec![tag("shared"), tag(&format!("t{i:05}"))])
+            .collect();
+        let (cpu, plan) = crate::testing::cpu_time_of(|| plan_of(&cards));
+        assert!(!plan.grouped());
+        assert_eq!(plan.shared.len(), 1);
+        crate::testing::print_timing("card_groups::plan, 10,000 sets (CPU)", cpu);
+        crate::testing::assert_cpu_within(cpu, Duration::from_millis(500), "10,000 sets");
+    }
+
+    /// 2,000 cards with 2,000 extra tags each, in two groups: grouped,
+    /// the second group's header has all 2,000 names, in time linear in
+    /// the 4 million tags.
+    #[test]
+    fn thousands_of_extra_tags_in_two_groups_are_grouped() {
+        let many: Vec<Tag> = (0..2_000).map(|t| tag(&format!("x{t:04}"))).collect();
+        let cards: Vec<Vec<Tag>> = (0..2_000)
+            .map(|i| if i % 2 == 0 { many.clone() } else { Vec::new() })
+            .collect();
+        let (cpu, plan) = crate::testing::cpu_time_of(|| plan_of(&cards));
+        assert!(plan.grouped());
+        assert_eq!(plan.groups.len(), 2);
+        assert_eq!(plan.groups[0].tags, []);
+        assert_eq!(plan.groups[1].tags.len(), 2_000);
+        assert_eq!(plan.groups[1].tags[0].name, "x0000");
+        assert_eq!((plan.groups[1].start, plan.groups[1].len), (1_000, 1_000));
+        crate::testing::print_timing("card_groups::plan, 2,000 × 2,000 tags (CPU)", cpu);
+        crate::testing::assert_cpu_within(cpu, Duration::from_secs(5), "2,000 × 2,000 tags");
     }
 
     #[test]

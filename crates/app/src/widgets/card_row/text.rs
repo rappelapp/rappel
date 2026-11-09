@@ -70,8 +70,14 @@ pub fn due_word(status: CardStatus, now: i64, next_day: i64) -> DueWord {
     };
     let due = match status {
         CardStatus::New => {
-            // Translators: at the end of a card's row: a card never studied.
-            return word(gettext("New"), false, pgettext("card due", "new"));
+            return word(
+                // Translators: at the end of a card's row: a card never studied.
+                gettext("New"),
+                false,
+                // Translators: what a screen reader says for a card never
+                // studied, at the end of its row's label.
+                pgettext("card due", "new"),
+            );
         }
         CardStatus::Suspended => return word(gettext("Suspended"), false, gettext("suspended")),
         CardStatus::Learning(due) | CardStatus::Due(due) | CardStatus::Scheduled(due) => due,
