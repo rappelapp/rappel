@@ -545,7 +545,7 @@ msgstr "Dossier"
 #: crates/app/src/auto_backup.rs
 msgctxt "automatic backups"
 msgid "Off"
-msgstr "Désactivées"
+msgstr "Aucun"
 
 #: crates/app/data/preferences_dialog.blp
 msgid "_Choose…"
@@ -1031,6 +1031,10 @@ msgstr "Rappel n’a pas le droit d’écrire dans le dossier de sauvegarde"
 #: crates/app/src/auto_backup.rs
 msgid "the backup would be larger than an import reads; use Export… without media instead"
 msgstr "la sauvegarde dépasserait la taille qu’un import lit ; utilisez plutôt Exporter… sans les médias"
+
+#: crates/app/src/auto_backup.rs
+msgid "something that is not a backup has today’s backup’s name in the backup folder"
+msgstr "un élément qui n’est pas une sauvegarde porte le nom de la sauvegarde du jour dans le dossier de sauvegarde"
 
 #: crates/app/src/auto_backup.rs
 msgid "something unexpected happened"

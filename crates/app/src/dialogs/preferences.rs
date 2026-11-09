@@ -395,6 +395,15 @@ fn show_auto_backup(row: &adw::ActionRow, off: &gtk::Button, folder: Option<&Pat
     row.set_subtitle(&auto_backup::folder_subtitle(folder));
     let full = folder.map(|f| f.display().to_string());
     row.set_tooltip_text(full.as_deref());
+    // Tooltips are not reliably read out: the full path is also the row's
+    // accessible description (`GtkAccessible`, `update_property`).
+    // Through `GtkWidget`: the binding marks `AdwActionRow` as accessible
+    // only with its `gtk_v4_10` feature, though every widget is one.
+    let widget = row.upcast_ref::<gtk::Widget>();
+    match &full {
+        Some(path) => widget.update_property(&[gtk::accessible::Property::Description(path)]),
+        None => widget.reset_property(gtk::AccessibleProperty::Description),
+    }
     off.set_visible(folder.is_some());
 }
 
@@ -510,9 +519,11 @@ async fn choose_backup_folder(window: &RappelWindow, rows: &AutoBackupRow, ctx: 
             return;
         }
     };
+    // Links resolved now, or the choice is refused: a path that still ends
+    // in a link would fail every backup as "replaced by a link".
     let Some(path) = chosen
         .path()
-        .and_then(|path| std::fs::canonicalize(&path).ok().or(Some(path)))
+        .and_then(|path| std::fs::canonicalize(path).ok())
         .filter(|path| path.to_str().is_some())
     else {
         ctx.errors.show_in_preferences(

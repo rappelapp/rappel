@@ -1031,6 +1031,10 @@ msgid "the backup would be larger than an import reads; use Export… without me
 msgstr ""
 
 #: crates/app/src/auto_backup.rs
+msgid "something that is not a backup has today’s backup’s name in the backup folder"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
 msgid "something unexpected happened"
 msgstr ""
 

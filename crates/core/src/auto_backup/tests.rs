@@ -1,6 +1,8 @@
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
+use std::sync::atomic::AtomicBool;
+
 use super::*;
 use crate::domain::Grade;
 use crate::test_support::{T0, answer};
@@ -324,7 +326,13 @@ impl Env {
     }
 
     fn run(&self, today: &str, last: Option<&LastBackup>) -> Result<Outcome, Failure> {
-        run(&self.data(), &self.folder(), date(today), last)
+        run(
+            &self.data(),
+            &self.folder(),
+            date(today),
+            last,
+            &AtomicBool::new(false),
+        )
     }
 
     /// The names in the backup folder, sorted.
@@ -445,11 +453,15 @@ fn todays_name_taken_is_never_replaced() {
     assert_eq!(env.run("2026-11-09", None), Ok(Outcome::AlreadyThere));
     assert_eq!(fs::read(&today).unwrap(), b"mine");
     fs::remove_file(&today).unwrap();
-    // A link of that name: kept, and what it points to is untouched.
+    // A link of that name: kept, what it points to is untouched, and the
+    // user is told (not recorded as backed up).
     let elsewhere = env.tmp.path().join("elsewhere");
     fs::write(&elsewhere, b"precious").unwrap();
     symlink(&elsewhere, &today).unwrap();
-    assert_eq!(env.run("2026-11-09", None), Ok(Outcome::AlreadyThere));
+    assert_eq!(
+        env.run("2026-11-09", None).unwrap_err().kind,
+        FailureKind::NameTaken
+    );
     assert!(fs::symlink_metadata(&today).unwrap().is_symlink());
     assert_eq!(fs::read(&elsewhere).unwrap(), b"precious");
     assert_eq!(env.names(), vec!["Rappel backup 2026-11-09.rappel"]);
@@ -530,27 +542,34 @@ fn only_old_backups_are_deleted_never_a_link_or_a_look_alike() {
 fn a_missing_or_strange_folder_fails_safely() {
     let env = Env::new();
     let today = date("2026-11-09");
+    let never = AtomicBool::new(false);
     let gone = env.tmp.path().join("gone");
-    let failure = run(&env.data(), &gone, today, None).unwrap_err();
+    let failure = run(&env.data(), &gone, today, None, &never).unwrap_err();
     assert_eq!(failure.kind, FailureKind::FolderMissing, "{failure}");
 
     let file = env.tmp.path().join("a file");
     fs::write(&file, b"x").unwrap();
-    let failure = run(&env.data(), &file, today, None).unwrap_err();
+    let failure = run(&env.data(), &file, today, None, &never).unwrap_err();
     assert_eq!(failure.kind, FailureKind::NotAFolder, "{failure}");
 
     // A link in place of the folder is refused, and nothing is written
     // where it points.
     let link = env.tmp.path().join("link");
     symlink(env.folder(), &link).unwrap();
-    let failure = run(&env.data(), &link, today, None).unwrap_err();
+    let failure = run(&env.data(), &link, today, None, &never).unwrap_err();
     assert_eq!(failure.kind, FailureKind::FolderIsLink, "{failure}");
     assert_eq!(env.names(), Vec::<String>::new());
     // A link higher up the path is the user's own layout and is followed.
     let parent_link = env.tmp.path().join("parent link");
     symlink(env.tmp.path(), &parent_link).unwrap();
     assert!(matches!(
-        run(&env.data(), &parent_link.join("backups"), today, None),
+        run(
+            &env.data(),
+            &parent_link.join("backups"),
+            today,
+            None,
+            &never
+        ),
         Ok(Outcome::Written { .. })
     ));
 }
@@ -589,6 +608,7 @@ fn a_folder_removed_before_the_write_fails_safely() {
         &env.folder(),
         "Rappel backup 2026-11-09.rappel",
         &env.store,
+        &AtomicBool::new(false),
     ) else {
         panic!("refused");
     };
@@ -608,17 +628,68 @@ fn errors_say_why() {
     assert_eq!(kind(Errno::PERM), FailureKind::NotAllowed);
     assert_eq!(kind(Errno::LOOP), FailureKind::FolderIsLink);
     assert_eq!(kind(Errno::IO), FailureKind::Other);
+    let folder = Path::new("/backups");
     assert_eq!(
-        Failure::core(&Error::ExportTooLarge { bytes: 2, limit: 1 }).kind,
+        Failure::core(&Error::ExportTooLarge { bytes: 2, limit: 1 }, folder).kind,
         FailureKind::TooLarge
     );
+    let io_at = |path: &str, errno: Errno| Error::Io {
+        path: PathBuf::from(path),
+        source: io::Error::from(errno),
+    };
     assert_eq!(
-        Failure::core(&Error::Io {
-            path: PathBuf::from("/x"),
-            source: io::Error::from(Errno::NOSPC),
-        })
-        .kind,
+        Failure::core(&io_at("/backups/.partial", Errno::NOSPC), folder).kind,
         FailureKind::NoSpace
     );
-    assert_eq!(Failure::core(&Error::IdsExhausted).kind, FailureKind::Other);
+    // A media file gone during the export is not the folder's fault.
+    let media = Failure::core(&io_at("/data/media/ab.png", Errno::NOENT), folder);
+    assert_eq!(media.kind, FailureKind::Other);
+    assert!(media.detail.contains("ab.png"), "{media}");
+    assert_eq!(
+        Failure::core(&io_at("/backups-other/x", Errno::ACCESS), folder).kind,
+        FailureKind::Other
+    );
+    assert_eq!(
+        Failure::core(&Error::IdsExhausted, folder).kind,
+        FailureKind::Other
+    );
+}
+
+/// Nothing changed: the folder is not even opened, so an unplugged disk
+/// says nothing on a quiet day.
+#[test]
+fn unchanged_never_opens_the_folder() {
+    let env = Env::new();
+    let last = LastBackup {
+        date: date("2026-11-08"),
+        folder: env.tmp.path().join("unplugged"),
+        fingerprint: Some(env.fingerprint()),
+    };
+    assert_eq!(
+        run(
+            &env.data(),
+            &last.folder,
+            date("2026-11-09"),
+            Some(&last),
+            &AtomicBool::new(false)
+        ),
+        Ok(Outcome::Unchanged)
+    );
+}
+
+/// A backup cut off by the app's time cap stops, says so, and leaves
+/// nothing in the folder: no backup, no partial file.
+#[test]
+fn a_cancelled_backup_leaves_nothing() {
+    let env = Env::new();
+    let failure = run(
+        &env.data(),
+        &env.folder(),
+        date("2026-11-09"),
+        None,
+        &AtomicBool::new(true),
+    )
+    .unwrap_err();
+    assert_eq!(failure.kind, FailureKind::Cancelled, "{failure}");
+    assert_eq!(env.names(), Vec::<String>::new());
 }

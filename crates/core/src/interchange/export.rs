@@ -4,6 +4,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
@@ -58,25 +59,31 @@ impl Store {
         options: ExportOptions,
         limit: u64,
     ) -> Result<ExportSummary> {
-        write_file_atomically(path, |file| self.export_into(file, path, options, limit))
+        let never = AtomicBool::new(false);
+        write_file_atomically(path, |file| {
+            self.export_into(file, path, options, limit, &never)
+        })
     }
 
     /// Writes the export to `file`, a new empty file opened for writing,
     /// without syncing it; `path` only names it in errors. The automatic
     /// backup (`auto_backup`, ADR 0080) writes into a file it opened in its
-    /// folder itself.
+    /// folder itself. Once `cancel` is set, the next write fails, so a
+    /// backup cut off by the app's time cap stops within one buffer.
     ///
     /// # Errors
     /// Those of [`Self::export_to_with`], [`Error::ExportTooLarge`] when the
-    /// file came out larger than `limit`.
+    /// file came out larger than `limit`, and an [`Error::Io`] on `path`
+    /// when cancelled.
     pub(crate) fn export_into(
         &self,
         file: &mut File,
         path: &Path,
         options: ExportOptions,
         limit: u64,
+        cancel: &AtomicBool,
     ) -> Result<ExportSummary> {
-        let mut out = BufWriter::with_capacity(64 << 10, file);
+        let mut out = BufWriter::with_capacity(64 << 10, Cancellable { file, cancel });
         let summary = self.write_export(&mut out, now_ms(), options)?;
         out.flush().map_err(|source| Error::Io {
             path: path.to_path_buf(),
@@ -84,6 +91,7 @@ impl Store {
         })?;
         let bytes = out
             .get_ref()
+            .file
             .metadata()
             .map_err(|source| Error::Io {
                 path: path.to_path_buf(),
@@ -428,6 +436,32 @@ fn write_file_atomically<T>(path: &Path, write: impl FnOnce(&mut File) -> Result
         let _ = fs::remove_file(&partial);
     }
     result
+}
+
+/// A file whose writes fail once `cancel` is set. The error is not
+/// `Interrupted`, which `write_all` would retry for ever.
+struct Cancellable<'a> {
+    file: &'a mut File,
+    cancel: &'a AtomicBool,
+}
+
+impl Write for Cancellable<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.cancel.load(Ordering::Relaxed) {
+            return Err(io::Error::other("cancelled"));
+        }
+        self.file.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl Seek for Cancellable<'_> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        self.file.seek(pos)
+    }
 }
 
 /// Feeds what is written to a SHA-256.

@@ -31,6 +31,7 @@ use std::fs::File;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, RenameFlags};
 use rustix::io::Errno;
@@ -239,6 +240,10 @@ pub enum FailureKind {
     NotAllowed,
     /// The backup would be larger than an import reads.
     TooLarge,
+    /// Something that is not a regular file has today's backup's name.
+    NameTaken,
+    /// The app's time cap stopped it; its partial file was removed.
+    Cancelled,
     /// Anything else (the database could not be read, a disk error).
     Other,
 }
@@ -246,7 +251,9 @@ pub enum FailureKind {
 /// A backup that failed: why, and the error in English for the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
+    /// Why, for the message the app shows.
     pub kind: FailureKind,
+    /// The error in English, for the log and an unexpected error's toast.
     pub detail: String,
 }
 
@@ -273,10 +280,16 @@ impl Failure {
         Self::new(kind_of(err), format!("{what}: {err}"))
     }
 
-    fn core(err: &Error) -> Self {
+    /// A failure of core: an IO error says why only when it is about a file
+    /// in the backup `folder` (writing the backup). Anything else, a media
+    /// file that went missing or the database, is "other" with its error,
+    /// so the toast never blames the folder for it.
+    fn core(err: &Error, folder: &Path) -> Self {
         match err {
             Error::ExportTooLarge { .. } => Self::new(FailureKind::TooLarge, err),
-            Error::Io { source, .. } => Self::new(kind_of(source), err),
+            Error::Io { source, path } if path.starts_with(folder) => {
+                Self::new(kind_of(source), err)
+            }
             _ => Self::new(FailureKind::Other, err),
         }
     }
@@ -308,7 +321,8 @@ pub fn kind_of(err: &io::Error) -> FailureKind {
 /// for `today`, if the collection changed since `last` (the caller checked
 /// [`due`] already); then deletes the backups beyond the [`KEEP`] newest.
 /// Blocking: run it on a worker thread. It opens its own connection, reads
-/// the database and never writes to it.
+/// the database and never writes to it. Setting `cancel` stops the export
+/// at its next write; the partial file is then removed.
 ///
 /// A deletion that fails is logged and does not fail the backup.
 ///
@@ -321,27 +335,30 @@ pub fn run(
     folder: &Path,
     today: LocalDate,
     last: Option<&LastBackup>,
+    cancel: &AtomicBool,
 ) -> Result<Outcome, Failure> {
-    let dir = open_folder(folder)?;
-    let store = Store::open_concurrent(data_dir).map_err(|err| Failure::core(&err))?;
+    // The collection first: nothing changed means nothing to do, even with
+    // the folder's disk unplugged.
+    let store = Store::open_concurrent(data_dir).map_err(|err| Failure::core(&err, folder))?;
     let fingerprint = store
         .collection_fingerprint()
-        .map_err(|err| Failure::core(&err))?;
+        .map_err(|err| Failure::core(&err, folder))?;
     if !changed(last, folder, &fingerprint) {
         return Ok(Outcome::Unchanged);
     }
+    let dir = open_folder(folder)?;
     let name = file_name(today);
     match rustix::fs::statat(&dir, name.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
         // Whatever it is, it stays: a regular file of that name is today's
-        // backup already (made before the app's record of it was saved),
-        // and anything else is not Rappel's.
-        Ok(_) => return Ok(Outcome::AlreadyThere),
+        // backup already (made before the app's record of it was saved);
+        // anything else is not Rappel's, and the user is told.
+        Ok(_) => return already_there(&dir, &name),
         Err(Errno::NOENT) => {}
         Err(err) => return Err(Failure::io("looking for today's backup", &err.into())),
     }
-    let summary = match write_backup(&dir, folder, &name, &store) {
+    let summary = match write_backup(&dir, folder, &name, &store, cancel) {
         Ok(summary) => summary,
-        Err(Written::Exists) => return Ok(Outcome::AlreadyThere),
+        Err(Written::Exists) => return already_there(&dir, &name),
         Err(Written::Failed(failure)) => return Err(failure),
     };
     drop(store);
@@ -352,6 +369,19 @@ pub fn run(
         summary,
         removed,
     })
+}
+
+/// Today's `name` is taken: by today's backup (a regular file), or by
+/// something else, which is a failure to report.
+fn already_there(dir: &OwnedFd, name: &str) -> Result<Outcome, Failure> {
+    if is_regular_file(dir, name) {
+        Ok(Outcome::AlreadyThere)
+    } else {
+        Err(Failure::new(
+            FailureKind::NameTaken,
+            "something that is not a backup has today's backup's name",
+        ))
+    }
 }
 
 /// Opens `folder` as a directory, refusing a symbolic link in its place
@@ -390,8 +420,9 @@ fn write_backup(
     folder: &Path,
     name: &str,
     store: &Store,
+    cancel: &AtomicBool,
 ) -> Result<ExportSummary, Written> {
-    let partial = partial_name(name).map_err(|err| Written::Failed(Failure::core(&err)))?;
+    let partial = partial_name(name).map_err(|err| Written::Failed(Failure::core(&err, folder)))?;
     // A new file (`O_EXCL`, so never one that was there, and never through
     // a link), only for the user.
     let fd = rustix::fs::openat(
@@ -409,14 +440,30 @@ fn write_backup(
                 &folder.join(&partial),
                 ExportOptions::default(),
                 crate::interchange::MAX_ARCHIVE_BYTES,
+                cancel,
             )
-            .map_err(|err| Written::Failed(Failure::core(&err)))?;
+            .map_err(|err| {
+                Written::Failed(if cancel.load(Ordering::Relaxed) {
+                    Failure::new(FailureKind::Cancelled, "stopped by the time limit")
+                } else {
+                    Failure::core(&err, folder)
+                })
+            })?;
         file.sync_all()
             .map_err(|err| Written::Failed(Failure::io("saving the backup", &err)))?;
         rename_no_replace(dir, &partial, name)?;
         // The rename itself is only safe on disk once the folder is synced.
-        rustix::fs::fsync(dir)
-            .map_err(|err| Written::Failed(Failure::io("saving the backup", &err.into())))?;
+        // A file system that cannot sync a folder (`EINVAL`, fsync(2)) has
+        // the backup all the same.
+        match rustix::fs::fsync(dir) {
+            Ok(()) | Err(Errno::INVAL | Errno::NOTSUP) => {}
+            Err(err) => {
+                return Err(Written::Failed(Failure::io(
+                    "saving the backup",
+                    &err.into(),
+                )));
+            }
+        }
         Ok(summary)
     })();
     drop(file);
@@ -503,8 +550,9 @@ fn prune(dir: &OwnedFd, keep: &str) -> usize {
     let mut removed = 0;
     for name in to_delete(&found, keep) {
         // Checked again: a file swapped for a link since the listing stays.
-        // `unlinkat` would only remove the link itself, never what it
-        // points to, but a link is not Rappel's to remove.
+        // A swap in the instant between this check and `unlinkat` would
+        // remove that link (never what it points to: `unlinkat` does not
+        // follow links); std and Linux offer no unlink-if-regular.
         if !is_regular_file(dir, &name) {
             continue;
         }

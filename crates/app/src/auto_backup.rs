@@ -15,9 +15,11 @@
 //! start, and is tried again at the next close: nothing is recorded as
 //! backed up until it is.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use gtk::prelude::*;
@@ -46,10 +48,17 @@ const REASON: &str = "reason";
 const DETAIL: &str = "detail";
 const RUNNING: &str = "running";
 
-/// How long the application stays open after the window closed, waiting
-/// for the backup. Writing a 2 GiB export (the most an import reads) to a
-/// slow USB stick at 10 MB/s takes under four minutes.
+/// How long the application waits after the window closed before it
+/// cancels the backup. A 2 GiB export (the most an import reads) reads
+/// each media file twice and writes it once; on a USB 2 stick at 5 MB/s
+/// that can take longer, and such a backup is cancelled and reported (its
+/// partial file removed) rather than keep a windowless process for long.
 pub const TIME_CAP: Duration = Duration::from_mins(5);
+
+/// How long a cancelled backup gets to stop and remove its partial file
+/// before the application lets go of it. Its next write fails at once, so
+/// only a disk stuck inside one write needs this.
+const CANCEL_GRACE: Duration = Duration::from_secs(30);
 
 thread_local! {
     /// A backup of this process is running (on the main thread: only it
@@ -81,8 +90,10 @@ impl Reason {
             Self::Failed(FailureKind::ReadOnly) => "read-only",
             Self::Failed(FailureKind::NotAllowed) => "not-allowed",
             Self::Failed(FailureKind::TooLarge) => "too-large",
+            Self::Failed(FailureKind::NameTaken) => "name-taken",
             Self::Failed(FailureKind::Other) => "other",
-            Self::TimedOut => "timed-out",
+            // Cancelled by the time cap: the same as timed out.
+            Self::TimedOut | Self::Failed(FailureKind::Cancelled) => "timed-out",
             Self::Unfinished => "unfinished",
             Self::Stopped => "stopped",
         }
@@ -99,6 +110,7 @@ impl Reason {
             FailureKind::ReadOnly,
             FailureKind::NotAllowed,
             FailureKind::TooLarge,
+            FailureKind::NameTaken,
         ]
         .map(Self::Failed)
         .into_iter()
@@ -249,11 +261,19 @@ pub fn after(
 ) -> Record {
     record.running = None;
     match result {
-        Ok(Outcome::Written { fingerprint, .. }) => {
+        Ok(Outcome::Written {
+            fingerprint,
+            summary,
+            ..
+        }) => {
+            // A media file missing from this backup makes the next day's
+            // check see a change, so the file is in a backup once it is
+            // back (the fingerprint reads only the database).
+            let complete = summary.missing_media == 0;
             record.last = Some(LastBackup {
                 date: today,
                 folder: folder.to_path_buf(),
-                fingerprint: Some(fingerprint.clone()),
+                fingerprint: complete.then(|| fingerprint.clone()),
             });
             record.failure = None;
         }
@@ -267,7 +287,14 @@ pub fn after(
             });
             record.failure = None;
         }
-        Ok(Outcome::Unchanged) => record.failure = None,
+        Ok(Outcome::Unchanged) => {
+            // Checked today: not again until tomorrow. Unchanged means a
+            // last backup to this folder with this fingerprint exists.
+            if let Some(last) = record.last.as_mut().filter(|l| l.folder == folder) {
+                last.date = last.date.max(today);
+            }
+            record.failure = None;
+        }
         Err(failure) => record.failure = Some(failure),
     }
     record
@@ -313,10 +340,15 @@ pub fn reason_text(reason: Reason) -> String {
         Reason::Failed(FailureKind::TooLarge) => gettext(
             "the backup would be larger than an import reads; use Export… without media instead",
         ),
+        Reason::Failed(FailureKind::NameTaken) => {
+            gettext("something that is not a backup has today’s backup’s name in the backup folder")
+        }
         Reason::Failed(FailureKind::Other) | Reason::Stopped => {
             gettext("something unexpected happened")
         }
-        Reason::TimedOut => gettext("it took too long and was stopped"),
+        Reason::TimedOut | Reason::Failed(FailureKind::Cancelled) => {
+            gettext("it took too long and was stopped")
+        }
         Reason::Unfinished => gettext("Rappel was stopped before it finished"),
     }
 }
@@ -382,20 +414,28 @@ pub fn start_at_close(app: &gtk::Application, data_dir: &Path) {
         tracing::warn!("the automatic backup record could not be saved: {err}");
     }
     IN_PROGRESS.set(true);
-    let hold = app.hold();
+    // The backup's own hold, dropped when it ends or a while after it is
+    // cancelled; never `quit`, which would also end an import or a clean-up
+    // that holds the application through `ui::worker::run`. With no other
+    // hold and no window, `app.run` returns and the process ends.
+    let hold: Rc<RefCell<Option<gio::ApplicationHoldGuard>>> =
+        Rc::new(RefCell::new(Some(app.hold())));
+    let cancel = Arc::new(AtomicBool::new(false));
     let data_dir = data_dir.to_path_buf();
 
-    // The cap: if the backup still runs then, it is recorded as cut off,
-    // and a process with no window left quits (its worker ends with it; the
-    // hidden partial file stays, never a backup's name).
+    // The cap: the backup is cancelled (its next write fails and it removes
+    // its partial file) and recorded as cut off; the hold goes after a
+    // grace period even if the worker is stuck in the disk.
     let cap: Rc<Cell<Option<glib::SourceId>>> = Rc::default();
     let source = glib::timeout_add_local_once(
         TIME_CAP,
         glib::clone!(
-            #[weak]
-            app,
             #[strong]
             cap,
+            #[strong]
+            cancel,
+            #[strong]
+            hold,
             #[strong]
             data_dir,
             #[strong]
@@ -403,16 +443,17 @@ pub fn start_at_close(app: &gtk::Application, data_dir: &Path) {
             move || {
                 // Fired: it must not be removed again.
                 cap.take();
+                tracing::warn!("the automatic backup took too long; cancelling it");
+                cancel.store(true, Ordering::Relaxed);
                 record_end(
                     &data_dir,
                     &folder,
                     today,
                     Err((Reason::TimedOut, String::new())),
                 );
-                if app.windows().is_empty() {
-                    tracing::warn!("the automatic backup took too long; quitting");
-                    app.quit();
-                }
+                glib::timeout_add_local_once(CANCEL_GRACE, move || {
+                    hold.borrow_mut().take();
+                });
             }
         ),
     );
@@ -420,12 +461,13 @@ pub fn start_at_close(app: &gtk::Application, data_dir: &Path) {
 
     let last = record.last;
     glib::spawn_future_local(async move {
-        let (dir, target) = (data_dir.clone(), folder.clone());
+        let (dir, target, flag) = (data_dir.clone(), folder.clone(), Arc::clone(&cancel));
         // `gio::spawn_blocking` returns a panic in the closure as its
         // error (gio's `task.rs`).
-        let result =
-            gio::spawn_blocking(move || auto_backup::run(&dir, &target, today, last.as_ref()))
-                .await;
+        let result = gio::spawn_blocking(move || {
+            auto_backup::run(&dir, &target, today, last.as_ref(), &flag)
+        })
+        .await;
         if let Some(source) = cap.take() {
             source.remove();
         }
@@ -445,7 +487,7 @@ pub fn start_at_close(app: &gtk::Application, data_dir: &Path) {
         };
         record_end(&data_dir, &folder, today, result);
         IN_PROGRESS.set(false);
-        drop(hold);
+        hold.borrow_mut().take();
     });
 }
 
@@ -508,6 +550,7 @@ mod tests {
             Reason::Failed(FailureKind::ReadOnly),
             Reason::Failed(FailureKind::NotAllowed),
             Reason::Failed(FailureKind::TooLarge),
+            Reason::Failed(FailureKind::NameTaken),
             Reason::Failed(FailureKind::Other),
             Reason::TimedOut,
             Reason::Unfinished,
@@ -575,6 +618,15 @@ mod tests {
     fn the_record_after_a_backup() {
         let folder = Path::new("/home/me/Backups");
         let today = date("2026-11-09");
+        let summary = ExportSummary {
+            decks: 1,
+            cards: 1,
+            tags: 0,
+            review_events: 0,
+            media: 0,
+            media_left_out: 0,
+            missing_media: 0,
+        };
         let written = Outcome::Written {
             file_name: "Rappel backup 2026-11-09.rappel".to_owned(),
             fingerprint: PRINT.to_owned(),
@@ -609,8 +661,37 @@ mod tests {
         );
 
         let record = after(full(), folder, today, Ok(&Outcome::Unchanged));
-        assert_eq!(record.last, full().last);
+        assert_eq!(
+            record
+                .last
+                .as_ref()
+                .map(|l| (l.date, l.fingerprint.as_deref())),
+            Some((today, Some(PRINT))),
+            "checked today: not again until tomorrow"
+        );
         assert_eq!(record.failure, None);
+        // Unchanged against a backup in another folder (cannot happen:
+        // `changed` says yes then) leaves the record alone.
+        let elsewhere = after(full(), Path::new("/x"), today, Ok(&Outcome::Unchanged));
+        assert_eq!(elsewhere.last, full().last);
+
+        // A backup with media missing is not trusted as complete.
+        let missing = Outcome::Written {
+            file_name: "Rappel backup 2026-11-09.rappel".to_owned(),
+            fingerprint: PRINT.to_owned(),
+            summary: ExportSummary {
+                missing_media: 1,
+                ..summary
+            },
+            removed: 0,
+        };
+        let record = after(full(), folder, today, Ok(&missing));
+        assert_eq!(record.last.map(|l| l.fingerprint), Some(None));
+        // Cancelled by the cap reads back as "took too long".
+        assert_eq!(
+            Reason::from_code(Reason::Failed(FailureKind::Cancelled).code()),
+            Reason::TimedOut
+        );
 
         let failed = (
             Reason::Failed(FailureKind::FolderMissing),

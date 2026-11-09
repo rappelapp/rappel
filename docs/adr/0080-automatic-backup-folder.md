@@ -32,7 +32,9 @@ It has four groups:
 
 The shared reading and writing moved from `window_state.rs` to `key_file.rs`. Each value is checked when read: the folder must be an absolute path; the date must be a real `YYYY-MM-DD`; the fingerprint must be 64 lowercase hex digits. An unknown reason reads as "other", so a failure is never lost. A broken file means backups are off, which is the default. The file is not in the database, so it stays out of exports, imports and database restores. The folder belongs to this computer.
 
-**"Changed since the last backup".** `Store::collection_fingerprint` is the SHA-256 of `cards.json` as an export with media would write it, with `exported_at` set to 0. It hashes the export's own reading, so it changes exactly when a backup would hold something different. That covers every kind of change: edits, tags, suspension, moves, archiving, settings, reviews and media records. A timestamp would miss most of these: tags, suspension and moves do not touch `updated_at`, and there is no revision counter. Nothing is stored in the database and no migration is needed. It costs one read of every row and no media file. It runs on the worker, so the close never waits for it.
+**"Changed since the last backup".** `Store::collection_fingerprint` is the SHA-256 of `cards.json` as an export with media would write it, with `exported_at` set to 0. It hashes the export's own reading, so it changes exactly when a backup would hold something different. That covers every kind of change: edits, tags, suspension, moves, archiving, settings, reviews and media records. A timestamp would miss most of these: tags, suspension and moves do not touch `updated_at`, and there is no revision counter. Nothing is stored in the database and no migration is needed. It costs one read of every row and no media file. It runs on the worker, so the close never waits for it. It runs before the folder is opened: on a day nothing changed, an unplugged disk says nothing, and an unchanged check moves the last backup's date to today, so the next close that day does not read everything again.
+
+The fingerprint reads the database, not the media files. A backup that left out a missing or damaged media file is therefore recorded with an unknown fingerprint, so the next day backs up again; once the file is back, it gets into a backup.
 
 **Once a day.** A pure function `due(last, folder, today)` decides:
 - a backup is due when the last one went to another folder or is dated before `today`;
@@ -46,7 +48,10 @@ The shared reading and writing moved from `window_state.rs` to `key_file.rs`. Ea
 - It is synced, then renamed with `RENAME_NOREPLACE`, then the folder is synced. A half-written backup therefore never has a backup's name.
 - On a file system without `RENAME_NOREPLACE` (`EINVAL`), a check that the name is free comes first, then a plain rename.
 - On error, the partial file this call created is removed.
-- If something already has today's name, nothing is written. A regular file there is today's backup already: its record was lost, or the folder was used again the same day. Anything else is not Rappel's. Either way it is kept, and the record keeps the date with an unknown fingerprint.
+- If something already has today's name, nothing is written and it is kept. A regular file there is today's backup already (its record was lost, or the folder was used again the same day): the record keeps the date with an unknown fingerprint. Anything else (a link, a folder) is not Rappel's: the backup fails as "name taken", so the user is told instead of believing a backup was made.
+- The export stops at its next write once a cancel flag is set (`Store::export_into` wraps the file). The partial file is then removed like on any other error.
+- An IO error says why ("not found", "disk full"…) only when it is about a file in the backup folder. Any other error, such as a media file that disappeared during the export, is "something unexpected" with the error itself, so the toast never blames the folder for it.
+- A folder sync that the file system does not support (`EINVAL`, `ENOTSUP`) after the rename counts as done: the backup is there.
 
 Because everything goes through the handle, a folder that is renamed, removed or replaced while the backup runs gets nothing written elsewhere. A removed folder fails with "not found" on the handle (tested).
 
@@ -54,9 +59,9 @@ Because everything goes through the handle, a folder that is renamed, removed or
 - the check is a literal prefix and suffix, four, two and two ASCII digits, and a date that exists;
 - each file is checked with `fstatat(AT_SYMLINK_NOFOLLOW)`, since a directory entry's type may be unknown.
 
-The pure `to_delete` keeps the 14 newest by the date in the name, not by the file's time, so a sync tool that touches the files changes nothing. The file just written always stays: if a clock that ran ahead left 14 later dates, the oldest of those goes instead. Each file is checked again just before `unlinkat`, which never follows a link anyway, so nothing outside the folder can be deleted. A test fills a folder with old backups, look-alike names, links named like backups (to a file outside, to a backup inside, dangling) and a folder named like one. Only the old regular backups go, and every link target is untouched. A failed deletion is logged and does not fail the backup.
+The pure `to_delete` keeps the 14 newest by the date in the name, not by the file's time, so a sync tool that touches the files changes nothing. The file just written always stays: if a clock that ran ahead left 14 later dates, the oldest of those goes instead. Each file is checked again just before `unlinkat`, which never follows a link anyway, so nothing outside the folder can be deleted. One gap remains: a regular file swapped for a link in the instant between that check and `unlinkat` would have the link removed (never its target). Linux has no "unlink only if regular", so this cannot be closed; only a process racing on purpose in the user's own folder could hit it. A test fills a folder with old backups, look-alike names, links named like backups (to a file outside, to a backup inside, dangling) and a folder named like one. Only the old regular backups go, and every link target is untouched. A failed deletion is logged and does not fail the backup.
 
-**The folder as chosen.** Choose… opens `GtkFileDialog::select_folder`. Under a sandbox (the snap, a Flatpak) it goes through the desktop portal's file chooser. The path GTK returns (`g_file_get_path`) is stored with its links resolved (`canonicalize`), so a link the user went through is followed once, when chosen. A link found in the folder's place later was put there since, so it is refused ("replaced by a link; choose it again"). A link higher up the path is the user's own layout and is followed; a test covers it.
+**The folder as chosen.** Choose… opens `GtkFileDialog::select_folder`. Under a sandbox (the snap, a Flatpak) it goes through the desktop portal's file chooser. The path GTK returns (`g_file_get_path`) is stored with its links resolved (`canonicalize`), so a link the user went through is followed once, when chosen. If it cannot be resolved, the choice is refused with a toast, rather than saving a setting whose every backup would fail. A link found in the folder's place later was put there since, so it is refused ("replaced by a link; choose it again"). A link higher up the path is the user's own layout and is followed; a test covers it.
 
 Under the portal the path may be a document-portal path, `/run/user/<uid>/doc/<id>/<name>`. It keeps working after a restart as long as the document portal still grants the folder to the app: the grant is kept in the permission store under the app ID. If the grant is gone, the backup fails as "not found" at the next close, the next start says so, and choosing the folder again fixes it. The row shows only the folder's name (its last component, which is the real folder name even under the portal); the full path is in the row's tooltip. Slice 7, the snap, should check this on a real strict snap.
 
@@ -66,9 +71,14 @@ Under the portal the path may be a document-portal path, `/run/user/<uid>/doc/<i
 3. The job runs on GIO's thread pool, with its own read-only connection.
 4. When it ends, the result is recorded and the hold is released. The process then exits as usual.
 
-A cap of 5 minutes (`TIME_CAP`) bounds this. If the job still runs then, the failure is recorded as "took too long". If no window is open the application quits; the worker dies with the process, and its hidden partial file stays, never with a backup's name.
+A cap of 5 minutes (`TIME_CAP`) bounds this. If the job still runs then:
+1. its cancel flag is set, so its next write fails and it removes its own partial file;
+2. the failure is recorded as "took too long";
+3. after a grace of 30 seconds (`CANCEL_GRACE`, for a disk stuck inside one write), the backup's own hold is released even if the worker has not returned.
 
-Five minutes is enough for 2 GiB (the most an import reads) at 10 MB/s. A launch while the job runs reaches the same process (single instance) and opens a new window as usual. The job then finishes in the background, the cap no longer quits, and that window does not report the running job as unfinished.
+The application is never told to quit. `quit` would also end other work that holds it through `ui::worker::run`, such as an import, an Anki import, Clean Up Media or the retention recalculation, which closing the window has always let finish. With no window and no other hold left, `app.run` returns and the process ends; a worker still stuck in the disk ends with it.
+
+A launch while the job runs reaches the same process (single instance) and opens a new window as usual. The job then finishes in the background, and that window does not report the running job as unfinished.
 
 Only the main page backs up. A recovery or error page has no database open.
 
@@ -98,7 +108,10 @@ Both save at once; a failed write shows the dialog's error toast. Turn Off hidde
 
 - The export gains `Store::export_into` (an open file), used by `export_to_with` and the backup, and `collection_fingerprint`. The format is unchanged.
 - A backup is skipped on a day nothing changed, so a quiet week leaves fewer than 7 files. The 14 kept are the 14 most recent changes.
-- The partial file of a backup cut off by the cap or a shutdown stays in the folder as a hidden `.partial` file. The deletion rule does not allow removing it, so it is left for the user. This is rare, and visible only with hidden files shown.
+- A backup cut off by the cap removes its own partial file. Only one cut off by a shutdown or a crash, or by a disk stuck past the grace period, leaves a hidden `.partial` file; the deletion rule does not allow removing it later, so it is left for the user.
+- On a disk too slow for the cap (a large media collection on a USB 2 stick), every close that day tries again and is cancelled again; each start says it took too long. Export… has no cap for such a case.
 - A day's later changes go into the next day's backup, not today's. That follows from "once a day".
 - The record is per data directory, so a debug build (`rappel-dev`) has its own setting and never writes into the release folder's record.
+- In French, the Folder row's "Off" is "Aucun" (no folder), which agrees with "Dossier".
+- The full path is the row's tooltip and its accessible description.
 - Not covered by tests: the GTK hold and cap at close, which the maintainer checks by closing the app (Try it). The portal's persistence under a strict snap is for slice 7 to confirm.
