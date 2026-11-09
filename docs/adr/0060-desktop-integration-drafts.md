@@ -43,6 +43,8 @@ The `.in` files are the sources packaging will translate (Meson's `i18n.merge_fi
 - The releases are exactly `CHANGELOG.md`'s versions, newest first, with their dates (a version added to the changelog fails the gate until the metainfo has it).
 - Every screenshot listed is under the raw URL, committed, a PNG of at most 1000 × 700 and at least 360 wide, under 300 KB; every committed one is listed; one default, first; every one captioned, without a final full stop.
 
+*Amendment (ADR 0083): the store set is now seven screenshots (`deck.png` and `all-cards.png` added), retaken for 0.4.0, and their URLs are pinned to the `v0.4.0` tag instead of `main`.*
+
 ## Consequences
 
 - A release adds its `<release>` to the metainfo, in the same change as `CHANGELOG.md` (slice 11 does it for 0.3.0-beta.1).

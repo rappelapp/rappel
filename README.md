@@ -83,7 +83,7 @@ Drafts of the files that make Rappel look like a GNOME app once installed are in
 - **A new release** needs its `<release>` in the metainfo (newest first, a pre-release written `0.3.0~beta.1`); the gate fails while `CHANGELOG.md` has a version the metainfo lacks.
 - **Retake the store screenshots** after a visible change (light style, GNOME's window buttons and accent, 1000 × 700 and a phone at 360 × 640):
   ```sh
-  cargo run -p rappel-core --example fill_scratch_db -- $PWD/target/tmp/demo 0 --demo
+  cargo run -p rappel-core --example fill_scratch_db -- $PWD/target/tmp/demo 0 --demo --probability
   scripts/screenshot.py --out store --size 1000x700 --data target/tmp/demo \
       --env ADW_DEBUG_ACCENT_COLOR=blue --decoration-layout :close --steps "wait:6 shot:decks"
   ```

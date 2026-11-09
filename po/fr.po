@@ -3584,16 +3584,27 @@ msgid "Your decks with the cards due today"
 msgstr "Vos paquets et les cartes à revoir aujourd’hui"
 
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "A deck's cards, grouped by their tags"
+msgstr "Les cartes d’un paquet, groupées par étiquette"
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "Find any card by words, tags or state"
+msgstr "Trouvez une carte par mots, étiquettes ou état"
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "See how much you studied, a month at a time"
+msgstr "Voyez combien vous avez étudié, mois par mois"
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Write cards in Markdown with a live preview"
 msgstr "Écrivez vos cartes en Markdown avec un aperçu en direct"
 
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
-msgid "See how much you studied and how well you remember"
-msgstr "Voyez combien vous avez étudié et ce que vous retenez"
-
-#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr "Des images sur les cartes, sur un téléphone"
+
+#~ msgid "See how much you studied and how well you remember"
+#~ msgstr "Voyez combien vous avez étudié et ce que vous retenez"
 
 #~ msgid "{status} · {deck}"
 #~ msgstr "{status} · {deck}"

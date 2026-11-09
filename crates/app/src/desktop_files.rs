@@ -39,9 +39,9 @@ fn read(path: &Path) -> String {
 const BINARY: &str = env!("CARGO_BIN_NAME");
 
 /// Where the store finds the committed screenshots: the raw files of the
-/// repository's `main` branch.
+/// repository at the `v0.4.0` tag (ADR 0083; the tag is made at release).
 const SCREENSHOT_URL: &str =
-    "https://raw.githubusercontent.com/rappelapp/rappel/main/data/screenshots/";
+    "https://raw.githubusercontent.com/rappelapp/rappel/v0.4.0/data/screenshots/";
 
 /// Flathub's largest window for a screenshot, in logical pixels (its
 /// quality guidelines: "1000x700 pixels or smaller").

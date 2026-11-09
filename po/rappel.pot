@@ -3582,11 +3582,19 @@ msgid "Your decks with the cards due today"
 msgstr ""
 
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
-msgid "Write cards in Markdown with a live preview"
+msgid "A deck's cards, grouped by their tags"
 msgstr ""
 
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
-msgid "See how much you studied and how well you remember"
+msgid "Find any card by words, tags or state"
+msgstr ""
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "See how much you studied, a month at a time"
+msgstr ""
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "Write cards in Markdown with a live preview"
 msgstr ""
 
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
