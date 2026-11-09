@@ -71,6 +71,47 @@ Adw.PreferencesDialog preferences_dialog {
       }
     }
 
+    // Automatic Backups (ADR 0080): a copy of the collection in a folder
+    // the user chooses, made when Rappel closes. The subtitle (the folder's
+    // name, or "Off") and the Turn Off button's visibility are set in
+    // dialogs/preferences.rs.
+    Adw.PreferencesGroup {
+      title: _("Automatic Backups");
+      description: _("Each day Rappel closes after a change, it saves an export to this folder and keeps the 14 newest");
+
+      Adw.ActionRow auto_backup_row {
+        // Translators: the folder automatic backups go to.
+        title: C_("automatic backups", "Folder");
+        subtitle: C_("automatic backups", "Off");
+        use-markup: false;
+        activatable-widget: auto_backup_choose;
+
+        [suffix]
+        Gtk.Button auto_backup_choose {
+          label: _("_Choose…");
+          use-underline: true;
+          valign: center;
+          tooltip-text: _("Choose the folder for automatic backups");
+        }
+
+        [suffix]
+        Gtk.Button auto_backup_off {
+          icon-name: "window-close-symbolic";
+          valign: center;
+          visible: false;
+          tooltip-text: _("Turn Off Automatic Backups");
+
+          accessibility {
+            label: _("Turn Off Automatic Backups");
+          }
+
+          styles [
+            "flat",
+          ]
+        }
+      }
+    }
+
     // Clean Up Media (ADR 0057): the subtitle and the button's sensitivity
     // are set in dialogs/clean_up.rs.
     Adw.PreferencesGroup {

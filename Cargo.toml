@@ -61,6 +61,14 @@ fsrs = "6.6"
 # through fsrs -> rand.
 getrandom = "0.4"
 
+# Automatic backups (rappel-core, ADR 0080): `openat`, `renameat2` with
+# RENAME_NOREPLACE, `unlinkat` and `fstatat` without following links,
+# relative to one open handle on the backup folder, so nothing is written or
+# deleted elsewhere when the folder is swapped; std has no `*at` calls and
+# `unsafe` is forbidden. Already in the tree through glycin's async-io.
+# Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT.
+rustix = { version = "1.1", default-features = false, features = ["std", "fs"] }
+
 # Deck name keys (rappel-core): Unicode NFC, which std does not provide
 # (ADR 0010).
 unicode-normalization = "0.1"

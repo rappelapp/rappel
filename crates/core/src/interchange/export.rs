@@ -6,6 +6,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
+use sha2::{Digest, Sha256};
 
 use super::archive::ArchiveWriter;
 use super::format::{
@@ -57,26 +58,64 @@ impl Store {
         options: ExportOptions,
         limit: u64,
     ) -> Result<ExportSummary> {
-        write_file_atomically(path, |file| {
-            let mut out = BufWriter::with_capacity(64 << 10, file);
-            let summary = self.write_export(&mut out, now_ms(), options)?;
-            out.flush().map_err(|source| Error::Io {
+        write_file_atomically(path, |file| self.export_into(file, path, options, limit))
+    }
+
+    /// Writes the export to `file`, a new empty file opened for writing,
+    /// without syncing it; `path` only names it in errors. The automatic
+    /// backup (`auto_backup`, ADR 0080) writes into a file it opened in its
+    /// folder itself.
+    ///
+    /// # Errors
+    /// Those of [`Self::export_to_with`], [`Error::ExportTooLarge`] when the
+    /// file came out larger than `limit`.
+    pub(crate) fn export_into(
+        &self,
+        file: &mut File,
+        path: &Path,
+        options: ExportOptions,
+        limit: u64,
+    ) -> Result<ExportSummary> {
+        let mut out = BufWriter::with_capacity(64 << 10, file);
+        let summary = self.write_export(&mut out, now_ms(), options)?;
+        out.flush().map_err(|source| Error::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let bytes = out
+            .get_ref()
+            .metadata()
+            .map_err(|source| Error::Io {
                 path: path.to_path_buf(),
                 source,
-            })?;
-            let bytes = out
-                .get_ref()
-                .metadata()
-                .map_err(|source| Error::Io {
-                    path: path.to_path_buf(),
-                    source,
-                })?
-                .len();
-            if bytes > limit {
-                return Err(Error::ExportTooLarge { bytes, limit });
-            }
-            Ok(summary)
-        })
+            })?
+            .len();
+        if bytes > limit {
+            return Err(Error::ExportTooLarge { bytes, limit });
+        }
+        Ok(summary)
+    }
+
+    /// A fingerprint of everything an export holds but its date: the
+    /// SHA-256, in hex, of `cards.json` as an export with media would write
+    /// it with `exported_at` 0, every media record included. Two calls give
+    /// the same text exactly when an export would hold the same decks,
+    /// cards, tags, log, settings and media list (the export is
+    /// deterministic, ADR 0017). The automatic backup compares it with the
+    /// last backup's to know whether the collection changed (ADR 0080):
+    /// unlike a timestamp, it sees every kind of change (tags, suspension,
+    /// a move, archiving), and it needs no new column. The media files
+    /// are not read: their records name them by content.
+    ///
+    /// # Errors
+    /// SQLite errors.
+    pub(crate) fn collection_fingerprint(&self) -> Result<String> {
+        let (mut document, rows) = read_document(&self.conn, 0)?;
+        document.media = rows.into_iter().map(|(record, _)| record).collect();
+        let mut hasher = HashWriter(Sha256::new());
+        serde_json::to_writer(&mut hasher, &document)
+            .map_err(|e| Error::ExportFailed(Box::new(e)))?;
+        Ok(crate::media::hex(&hasher.0.finalize()))
     }
 
     /// The media an export would hold, for [`media_too_large_for_import`]:
@@ -389,6 +428,20 @@ fn write_file_atomically<T>(path: &Path, write: impl FnOnce(&mut File) -> Result
         let _ = fs::remove_file(&partial);
     }
     result
+}
+
+/// Feeds what is written to a SHA-256.
+struct HashWriter(Sha256);
+
+impl Write for HashWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.update(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn partial_path(path: &Path) -> PathBuf {

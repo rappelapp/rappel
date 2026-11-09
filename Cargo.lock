@@ -1961,6 +1961,7 @@ dependencies = [
  "pulldown-cmark",
  "ratex-parser",
  "rusqlite",
+ "rustix",
  "ruzstd",
  "serde",
  "serde_json",

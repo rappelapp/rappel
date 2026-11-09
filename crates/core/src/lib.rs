@@ -2,6 +2,7 @@
 //!
 //! This crate must never depend on gtk4, glib, gio, libadwaita or anything UI.
 
+pub mod auto_backup;
 pub mod content;
 pub mod data_dir;
 pub mod domain;

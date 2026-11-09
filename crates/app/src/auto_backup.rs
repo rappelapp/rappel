@@ -1,0 +1,677 @@
+//! The automatic backup folder (#127, ADR 0080): its setting and the record
+//! of the last backup in `<data dir>/auto-backup.ini`, the backup made when
+//! the window closes, and the toast at the next start when it failed.
+//!
+//! A key file in the data directory, like `window-state.ini` (ADR 0039):
+//! it follows `RAPPEL_DATA_DIR` and the debug data directory, needs no
+//! schema or migration, and stays out of exports and database backups. The
+//! folder belongs to this computer.
+//!
+//! The backup itself is `rappel_core::auto_backup::run`, on a worker
+//! thread. The window closes at once; the application is held until the
+//! backup ends, for at most [`TIME_CAP`], so a slow or stuck disk never
+//! keeps a windowless process for long. A backup cut off, failed, or never
+//! finished (the computer shut down) is reported by a toast at the next
+//! start, and is tried again at the next close: nothing is recorded as
+//! backed up until it is.
+
+use std::cell::Cell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::Duration;
+
+use gtk::prelude::*;
+use gtk::{gio, glib};
+use rappel_core::auto_backup::{self, Failure, FailureKind, LastBackup, LocalDate, Outcome};
+
+use crate::i18n::{fill, gettext, pgettext};
+use crate::key_file::{self, Unread};
+use crate::ui::toast::show_error;
+
+/// The file name in the data directory.
+const FILE_NAME: &str = "auto-backup.ini";
+/// A file Rappel writes is well under this (a path, a date, a hash, a
+/// short error); a larger one was not written by it, and is not read.
+const MAX_FILE_BYTES: u64 = 16 * 1024;
+/// The longest error kept for the next start's toast, in characters.
+const MAX_DETAIL_CHARS: usize = 1000;
+
+const SETTINGS: &str = "settings";
+const FOLDER: &str = "folder";
+const LAST: &str = "last-backup";
+const DATE: &str = "date";
+const FINGERPRINT: &str = "fingerprint";
+const FAILURE: &str = "failure";
+const REASON: &str = "reason";
+const DETAIL: &str = "detail";
+const RUNNING: &str = "running";
+
+/// How long the application stays open after the window closed, waiting
+/// for the backup. Writing a 2 GiB export (the most an import reads) to a
+/// slow USB stick at 10 MB/s takes under four minutes.
+pub const TIME_CAP: Duration = Duration::from_mins(5);
+
+thread_local! {
+    /// A backup of this process is running (on the main thread: only it
+    /// starts and ends one).
+    static IN_PROGRESS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Why the last automatic backup was not made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reason {
+    /// It failed, for this reason.
+    Failed(FailureKind),
+    /// It took longer than [`TIME_CAP`].
+    TimedOut,
+    /// It was still running when Rappel was stopped.
+    Unfinished,
+    /// The worker stopped unexpectedly (a panic).
+    Stopped,
+}
+
+impl Reason {
+    /// The word kept in the key file.
+    fn code(self) -> &'static str {
+        match self {
+            Self::Failed(FailureKind::FolderMissing) => "folder-missing",
+            Self::Failed(FailureKind::NotAFolder) => "not-a-folder",
+            Self::Failed(FailureKind::FolderIsLink) => "folder-is-link",
+            Self::Failed(FailureKind::NoSpace) => "no-space",
+            Self::Failed(FailureKind::ReadOnly) => "read-only",
+            Self::Failed(FailureKind::NotAllowed) => "not-allowed",
+            Self::Failed(FailureKind::TooLarge) => "too-large",
+            Self::Failed(FailureKind::Other) => "other",
+            Self::TimedOut => "timed-out",
+            Self::Unfinished => "unfinished",
+            Self::Stopped => "stopped",
+        }
+    }
+
+    /// The reason a word in the key file names; an unknown word is
+    /// "other", so a failure is never lost.
+    fn from_code(code: &str) -> Self {
+        [
+            FailureKind::FolderMissing,
+            FailureKind::NotAFolder,
+            FailureKind::FolderIsLink,
+            FailureKind::NoSpace,
+            FailureKind::ReadOnly,
+            FailureKind::NotAllowed,
+            FailureKind::TooLarge,
+        ]
+        .map(Self::Failed)
+        .into_iter()
+        .chain([Self::TimedOut, Self::Unfinished, Self::Stopped])
+        .find(|reason| reason.code() == code)
+        .unwrap_or(Self::Failed(FailureKind::Other))
+    }
+}
+
+/// What `auto-backup.ini` holds.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Record {
+    /// The folder chosen in Preferences; `None`: off (the default).
+    pub folder: Option<PathBuf>,
+    /// The last backup made.
+    pub last: Option<LastBackup>,
+    /// The last backup that failed, to report at the next start, with the
+    /// error in English.
+    pub failure: Option<(Reason, String)>,
+    /// A backup started on this date and has not ended (yet).
+    pub running: Option<LocalDate>,
+}
+
+/// A stored folder if it can be one: an absolute path.
+fn folder_of(text: Option<String>) -> Option<PathBuf> {
+    text.map(PathBuf::from).filter(|path| path.is_absolute())
+}
+
+/// A stored fingerprint if it can be one: 64 lowercase hex digits.
+fn fingerprint_of(text: Option<String>) -> Option<String> {
+    text.filter(|t| t.len() == 64 && t.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+}
+
+/// Reads the record from a loaded key file. Every missing or bad value
+/// is left out; this never fails.
+fn from_key_file(file: &glib::KeyFile) -> Record {
+    let string = |group: &str, key: &str| file.string(group, key).ok().map(String::from);
+    let date = |group: &str| string(group, DATE).as_deref().and_then(LocalDate::parse);
+    let last = date(LAST)
+        .zip(folder_of(string(LAST, FOLDER)))
+        .map(|(date, folder)| LastBackup {
+            date,
+            folder,
+            fingerprint: fingerprint_of(string(LAST, FINGERPRINT)),
+        });
+    let failure = string(FAILURE, REASON).map(|code| {
+        (
+            Reason::from_code(&code),
+            string(FAILURE, DETAIL).unwrap_or_default(),
+        )
+    });
+    Record {
+        folder: folder_of(string(SETTINGS, FOLDER)),
+        last,
+        failure,
+        running: date(RUNNING),
+    }
+}
+
+/// `path` as the key file keeps it, if it is UTF-8 (`GKeyFile` strings are).
+fn path_text(path: &Path) -> Option<&str> {
+    path.to_str()
+}
+
+/// The key file holding `record`.
+fn to_key_file(record: &Record) -> glib::KeyFile {
+    let file = glib::KeyFile::new();
+    if let Some(folder) = record.folder.as_deref().and_then(path_text) {
+        file.set_string(SETTINGS, FOLDER, folder);
+    }
+    if let Some(last) = &record.last
+        && let Some(folder) = path_text(&last.folder)
+    {
+        file.set_string(LAST, DATE, &last.date.to_string());
+        file.set_string(LAST, FOLDER, folder);
+        if let Some(fingerprint) = &last.fingerprint {
+            file.set_string(LAST, FINGERPRINT, fingerprint);
+        }
+    }
+    if let Some((reason, detail)) = &record.failure {
+        file.set_string(FAILURE, REASON, reason.code());
+        let detail: String = detail.chars().take(MAX_DETAIL_CHARS).collect();
+        file.set_string(FAILURE, DETAIL, &detail);
+    }
+    if let Some(date) = record.running {
+        file.set_string(RUNNING, DATE, &date.to_string());
+    }
+    file
+}
+
+fn path(data_dir: &Path) -> PathBuf {
+    data_dir.join(FILE_NAME)
+}
+
+/// The record in `data_dir`; empty (backups off) if there is none or it
+/// cannot be read. Never fails, never blocks (`key_file::read_bounded`).
+pub fn load(data_dir: &Path) -> Record {
+    match key_file::read_bounded(&path(data_dir), MAX_FILE_BYTES) {
+        Ok(bytes) => match key_file::parse(&bytes) {
+            Ok(file) => from_key_file(&file),
+            Err(err) => {
+                tracing::warn!("the automatic backup setting is not readable: {err}");
+                Record::default()
+            }
+        },
+        Err(Unread::Missing) => Record::default(),
+        Err(Unread::Refused(why)) => {
+            tracing::warn!("the automatic backup setting is not readable: {why}");
+            Record::default()
+        }
+    }
+}
+
+/// Saves `record` in `data_dir` in one atomic step, mode 0600.
+///
+/// # Errors
+/// The write's error.
+pub fn save(data_dir: &Path, record: &Record) -> Result<(), glib::Error> {
+    key_file::write_private(&path(data_dir), &to_key_file(record).to_data())
+}
+
+/// Turns automatic backups on into `folder`, or off with `None`.
+///
+/// # Errors
+/// The write's error; then the setting is as it was.
+pub fn set_folder(data_dir: &Path, folder: Option<&Path>) -> Result<(), glib::Error> {
+    let mut record = load(data_dir);
+    record.folder = folder.map(Path::to_path_buf);
+    save(data_dir, &record)
+}
+
+/// Today's date in the user's time zone, as the clock shows it.
+pub fn today() -> Option<LocalDate> {
+    let now = glib::DateTime::now_local().ok()?;
+    let (year, month, day) = now.ymd();
+    LocalDate::new(year, month, day)
+}
+
+/// The record after a backup to `folder` on `today` ended with `result`.
+/// A backup written or found already there is the last backup; a failure
+/// is kept for the next start, and the last backup stays as it was, so the
+/// next close tries again.
+pub fn after(
+    mut record: Record,
+    folder: &Path,
+    today: LocalDate,
+    result: Result<&Outcome, (Reason, String)>,
+) -> Record {
+    record.running = None;
+    match result {
+        Ok(Outcome::Written { fingerprint, .. }) => {
+            record.last = Some(LastBackup {
+                date: today,
+                folder: folder.to_path_buf(),
+                fingerprint: Some(fingerprint.clone()),
+            });
+            record.failure = None;
+        }
+        Ok(Outcome::AlreadyThere) => {
+            // What that file holds is not known: the next day backs up
+            // whatever changed.
+            record.last = Some(LastBackup {
+                date: today,
+                folder: folder.to_path_buf(),
+                fingerprint: None,
+            });
+            record.failure = None;
+        }
+        Ok(Outcome::Unchanged) => record.failure = None,
+        Err(failure) => record.failure = Some(failure),
+    }
+    record
+}
+
+/// What to report at the start, if anything: a failure recorded, else a
+/// backup that started and never ended.
+pub fn to_report(record: &Record) -> Option<(Reason, String)> {
+    record
+        .failure
+        .clone()
+        .or_else(|| record.running.map(|_| (Reason::Unfinished, String::new())))
+}
+
+/// The row's subtitle in Preferences: the folder's name, or "Off".
+pub fn folder_subtitle(folder: Option<&Path>) -> String {
+    match folder {
+        Some(folder) => folder.file_name().map_or_else(
+            || folder.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        ),
+        None => pgettext("automatic backups", "Off"),
+    }
+}
+
+/// Why the backup failed, in words, as the end of [`failed_text`].
+pub fn reason_text(reason: Reason) -> String {
+    match reason {
+        Reason::Failed(FailureKind::FolderMissing) => {
+            gettext("the backup folder was not found; is its disk connected?")
+        }
+        Reason::Failed(FailureKind::NotAFolder) => {
+            gettext("the backup folder is not a folder any more; choose it again in Preferences")
+        }
+        Reason::Failed(FailureKind::FolderIsLink) => {
+            gettext("the backup folder was replaced by a link; choose it again in Preferences")
+        }
+        Reason::Failed(FailureKind::NoSpace) => gettext("the disk is full"),
+        Reason::Failed(FailureKind::ReadOnly) => gettext("the backup folder is read-only"),
+        Reason::Failed(FailureKind::NotAllowed) => {
+            gettext("Rappel may not write to the backup folder")
+        }
+        Reason::Failed(FailureKind::TooLarge) => gettext(
+            "the backup would be larger than an import reads; use Export… without media instead",
+        ),
+        Reason::Failed(FailureKind::Other) | Reason::Stopped => {
+            gettext("something unexpected happened")
+        }
+        Reason::TimedOut => gettext("it took too long and was stopped"),
+        Reason::Unfinished => gettext("Rappel was stopped before it finished"),
+    }
+}
+
+/// The toast at the start after a failed backup: "Automatic backup
+/// failed: the disk is full" (its title, before ":", fits beside Details
+/// at 360 px). An unexpected error says the error itself
+/// (in English, as every error detail does).
+pub fn failed_text(reason: Reason, detail: &str) -> String {
+    let why = match reason {
+        Reason::Failed(FailureKind::Other) if !detail.is_empty() => detail.to_owned(),
+        _ => reason_text(reason),
+    };
+    fill(
+        // Translators: a toast at the start: what is before ":" is its title, the rest is behind Details. {reason} is why.
+        &gettext("Automatic backup failed: {reason}"),
+        &[("reason", &why)],
+    )
+}
+
+/// Shows the toast for the last backup over `window` if it failed or never
+/// ended, then forgets it. Not while this process's own backup still runs
+/// (the window was opened again while it ran).
+pub fn report_at_start(window: &impl IsA<gtk::Widget>, data_dir: &Path) {
+    if IN_PROGRESS.get() {
+        return;
+    }
+    let mut record = load(data_dir);
+    let Some((reason, detail)) = to_report(&record) else {
+        return;
+    };
+    tracing::debug!("the last automatic backup failed: {detail}");
+    show_error(window, "an automatic backup", &failed_text(reason, &detail));
+    record.failure = None;
+    record.running = None;
+    if let Err(err) = save(data_dir, &record) {
+        tracing::warn!("the automatic backup record could not be saved: {err}");
+    }
+}
+
+/// Makes the automatic backup if it is due, as the window closes: on a
+/// worker thread, with `app` held until it ends or [`TIME_CAP`] passes.
+/// Returns at once; the window can close.
+pub fn start_at_close(app: &gtk::Application, data_dir: &Path) {
+    if IN_PROGRESS.get() {
+        return;
+    }
+    let mut record = load(data_dir);
+    let Some(folder) = record.folder.clone() else {
+        return;
+    };
+    let Some(today) = today() else {
+        tracing::warn!("no automatic backup: the local date is not known");
+        return;
+    };
+    if !auto_backup::due(record.last.as_ref(), &folder, today) {
+        return;
+    }
+    // Marked as running first, so a backup cut off by a shutdown is
+    // reported at the next start.
+    record.running = Some(today);
+    if let Err(err) = save(data_dir, &record) {
+        tracing::warn!("the automatic backup record could not be saved: {err}");
+    }
+    IN_PROGRESS.set(true);
+    let hold = app.hold();
+    let data_dir = data_dir.to_path_buf();
+
+    // The cap: if the backup still runs then, it is recorded as cut off,
+    // and a process with no window left quits (its worker ends with it; the
+    // hidden partial file stays, never a backup's name).
+    let cap: Rc<Cell<Option<glib::SourceId>>> = Rc::default();
+    let source = glib::timeout_add_local_once(
+        TIME_CAP,
+        glib::clone!(
+            #[weak]
+            app,
+            #[strong]
+            cap,
+            #[strong]
+            data_dir,
+            #[strong]
+            folder,
+            move || {
+                // Fired: it must not be removed again.
+                cap.take();
+                record_end(
+                    &data_dir,
+                    &folder,
+                    today,
+                    Err((Reason::TimedOut, String::new())),
+                );
+                if app.windows().is_empty() {
+                    tracing::warn!("the automatic backup took too long; quitting");
+                    app.quit();
+                }
+            }
+        ),
+    );
+    cap.set(Some(source));
+
+    let last = record.last;
+    glib::spawn_future_local(async move {
+        let (dir, target) = (data_dir.clone(), folder.clone());
+        // `gio::spawn_blocking` returns a panic in the closure as its
+        // error (gio's `task.rs`).
+        let result =
+            gio::spawn_blocking(move || auto_backup::run(&dir, &target, today, last.as_ref()))
+                .await;
+        if let Some(source) = cap.take() {
+            source.remove();
+        }
+        let result = match &result {
+            Ok(Ok(outcome)) => {
+                tracing::debug!(?outcome, "automatic backup");
+                Ok(outcome)
+            }
+            Ok(Err(Failure { kind, detail })) => {
+                tracing::warn!(?kind, "the automatic backup failed");
+                Err((Reason::Failed(*kind), detail.clone()))
+            }
+            Err(_) => {
+                tracing::warn!("the automatic backup stopped unexpectedly");
+                Err((Reason::Stopped, String::new()))
+            }
+        };
+        record_end(&data_dir, &folder, today, result);
+        IN_PROGRESS.set(false);
+        drop(hold);
+    });
+}
+
+/// Saves how the backup ended, on the record as it is on disk now (the
+/// folder may have been changed meanwhile in a window opened again).
+fn record_end(
+    data_dir: &Path,
+    folder: &Path,
+    today: LocalDate,
+    result: Result<&Outcome, (Reason, String)>,
+) {
+    let record = after(load(data_dir), folder, today, result);
+    if let Err(err) = save(data_dir, &record) {
+        tracing::warn!("the automatic backup record could not be saved: {err}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rappel_core::interchange::ExportSummary;
+
+    use super::*;
+
+    fn date(text: &str) -> LocalDate {
+        LocalDate::parse(text).unwrap()
+    }
+
+    const PRINT: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn full() -> Record {
+        Record {
+            folder: Some(PathBuf::from("/home/me/Backups")),
+            last: Some(LastBackup {
+                date: date("2026-11-08"),
+                folder: PathBuf::from("/home/me/Backups"),
+                fingerprint: Some(PRINT.to_owned()),
+            }),
+            failure: Some((Reason::Failed(FailureKind::NoSpace), "No space".to_owned())),
+            running: Some(date("2026-11-09")),
+        }
+    }
+
+    fn parse(text: &str) -> Record {
+        from_key_file(&key_file::parse(text.as_bytes()).unwrap())
+    }
+
+    #[test]
+    fn a_record_survives_a_round_trip() {
+        let record = full();
+        assert_eq!(from_key_file(&to_key_file(&record)), record);
+        assert_eq!(
+            from_key_file(&to_key_file(&Record::default())),
+            Record::default()
+        );
+        for reason in [
+            Reason::Failed(FailureKind::FolderMissing),
+            Reason::Failed(FailureKind::NotAFolder),
+            Reason::Failed(FailureKind::FolderIsLink),
+            Reason::Failed(FailureKind::NoSpace),
+            Reason::Failed(FailureKind::ReadOnly),
+            Reason::Failed(FailureKind::NotAllowed),
+            Reason::Failed(FailureKind::TooLarge),
+            Reason::Failed(FailureKind::Other),
+            Reason::TimedOut,
+            Reason::Unfinished,
+            Reason::Stopped,
+        ] {
+            assert_eq!(Reason::from_code(reason.code()), reason);
+        }
+    }
+
+    #[test]
+    fn bad_values_are_left_out() {
+        let record = parse(
+            "[settings]\nfolder=relative/path\n\
+             [last-backup]\ndate=2026-02-30\nfolder=/x\nfingerprint=abc\n\
+             [running]\ndate=yesterday\n",
+        );
+        assert_eq!(record, Record::default());
+        let record = parse(
+            "[last-backup]\ndate=2026-11-08\nfolder=/x\nfingerprint=ABC\n\
+             [failure]\nreason=from-the-future\n",
+        );
+        assert_eq!(
+            record.last.map(|l| l.fingerprint),
+            Some(None),
+            "a fingerprint that is not one is unknown"
+        );
+        assert_eq!(
+            record.failure,
+            Some((Reason::Failed(FailureKind::Other), String::new())),
+            "an unknown reason is still a failure"
+        );
+    }
+
+    #[test]
+    fn load_and_save_use_the_data_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load(dir.path()), Record::default());
+        save(dir.path(), &full()).unwrap();
+        assert_eq!(load(dir.path()), full());
+        set_folder(dir.path(), None).unwrap();
+        let record = load(dir.path());
+        assert_eq!(record.folder, None);
+        assert_eq!(record.last, full().last, "only the setting changed");
+        // A link in place of the file is not followed.
+        let file = dir.path().join(FILE_NAME);
+        let elsewhere = dir.path().join("elsewhere.ini");
+        std::fs::rename(&file, &elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &file).unwrap();
+        assert_eq!(load(dir.path()), Record::default());
+        // Garbage: backups off.
+        std::fs::remove_file(&file).unwrap();
+        std::fs::write(&file, b"\xff\xfe").unwrap();
+        assert_eq!(load(dir.path()), Record::default());
+    }
+
+    #[test]
+    fn a_long_error_is_cut() {
+        let mut record = full();
+        record.failure = Some((Reason::Failed(FailureKind::Other), "é".repeat(5000)));
+        let detail = from_key_file(&to_key_file(&record)).failure.unwrap().1;
+        assert_eq!(detail.chars().count(), MAX_DETAIL_CHARS);
+    }
+
+    #[test]
+    fn the_record_after_a_backup() {
+        let folder = Path::new("/home/me/Backups");
+        let today = date("2026-11-09");
+        let written = Outcome::Written {
+            file_name: "Rappel backup 2026-11-09.rappel".to_owned(),
+            fingerprint: PRINT.to_owned(),
+            summary: ExportSummary {
+                decks: 1,
+                cards: 1,
+                tags: 0,
+                review_events: 0,
+                media: 0,
+                media_left_out: 0,
+                missing_media: 0,
+            },
+            removed: 0,
+        };
+        let record = after(full(), folder, today, Ok(&written));
+        assert_eq!(record.running, None);
+        assert_eq!(record.failure, None);
+        assert_eq!(
+            record.last,
+            Some(LastBackup {
+                date: today,
+                folder: folder.to_path_buf(),
+                fingerprint: Some(PRINT.to_owned()),
+            })
+        );
+        assert_eq!(record.folder, full().folder, "the setting is kept");
+
+        let record = after(full(), folder, today, Ok(&Outcome::AlreadyThere));
+        assert_eq!(
+            record.last.map(|l| (l.date, l.fingerprint)),
+            Some((today, None))
+        );
+
+        let record = after(full(), folder, today, Ok(&Outcome::Unchanged));
+        assert_eq!(record.last, full().last);
+        assert_eq!(record.failure, None);
+
+        let failed = (
+            Reason::Failed(FailureKind::FolderMissing),
+            "gone".to_owned(),
+        );
+        let record = after(full(), folder, today, Err(failed.clone()));
+        assert_eq!(record.failure, Some(failed));
+        assert_eq!(record.last, full().last, "tried again at the next close");
+        assert_eq!(record.running, None);
+    }
+
+    #[test]
+    fn what_the_start_reports() {
+        assert_eq!(to_report(&Record::default()), None);
+        assert_eq!(
+            to_report(&full()),
+            Some((Reason::Failed(FailureKind::NoSpace), "No space".to_owned()))
+        );
+        let running = Record {
+            failure: None,
+            ..full()
+        };
+        assert_eq!(
+            to_report(&running),
+            Some((Reason::Unfinished, String::new()))
+        );
+    }
+
+    #[test]
+    fn texts() {
+        assert_eq!(folder_subtitle(None), "Off");
+        assert_eq!(
+            folder_subtitle(Some(Path::new("/home/me/My Backups"))),
+            "My Backups"
+        );
+        // A document portal path shows the folder's own name.
+        assert_eq!(
+            folder_subtitle(Some(Path::new("/run/user/1000/doc/1a2b3c4d/Backups"))),
+            "Backups"
+        );
+        assert_eq!(folder_subtitle(Some(Path::new("/"))), "/");
+        assert_eq!(
+            failed_text(Reason::Failed(FailureKind::NoSpace), "ENOSPC"),
+            "Automatic backup failed: the disk is full"
+        );
+        assert_eq!(
+            failed_text(Reason::Failed(FailureKind::Other), "database is locked"),
+            "Automatic backup failed: database is locked"
+        );
+        assert_eq!(
+            failed_text(Reason::Failed(FailureKind::Other), ""),
+            "Automatic backup failed: something unexpected happened"
+        );
+        // A title of its own beside Details, at 360 px (ADR 0058).
+        assert!(matches!(
+            crate::ui::toast::toast_text(&failed_text(Reason::Failed(FailureKind::NoSpace), "")),
+            crate::ui::toast::ToastText::Detailed { title, .. } if title == "Automatic backup failed"
+        ));
+        assert_eq!(
+            failed_text(Reason::Unfinished, ""),
+            "Automatic backup failed: Rappel was stopped before it finished"
+        );
+    }
+}

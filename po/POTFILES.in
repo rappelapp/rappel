@@ -30,6 +30,7 @@ crates/app/data/start_fresh_dialog.blp
 crates/app/data/stats_page.blp
 crates/app/data/tag_suggestions.blp
 crates/app/data/window.blp
+crates/app/src/auto_backup.rs
 crates/app/src/dialogs/about.rs
 crates/app/src/dialogs/card_editor/insert.rs
 crates/app/src/dialogs/card_editor/media.rs
