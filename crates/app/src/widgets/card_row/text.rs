@@ -1,5 +1,9 @@
-//! What a card row of the deck page says to a screen reader, and which of
-//! its menu items it offers. Pure, so it is unit-tested (ADR 0042).
+//! What a card row of the deck page says to a screen reader, which of its
+//! menu items it offers, and which tags it shows as pills: the tags every
+//! listed card shares are said once above the list, and a row shows only
+//! its others (ADR 0077). Pure, so it is unit-tested (ADR 0042).
+
+use std::borrow::Cow;
 
 use rappel_core::domain::Tag;
 
@@ -34,6 +38,54 @@ pub fn row_label(front: &str, back: &str, tags: &[String], suspended: bool) -> S
         parts.push(gettext("suspended"));
     }
     parts.join(&crate::ui::text::list_separator())
+}
+
+/// The tags every card of a list shares, said once above the list (ADR
+/// 0077): the tags of `cards` (each card's tags) that are on every one, in
+/// the first card's order, each once. None for a list of fewer than two
+/// cards, where "on every card" would say nothing. Stops reading as soon
+/// as no tag is left, so a large list without shared tags costs little.
+pub fn shared_tags<'a>(cards: impl IntoIterator<Item = &'a [Tag]>) -> Vec<Tag> {
+    let mut cards = cards.into_iter();
+    let Some(first) = cards.next() else {
+        return Vec::new();
+    };
+    let mut shared: Vec<Tag> = Vec::new();
+    for tag in first {
+        if !shared.iter().any(|t| t.id == tag.id) {
+            shared.push(tag.clone());
+        }
+    }
+    let mut count = 1;
+    for tags in cards {
+        if shared.is_empty() {
+            break;
+        }
+        count += 1;
+        shared.retain(|kept| tags.iter().any(|t| t.id == kept.id));
+    }
+    if count < 2 {
+        shared.clear();
+    }
+    shared
+}
+
+/// The pill names a row shows for a card with `names` (its tag names,
+/// one line each) and `tags` (the same tags with their ids): the ones whose
+/// id is not in `shared` (the list's [`shared_tags`], said above it). The
+/// names as they are, without a copy, while nothing is shared.
+pub fn other_tags<'a>(names: &'a [String], tags: &[Tag], shared: &[String]) -> Cow<'a, [String]> {
+    if shared.is_empty() {
+        return Cow::Borrowed(names);
+    }
+    Cow::Owned(
+        names
+            .iter()
+            .zip(tags)
+            .filter(|(_, tag)| !shared.contains(&tag.id))
+            .map(|(name, _)| name.clone())
+            .collect(),
+    )
 }
 
 /// The row actions that depend on the card, each with whether it is
@@ -305,6 +357,67 @@ mod tests {
             items[0],
             ("\u{2068}t__0\u{2069}".to_owned(), "0".to_owned())
         );
+    }
+
+    fn tags(list: &[&str]) -> Vec<Tag> {
+        list.iter().map(|&n| tag(&format!("id-{n}"), n)).collect()
+    }
+
+    fn ids(tags: &[Tag]) -> Vec<String> {
+        tags.iter().map(|t| t.id.clone()).collect()
+    }
+
+    #[test]
+    fn the_shared_tags_are_on_every_card_in_the_first_cards_order() {
+        let cards = [
+            tags(&["Probabilités", "Définition", "SIC3101", "Analyse"]),
+            tags(&["SIC3101", "Définition", "Probabilités"]),
+            tags(&["Définition", "Probabilités", "SIC3101", "MAT3101"]),
+        ];
+        let shared = shared_tags(cards.iter().map(Vec::as_slice));
+        assert_eq!(
+            ids(&shared),
+            ["id-Probabilités", "id-Définition", "id-SIC3101"]
+        );
+        // One card without tags: nothing is shared.
+        let with_bare = [tags(&["a", "b"]), Vec::new(), tags(&["a"])];
+        assert_eq!(
+            shared_tags(with_bare.iter().map(Vec::as_slice)),
+            Vec::<Tag>::new()
+        );
+        // One card alone, or none: nothing is said above the list.
+        assert_eq!(shared_tags([tags(&["a"]).as_slice()]), Vec::<Tag>::new());
+        assert_eq!(shared_tags(std::iter::empty::<&[Tag]>()), Vec::<Tag>::new());
+        // Two cards with the same tags share all of them, each once.
+        let twins = [tags(&["a", "b", "a"]), tags(&["b", "a"])];
+        assert_eq!(
+            ids(&shared_tags(twins.iter().map(Vec::as_slice))),
+            ["id-a", "id-b"]
+        );
+        // Tags are told apart by id, not by name.
+        let same_name = [vec![tag("1", "x")], vec![tag("2", "x")]];
+        assert_eq!(
+            shared_tags(same_name.iter().map(Vec::as_slice)),
+            Vec::<Tag>::new()
+        );
+    }
+
+    #[test]
+    fn a_row_shows_only_the_tags_not_shared() {
+        use crate::widgets::tag_pills::text::{COMPACT_ROW_PILLS, overflow_text, split};
+
+        let card = tags(&["Définition", "Analyse", "MAT3101", "SIC3101"]);
+        let names: Vec<String> = card.iter().map(|t| t.name.clone()).collect();
+        let shared = ids(&tags(&["Définition", "SIC3101"]));
+        let others = other_tags(&names, &card, &shared);
+        assert_eq!(*others, ["Analyse", "MAT3101"]);
+        // Nothing shared: every tag, borrowed.
+        assert!(matches!(other_tags(&names, &card, &[]), Cow::Borrowed(_)));
+        // Every tag shared: no pill.
+        assert!(other_tags(&names, &card, &ids(&card)).is_empty());
+        // Past the pills that fit, the rest is one "+N" pill.
+        let (shown, hidden) = split(others.len(), Some(COMPACT_ROW_PILLS));
+        assert_eq!((shown, overflow_text(hidden)), (1, "+1".to_owned()));
     }
 
     #[test]

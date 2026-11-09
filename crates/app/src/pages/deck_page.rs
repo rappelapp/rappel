@@ -92,6 +92,8 @@ mod imp {
         #[template_child]
         pub card_list: TemplateChild<gtk::ListView>,
         #[template_child]
+        pub list_header: TemplateChild<crate::widgets::CardListHeader>,
+        #[template_child]
         pub empty_add_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub deck_menu: TemplateChild<gio::MenuModel>,
@@ -127,6 +129,15 @@ mod imp {
         /// Cards are being chosen; the rows follow it.
         #[property(get, set)]
         pub selecting: Cell<bool>,
+        /// The ids of the tags every card of the deck has; the rows leave
+        /// them out of their pills (ADR 0077).
+        #[property(get, set)]
+        pub shared_tags: RefCell<Vec<String>>,
+        /// Their names, which the list's header says once.
+        #[property(get, set)]
+        pub shared_tag_names: RefCell<Vec<String>>,
+        /// Reads them again after the list changed.
+        pub shared_queue: crate::widgets::card_row::SharedTagsQueue,
         /// The window is under 500 sp (`selection_narrow` applies): with
         /// `compact`, Select All and the action bar keep only their icons.
         pub selection_narrow_on: Cell<bool>,
@@ -307,6 +318,7 @@ impl DeckPage {
                 // Read the tags when the Deck Menu opens: a change here
                 // can be one of thousands of cards (ADR 0069).
                 page.imp().tag_menu_stale.set(true);
+                page.queue_shared_tags();
                 // Select follows whether there is a card; an emptied list
                 // ends selection mode.
                 page.selection().list_changed();
@@ -315,6 +327,9 @@ impl DeckPage {
         imp.card_list
             .set_model(Some(&gtk::NoSelection::new(Some(store.clone()))));
         imp.card_list.set_factory(Some(&row_factory(&page)));
+        page.bind_property("shared-tag-names", &*imp.list_header, "tags")
+            .sync_create()
+            .build();
         imp.card_list.connect_activate(glib::clone!(
             #[weak]
             page,
@@ -335,6 +350,7 @@ impl DeckPage {
         init_once(&imp.state, state);
         init_once(&imp.deck, deck);
         init_once(&imp.cards, store);
+        page.update_shared_tags();
         page.update_empty_state();
         page.update_study();
         imp.tag_menu_stale.set(true);
@@ -440,6 +456,23 @@ impl DeckPage {
             section.append_submenu(Some(&menu.label), &submenu);
         }
         imp.tag_menu.replace(menu);
+    }
+
+    /// Says which tags every card of the deck has: once above the list,
+    /// and left out of the rows' pills (ADR 0077).
+    fn update_shared_tags(&self) {
+        if let Some(store) = self.imp().cards.get() {
+            card_row::update_shared_tags::<CardObject>(self, store, card_tags);
+        }
+    }
+
+    /// [`Self::update_shared_tags`] once the main loop is idle, however
+    /// many cards change before then.
+    fn queue_shared_tags(&self) {
+        let imp = self.imp();
+        if let Some(store) = imp.cards.get() {
+            imp.shared_queue.queue::<CardObject>(self, store, card_tags);
+        }
     }
 
     /// Enables the rows' Move to Deck… while another deck exists, and the
@@ -1554,14 +1587,19 @@ fn insert_in_order(store: &gio::ListStore, item: &CardObject) -> u32 {
     })
 }
 
+/// A card's tags, for the tags every card shares.
+fn card_tags(item: &CardObject) -> std::cell::Ref<'_, [rappel_core::domain::Tag]> {
+    std::cell::Ref::map(item.tag_list(), Vec::as_slice)
+}
+
 /// Builds a [`CardRow`] per visible row, following the page's `compact`,
-/// `can-move` and `selecting`, and points it at its card (whose
-/// accessible label it sets, `CardRow::bind_card`).
+/// `can-move`, `selecting` and `shared-tags`, and points it at its card
+/// (whose accessible label it sets, `CardRow::bind_card`).
 fn row_factory(page: &DeckPage) -> gtk::SignalListItemFactory {
     card_row::factory(
         page,
         CardRow::default,
-        &["compact", "can-move", "selecting"],
+        &["compact", "can-move", "selecting", "shared-tags"],
         CardRow::bind_card,
     )
 }
@@ -1981,6 +2019,57 @@ mod tests {
             let added = state.add_card_with_tags(&deck, "q", "a", &[]).unwrap();
             page.show_saved(Saved::Added(added));
             assert!(page.item(1).unwrap().is_new());
+        });
+    }
+
+    /// The tags every card of the deck has are said once above the list,
+    /// and each row shows only its others (ADR 0077); a card added without
+    /// them ends that.
+    #[test]
+    fn the_tags_every_card_has_are_said_once_above_the_list() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let deck = state.create_deck("Deck").unwrap();
+            let tags =
+                |names: &[&str]| -> Vec<String> { names.iter().map(|&n| n.to_owned()).collect() };
+            for (front, names) in [
+                ("one", tags(&["def", "maths"])),
+                ("two", tags(&["def", "hard", "maths"])),
+                ("three", tags(&["maths", "def"])),
+            ] {
+                state
+                    .add_card_with_tags(&deck.id, front, "back", &names)
+                    .unwrap();
+            }
+            let page = DeckPage::new(state.clone(), deck.clone()).unwrap();
+            assert_eq!(page.shared_tag_names(), ["def", "maths"]);
+            let window = presented(&page);
+            crate::testing::settle();
+            let list = page.imp().card_list.upcast_ref::<gtk::Widget>();
+            let header = &page.imp().list_header;
+            assert!(header.is_visible());
+            assert_eq!(header.tags(), ["def", "maths"]);
+            let pills: Vec<Vec<String>> = rows(list)
+                .iter()
+                .map(|row| row.imp().tag_pills.tags())
+                .collect();
+            assert_eq!(pills, [vec![], vec!["hard".to_owned()], vec![]]);
+            // A card without the tags: nothing is shared any more, and each
+            // row shows all its tags again.
+            let added = state
+                .add_card_with_tags(&deck.id, "four", "a", &[])
+                .unwrap();
+            page.show_saved(Saved::Added(added));
+            crate::testing::settle();
+            assert_eq!(page.shared_tag_names(), Vec::<String>::new());
+            assert_eq!(header.tags(), Vec::<String>::new());
+            assert!(!header.is_visible());
+            let first = rows(list)
+                .into_iter()
+                .find(|row| row.card_id() == page.item(0).unwrap().card().id)
+                .unwrap();
+            assert_eq!(first.imp().tag_pills.tags(), ["def", "maths"]);
+            window.destroy();
         });
     }
 

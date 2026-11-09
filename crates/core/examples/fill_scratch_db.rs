@@ -3,7 +3,7 @@
 //! try studying without waiting days (ADR 0014).
 //!
 //! ```text
-//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--anki PACKAGE] [--archived N]
+//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--anki PACKAGE] [--archived N]
 //! RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 //! ```
 //!
@@ -32,6 +32,11 @@
 //! chemical elements, art history, calculus with formulas and flags drawn
 //! as images, with tags and a month of review history, so some cards are
 //! due and the statistics have days to show. `fill_scratch_db -- <dir> 0 --demo` adds only those.
+//! With `--probability`, it adds the deck "SIC 3101 – Probabilités" of
+//! the card list mockups (ADR 0077): 17 new cards with formulas on both
+//! sides, all tagged with the same four tags and some with two more, and
+//! one suspended, to see the tags said once above the list and the rows'
+//! drawn math.
 //! With `--anki PACKAGE`, it imports that Anki package (`.apkg` or
 //! `.colpkg`) as Import… does (ADR 0061), last; `fill_scratch_db -- <dir>
 //! 0 --anki crates/core/src/interchange/anki/fixtures/current.apkg` imports
@@ -74,7 +79,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<String, String> {
-    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--anki PACKAGE] [--archived N]";
+    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--anki PACKAGE] [--archived N]";
     let number = |arg: Option<std::ffi::OsString>| {
         arg.as_ref()
             .and_then(|n| n.to_str())
@@ -85,7 +90,8 @@ fn run() -> Result<String, String> {
     let dir = PathBuf::from(args.next().ok_or(usage)?);
     let (mut count, mut due, mut markdown, mut math, mut tags) = (None, 0, false, false, false);
     let (mut suspended, mut media, mut unused_media, mut demo) = (0, false, false, false);
-    let (mut anki, mut archived): (Option<PathBuf>, usize) = (None, 0);
+    let (mut anki, mut archived, mut probability): (Option<PathBuf>, usize, bool) =
+        (None, 0, false);
     while let Some(arg) = args.next() {
         if arg == "--due" {
             due = number(args.next())?;
@@ -103,6 +109,8 @@ fn run() -> Result<String, String> {
             unused_media = true;
         } else if arg == "--demo" {
             demo = true;
+        } else if arg == "--probability" {
+            probability = true;
         } else if arg == "--archived" {
             archived = number(args.next())?;
         } else if arg == "--anki" {
@@ -114,10 +122,11 @@ fn run() -> Result<String, String> {
         }
     }
     let count = count.unwrap_or(DEFAULT_COUNT);
-    if count == 0 && !markdown && !math && !media && !unused_media && !demo && anki.is_none() {
+    let decks_asked = markdown || math || media || unused_media || demo || probability;
+    if count == 0 && !decks_asked && anki.is_none() {
         return Err(
-            "nothing to add: count is 0 and no --markdown, --math, --media, --unused-media, --demo \
-             or --anki"
+            "nothing to add: count is 0 and no --markdown, --math, --media, --unused-media, --demo, \
+             --probability or --anki"
                 .to_owned(),
         );
     }
@@ -132,25 +141,18 @@ fn run() -> Result<String, String> {
         added.push(fill_main_deck(&mut store, count, due, suspended, tags)?);
     }
     if markdown {
-        let deck = store
-            .create_deck("Markdown (one card per construct)")
-            .map_err(|e| e.to_string())?;
-        for (front, back) in MARKDOWN_CARDS {
-            store
-                .add_card(&deck.id, front, back)
-                .map_err(|e| e.to_string())?;
-        }
-        added.push(format!("{} cards to “{}”", MARKDOWN_CARDS.len(), deck.name));
+        let cards: Vec<(String, String)> = MARKDOWN_CARDS
+            .iter()
+            .map(|&(front, back)| (front.to_owned(), back.to_owned()))
+            .collect();
+        added.push(fill_plain_deck(
+            &mut store,
+            "Markdown (one card per construct)",
+            &cards,
+        )?);
     }
     if math {
-        let deck = store.create_deck("Math").map_err(|e| e.to_string())?;
-        let cards = math_cards();
-        for (front, back) in &cards {
-            store
-                .add_card(&deck.id, front, back)
-                .map_err(|e| e.to_string())?;
-        }
-        added.push(format!("{} cards to “{}”", cards.len(), deck.name));
+        added.push(fill_plain_deck(&mut store, "Math", &math_cards())?);
     }
     if media {
         added.push(fill_media_deck(&mut store)?);
@@ -164,6 +166,9 @@ fn run() -> Result<String, String> {
     if demo {
         added.push(fill_demo(&mut store)?);
     }
+    if probability {
+        added.push(fill_probability(&mut store)?);
+    }
     if let Some(package) = anki {
         added.push(import_anki(&mut store, &package)?);
     }
@@ -174,6 +179,138 @@ fn run() -> Result<String, String> {
         "Added {} in {}",
         added.join(" and "),
         dir.display()
+    ))
+}
+
+/// Adds the deck `name` with `cards` (front, back), all new. Returns what
+/// to report.
+fn fill_plain_deck(
+    store: &mut Store,
+    name: &str,
+    cards: &[(String, String)],
+) -> Result<String, String> {
+    let deck = store.create_deck(name).map_err(|e| e.to_string())?;
+    for (front, back) in cards {
+        store
+            .add_card(&deck.id, front, back)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(format!("{} cards to “{}”", cards.len(), deck.name))
+}
+
+/// The cards of `--probability`: front, back, and whether the card has the
+/// two extra tags.
+const PROBABILITY_CARDS: [(&str, &str, bool); 17] = [
+    (
+        "Expérience aléatoire",
+        "Expérience dont on ne peut prévoir le résultat avec certitude",
+        false,
+    ),
+    (
+        "Espace d'état",
+        "L'ensemble $\\Omega$ de tous les résultats possibles",
+        false,
+    ),
+    (
+        "Événement aléatoire",
+        "Une partie $A$ de $\\Omega$ qui appartient à la tribu",
+        false,
+    ),
+    (
+        "Équiprobabilité",
+        "Chaque issue a la même probabilité $1 / |\\Omega|$",
+        false,
+    ),
+    (
+        "Probabilité",
+        "Mesure $P$ sur $(\\Omega, \\mathcal{A})$ avec $P(\\Omega) = 1$",
+        false,
+    ),
+    (
+        "Modèle probabiliste",
+        "Le triplet $(\\Omega, \\mathcal{A}, P)$",
+        false,
+    ),
+    (
+        "Algèbre de Boole",
+        "Partie de $\\mathcal{P}(\\Omega)$ stable par complémentaire et union finie",
+        false,
+    ),
+    (
+        "Tribu",
+        "Algèbre de Boole stable par union dénombrable",
+        true,
+    ),
+    (
+        "Tribu engendrée",
+        "La plus petite tribu contenant $\\mathcal{C}$, notée $\\sigma(\\mathcal{C})$",
+        true,
+    ),
+    (
+        "Tribu borélienne",
+        "$\\sigma$(ouverts de $\\mathbb{R}$), notée $\\mathcal{B}(\\mathbb{R})$",
+        false,
+    ),
+    (
+        "Espace mesurable",
+        "Un couple $(\\Omega, \\mathcal{A})$ où $\\mathcal{A}$ est une tribu",
+        true,
+    ),
+    (
+        "Espace mesuré",
+        "Un triplet $(\\Omega, \\mathcal{A}, \\mu)$",
+        true,
+    ),
+    (
+        "Mesure",
+        "$\\mu : \\mathcal{A} \\to [0, +\\infty]$, $\\mu(\\emptyset) = 0$, $\\sigma$-additive",
+        true,
+    ),
+    (
+        "Mesure $\\sigma$-finie",
+        "$\\Omega = \\bigcup A_n$ avec $\\mu(A_n) < +\\infty$",
+        false,
+    ),
+    ("Mesure finie", "$\\mu(\\Omega) < +\\infty$", false),
+    (
+        "Événement négligeable",
+        "Un événement $A$ tel que $P(A) = 0$",
+        false,
+    ),
+    (
+        "Moyenne",
+        "$\\bar{x} = \\frac{1}{n} \\sum_{i=1}^{n} x_i$",
+        false,
+    ),
+];
+
+/// `--probability`: the deck of the card list mockups. Returns what to
+/// report.
+fn fill_probability(store: &mut Store) -> Result<String, String> {
+    let deck = store
+        .create_deck("SIC 3101 – Probabilités")
+        .map_err(|e| e.to_string())?;
+    let shared = ["Définition", "Mathématiques", "Probabilités", "SIC3101"];
+    let mut suspended = Vec::new();
+    for (front, back, extra) in PROBABILITY_CARDS {
+        let mut tags: Vec<String> = shared.iter().map(|&t| t.to_owned()).collect();
+        if extra {
+            tags.extend(["Analyse".to_owned(), "MAT3101".to_owned()]);
+        }
+        let card = store
+            .add_card_with_tags(&deck.id, front, back, &tags)
+            .map_err(|e| e.to_string())?;
+        if front == "Mesure finie" {
+            suspended.push(card.card.id);
+        }
+    }
+    store
+        .set_suspended(&suspended, true)
+        .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "{} cards to “{}”",
+        PROBABILITY_CARDS.len(),
+        deck.name
     ))
 }
 

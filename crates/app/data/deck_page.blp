@@ -148,35 +148,47 @@ template $RappelDeckPage: Adw.NavigationPage {
         Gtk.StackPage {
           name: "list";
 
-          // A GtkListView with a model, not a boxed list: it only creates
+          // A GtkListView with a model, not a GtkListBox: it only creates
           // rows for what is on screen, so thousands of cards stay smooth
-          // (ADR 0013). `.boxed-list` styles only GtkListBox; these are the
-          // list styles libadwaita has for a list view.
-          child: Gtk.ScrolledWindow {
-            hscrollbar-policy: never;
+          // (ADR 0013). `.boxed-list` styles only GtkListBox, so the rows
+          // draw the boxed list themselves (`listview.card-list` in
+          // data/style.css, ADR 0077) on the window's background, as
+          // boxed lists sit. The tags every card shares are said once
+          // above it.
+          child: Gtk.Box {
+            orientation: vertical;
 
-            styles [
-              "view",
-            ]
-
-            child: Adw.ClampScrollable {
+            // The tags every listed card has (pages/deck_page.rs
+            // follows them), clamped with the list.
+            Adw.Clamp {
               maximum-size: 600;
 
-              child: Gtk.ListView card_list {
-                single-click-activate: true;
+              child: $RappelCardListHeader list_header {};
+            }
 
-                accessibility {
-                  label: _("Cards");
-                }
+            Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+              vexpand: true;
 
-                // Not `rich-list`: the rows lay themselves out like
-                // libadwaita's action rows, with the margins of their
-                // `box.header` (data/card_row.blp).
-                styles [
-                  "separators",
-                ]
+              child: Adw.ClampScrollable {
+                maximum-size: 600;
+
+                child: Gtk.ListView card_list {
+                  single-click-activate: true;
+
+                  accessibility {
+                    label: _("Cards");
+                  }
+
+                  // Not `rich-list`: the rows lay themselves out like
+                  // libadwaita's action rows, with the margins of their
+                  // `box.header` (data/card_row.blp).
+                  styles [
+                    "card-list",
+                  ]
+                };
               };
-            };
+            }
           };
         }
       };

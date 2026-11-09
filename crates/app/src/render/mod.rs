@@ -11,7 +11,8 @@
 //! Math (ADR 0021) is drawn as vectors: inline formulas inside their
 //! paragraph's text flow ([`math_paragraph`]), display formulas as centred
 //! blocks that scroll sideways when too wide ([`math_view`]). What is over
-//! a limit ([`math`]) stays source.
+//! a limit ([`math`]) stays source. A card list's rows draw the formulas of
+//! a side's one-line summary with [`MathLine`] (ADR 0077).
 //!
 //! Images (ADR 0055): a `media:` image at the top level of a paragraph is
 //! drawn as a picture between the paragraph's runs of text
@@ -30,6 +31,7 @@ mod images;
 mod ink_box;
 mod markup;
 mod math;
+mod math_line;
 mod math_paragraph;
 mod math_view;
 mod media_file;
@@ -50,6 +52,7 @@ use audio::AudioBudget;
 pub use audio_player::{CardAudio, stop_all as stop_audio};
 use images::{Failure, ImageBudget, Piece, PixelBudget};
 use math::{Budget, Placement};
+pub use math_line::MathLine;
 use math_paragraph::MathParagraph;
 use math_view::MathView;
 use picture::CardImage;

@@ -36,17 +36,40 @@ fn capitalised(text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The third line of an All Cards row: "Maths · Due in 3 days". The tags
-/// are pills on the line above (`widgets::card_row`).
+/// The status and deck of an All Cards row: "Due in 3 days · Maths" (see
+/// [`subtitle`]). The status comes first: when the line is too narrow
+/// (a phone, a long deck name) it is the deck's name that ends in "…",
+/// and the deck filter names it anyway.
 pub fn caption(deck: &str, status: &str) -> String {
     // Isolated, so a right-to-left deck name or an open bidi override
-    // cannot reorder the status after it.
+    // cannot reorder what follows it.
     fill(
-        // Translators: under a card in All Cards: {deck} is its deck's name,
-        // {status} "Due in 3 days".
-        &gettext("{deck} · {status}"),
+        // Translators: under a card in All Cards: {status} is "Due in 3
+        // days", {deck} its deck's name.
+        &gettext("{status} · {deck}"),
         &[("deck", &isolate(&one_line(deck))), ("status", status)],
     )
+}
+
+/// The second line of an All Cards row, under the front (ADR 0077): the
+/// status and the deck ([`caption`]), then, when the card's back follows
+/// on the same line (`before_back`; not on a narrow window, where the line
+/// has room for the status and deck only), a " ·" that keeps the two
+/// apart: "Due in 3 days · Maths ·". The tags are pills at the row's end
+/// (`widgets::card_row`).
+pub fn subtitle(deck: &str, status: &str, before_back: bool) -> String {
+    let caption = caption(deck, status);
+    if before_back {
+        fill(
+            // Translators: the start of the line under a card in All
+            // Cards, before the card's back: {subtitle} is "Due in 3 days
+            // · Maths".
+            &gettext("{subtitle} ·"),
+            &[("subtitle", &caption)],
+        )
+    } else {
+        caption
+    }
 }
 
 /// What a screen reader says for an All Cards row: the card as the deck
@@ -375,12 +398,29 @@ mod tests {
 
     #[test]
     fn a_caption_says_the_deck_and_the_status() {
-        assert_eq!(caption("Maths", "New"), "\u{2068}Maths\u{2069} · New");
-        assert_eq!(caption("a\n b", "Due now"), "\u{2068}a b\u{2069} · Due now");
+        assert_eq!(caption("Maths", "New"), "New · \u{2068}Maths\u{2069}");
+        assert_eq!(caption("a\n b", "Due now"), "Due now · \u{2068}a b\u{2069}");
         // An override in the name ends with it.
         assert_eq!(
             caption("\u{202e}x", "New"),
-            "\u{2068}\u{202e}x\u{2069} · New"
+            "New · \u{2068}\u{202e}x\u{2069}"
+        );
+    }
+
+    #[test]
+    fn the_subtitle_says_the_deck_and_the_status_before_the_back() {
+        assert_eq!(
+            subtitle("Maths", "Due in 3 days", false),
+            "Due in 3 days · \u{2068}Maths\u{2069}"
+        );
+        assert_eq!(
+            subtitle("Maths", "New", true),
+            "New · \u{2068}Maths\u{2069} ·"
+        );
+        // A placeholder in the deck name stays as it is.
+        assert_eq!(
+            subtitle("{subtitle}", "New", true),
+            "New · \u{2068}{subtitle}\u{2069} ·"
         );
     }
 
