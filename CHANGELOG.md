@@ -7,6 +7,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **Phase 3b is planned**: its brief and two mockups are in `docs/briefs/`, SPEC.md splits the old phase 3b into 3b (polish and the first Snap, ends in 0.4.0) and 3c (Flatpak bundle, translation workflow, hardening, ends in 1.0), and the maintainer's answers to the phase 3a questions are recorded.
 - **Rappel has its real icon**: a white index card and a red one on a ring, drawn by the maintainer in GNOME's style, and a matching symbolic icon. They replace the placeholders in `data/icons/` (ADR 0074).
 
 ## [0.4.0-beta.1] — 2026-11-03
