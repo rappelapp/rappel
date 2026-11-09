@@ -27,6 +27,7 @@ mod audio;
 mod audio_player;
 mod breaks;
 mod images;
+mod ink_box;
 mod markup;
 mod math;
 mod math_paragraph;
@@ -116,7 +117,8 @@ struct Side<'a> {
 /// aligned to the start. Only the constructs have styles of their own
 /// (headings, code, quotes, tables).
 pub fn render(doc: &Document, media: &Images) -> gtk::Box {
-    let container = blocks_box();
+    // Its redraws cover all its text draws (issue #120, ADR 0076).
+    let container = ink_box::InkBox::new(BLOCK_SPACING);
     // A block's cost counts everything inside it, so the budget is spent
     // on top-level blocks only.
     let mut budget = MAX_WIDGETS;
@@ -139,7 +141,7 @@ pub fn render(doc: &Document, media: &Images) -> gtk::Box {
         budget -= cost;
         container.append(&block_widget(block, 0, &mut side));
     }
-    container
+    container.upcast()
 }
 
 /// Replaces what `container` shows with `doc`.

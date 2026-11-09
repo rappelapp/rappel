@@ -10,6 +10,12 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - **Phase 3b is planned**: its brief and two mockups are in `docs/briefs/`, SPEC.md splits the old phase 3b into 3b (polish and the first Snap, ends in 0.4.0) and 3c (Flatpak bundle, translation workflow, hardening, ends in 1.0), and the maintainer's answers to the phase 3a questions are recorded.
 - **Rappel has its real icon**: a white index card and a red one on a ring, drawn by the maintainer in GNOME's style, and a matching symbolic icon. They replace the placeholders in `data/icons/` (ADR 0074).
 
+### Fixed
+- **No more stray light dots around a card's text.** Moving to the next card, revealing the answer or editing in the preview could leave a pixel of the previous text (often of an accent, as above "Tribu engendrée"), or cut the top pixel off a new one. GTK repaints only what changed, measured on the letters without hinting, but draws them hinted, which can reach one pixel further; each card side now has GTK repaint a margin around everything it draws whenever it changes (ADR 0076, #120).
+
+### Security
+- The bundled SQLite is now 3.54.1 (`rusqlite` 0.41, `libsqlite3-sys` 0.39.1), which fixes CVE-2026-119375 (RUSTSEC-2026-0459): an older SQLite could return stale memory when opening a database together with a crafted `-wal` file of another page size. The gate's advisory check refused the old version.
+
 ## [0.4.0-beta.1] — 2026-11-03
 
 The beta of phase 3a, organising and studying. Cards can be selected on a deck's page as on All Cards, moved one at a time from their menu or during review, and decks can be merged into another or archived, each with Undo. Cards can be studied by tag across decks, and practised without rescheduling anything. The card editor says when another card has the same front. Phase 2's leftovers are done: nothing is cut at 360 px in French, an export too large to import again says so first, and checking an import can be cancelled. An export made before moving cards or merging decks imports again. The database is upgraded on first start (a backup is made first), and 0.3.0-beta.1 cannot import exports from this version.

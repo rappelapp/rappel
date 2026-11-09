@@ -52,7 +52,7 @@ thiserror = "2"
 # `unicase` collation, which its tables cannot be read without, and an
 # untrusted collection is read with lowered length limits. `hooks` (ADR 0063):
 # the progress handler that stops a long statement of a cancelled Anki import.
-rusqlite = { version = "0.40", default-features = false, features = ["bundled", "backup", "collation", "hooks", "limits"] }
+rusqlite = { version = "0.41", default-features = false, features = ["bundled", "backup", "collation", "hooks", "limits"] }
 
 # Scheduling (rappel-core): the reference FSRS implementation (ADR 0006).
 fsrs = "6.6"
