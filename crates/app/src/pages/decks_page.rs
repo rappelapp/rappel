@@ -340,6 +340,23 @@ impl DecksPage {
             move |_, key, _, modifiers| page.study_key_released(key, modifiers)
         ));
         self.add_controller(keys);
+        // Every press, before any child can claim it (Return on a row or
+        // on a menu button never reaches the bubble phase above): anything
+        // but a plain S cancels a held S. Returns Proceed, so it claims
+        // neither the press nor its release (gtkeventcontrollerkey.c).
+        let observer = gtk::EventControllerKey::new();
+        observer.set_propagation_phase(gtk::PropagationPhase::Capture);
+        observer.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, modifiers| {
+                page.imp().start_hold.observe_press(key, modifiers);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.add_controller(observer);
         // A hold left behind would start a session at a later release.
         keys::when_left(self, |page| {
             if let Some(page) = page.downcast_ref::<Self>() {
@@ -1190,6 +1207,19 @@ mod key_tests {
                 page.study_key_released(Key::s, release);
                 assert!(!reviewing(&view), "{other:?} {release:?}");
             }
+            // Return on the row's menu button opens its popover; the press
+            // is claimed below the page, which sees it only in the capture
+            // phase.
+            row(&page, "A").focus_menu_button();
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            page.imp().start_hold.observe_press(Key::Return, M::empty());
+            page.study_key_released(Key::s, M::empty());
+            assert!(!reviewing(&view));
+            // Its own repeats, seen there too, keep the hold.
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            page.imp().start_hold.observe_press(Key::s, M::empty());
+            page.study_key_released(Key::s, M::empty());
+            assert!(reviewing(&view));
             window.destroy();
         });
     }

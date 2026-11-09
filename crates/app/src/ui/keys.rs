@@ -137,6 +137,15 @@ impl<T: PartialEq> StartHold<T> {
         held.is_some() && held.as_ref() == target && starts_studying(key, modifiers, text_focus)
     }
 
+    /// Every key press, seen in the capture phase before any child can
+    /// claim it (Return on a row or a menu button never reaches the page's
+    /// bubble phase): anything but a plain S cancels the hold.
+    pub fn observe_press(&self, key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) {
+        if !starts_studying(key, modifiers, false) {
+            self.clear();
+        }
+    }
+
     /// Forgets the hold: the page is hidden, unmapped or lost the focus,
     /// so the release may come anywhere.
     pub fn clear(&self) {
@@ -175,36 +184,43 @@ pub fn when_left(
 /// repeats as further presses with no release between (`key-pressed` and
 /// `key-released` of `GtkEventControllerKey`, gtkeventcontrollerkey.c). The
 /// review page's S suspends one card per press with this (ADR 0081).
-#[derive(Debug)]
+///
+/// The key is told by its hardware keycode, not its value: the press that
+/// acted is matched to its release by the physical key, whatever the
+/// layout makes of it. With a Cyrillic layout the key marked S gives
+/// `Cyrillic_yeru`, which GTK's shortcut matching still takes for S
+/// (`gdk_key_event_matches`, gdkevents.c: a partial match when the
+/// keycode gives S in another layout that lacks the event's value), so a keyval test on the release would never re-arm.
+#[derive(Debug, Default)]
 pub struct OnePress {
-    /// No press seen since the last release.
-    up: std::cell::Cell<bool>,
-}
-
-impl Default for OnePress {
-    fn default() -> Self {
-        Self {
-            up: std::cell::Cell::new(true),
-        }
-    }
+    /// The keycode of the press that acted, while that key is down.
+    down: std::cell::Cell<Option<u32>>,
 }
 
 impl OnePress {
-    /// A press or a repeat: `true` for the first since the key was last
-    /// released (or ever, or since [`OnePress::reset`]).
-    pub fn press(&self) -> bool {
-        self.up.replace(false)
+    /// A press or a repeat of the key with hardware keycode `code`: `true`
+    /// for the first since the key that acted last was released (or ever,
+    /// or since [`OnePress::reset`]).
+    pub fn press(&self, code: u32) -> bool {
+        if self.down.get().is_some() {
+            return false;
+        }
+        self.down.set(Some(code));
+        true
     }
 
-    /// The key went up: the next press acts again.
-    pub fn release(&self) {
-        self.up.set(true);
+    /// A key went up: when it is the key that acted, the next press acts
+    /// again.
+    pub fn release(&self, code: u32) {
+        if self.down.get() == Some(code) {
+            self.down.set(None);
+        }
     }
 
     /// The release may have gone elsewhere (the page lost the focus): the
     /// next press acts.
     pub fn reset(&self) {
-        self.release();
+        self.down.set(None);
     }
 }
 
@@ -388,22 +404,45 @@ mod tests {
 
     #[test]
     fn one_press_acts_once_per_release() {
+        const S: u32 = 39;
+        const A: u32 = 38;
         let key = OnePress::default();
         // The first press ever acts; its repeats do not.
-        assert!(key.press());
-        assert!(!key.press());
-        assert!(!key.press());
-        key.release();
-        assert!(key.press());
-        assert!(!key.press());
+        assert!(key.press(S));
+        assert!(!key.press(S));
+        assert!(!key.press(S));
+        // Another key's release does not re-arm.
+        key.release(A);
+        assert!(!key.press(S));
+        key.release(S);
+        assert!(key.press(S));
+        assert!(!key.press(S));
         // A release seen elsewhere: reset lets the next press act.
         key.reset();
-        assert!(key.press());
+        assert!(key.press(S));
         // Releases without presses change nothing.
-        key.release();
-        key.release();
-        assert!(key.press());
-        assert!(!key.press());
+        key.release(S);
+        key.release(S);
+        assert!(key.press(S));
+        assert!(!key.press(S));
+    }
+
+    #[test]
+    fn a_press_seen_in_the_capture_phase_cancels_the_hold() {
+        use gtk::gdk::{Key, ModifierType as M};
+        let hold = StartHold::<()>::default();
+        assert!(hold.pressed(Key::s, M::empty(), false, Some(())));
+        // Its own repeats keep it.
+        hold.observe_press(Key::s, M::empty());
+        assert!(hold.released(Key::s, M::empty(), false, Some(&())));
+        // Return on a menu button (the page's bubble phase never sees it).
+        assert!(hold.pressed(Key::s, M::empty(), false, Some(())));
+        hold.observe_press(Key::Return, M::empty());
+        assert!(!hold.released(Key::s, M::empty(), false, Some(&())));
+        // Ctrl+S is not a plain S either.
+        assert!(hold.pressed(Key::s, M::empty(), false, Some(())));
+        hold.observe_press(Key::s, M::CONTROL_MASK);
+        assert!(!hold.released(Key::s, M::empty(), false, Some(&())));
     }
 
     #[test]

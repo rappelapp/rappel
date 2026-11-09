@@ -161,6 +161,8 @@ mod imp {
         pub shown_at: Cell<Option<Instant>>,
         /// S suspends one card per press, not one per repeat (ADR 0081).
         pub suspend_key: crate::ui::keys::OnePress,
+        /// The hardware keycode of the last key press (`setup_keys`).
+        pub pressed_code: Cell<u32>,
         pub revealed: Cell<bool>,
         /// When the back was shown.
         pub revealed_at: Cell<Option<Instant>>,
@@ -683,21 +685,33 @@ impl ReviewPage {
             ));
         }
         self.add_controller(shortcuts);
-        // The release of S lets the next S suspend (`suspend_key`). Capture
-        // phase, so it sees the release before any child could claim it;
-        // with no `key-pressed` handler it claims no release itself
+        // Presses and releases, by hardware keycode, so that S suspends one
+        // card per press (`suspend_key`, `keys::OnePress`). Capture phase:
+        // a press is seen here before the shortcuts above (bubble) act on
+        // it, and a release before any child could claim it. The
+        // `key-pressed` handler returns Proceed, so this controller claims
+        // neither the press nor its release
         // (`gtk_event_controller_key_handle_event` returns TRUE for a
-        // release only when this controller handled the press,
-        // gtkeventcontrollerkey.c), and shortcut triggers match presses
-        // only (gtkshortcuttrigger.c), so the shortcuts lose nothing.
-        let releases = gtk::EventControllerKey::new();
-        releases.set_propagation_phase(gtk::PropagationPhase::Capture);
-        releases.connect_key_released(glib::clone!(
+        // release only when it handled the press, gtkeventcontrollerkey.c),
+        // and shortcut triggers match presses only (gtkshortcuttrigger.c).
+        let codes = gtk::EventControllerKey::new();
+        codes.set_propagation_phase(gtk::PropagationPhase::Capture);
+        codes.connect_key_pressed(glib::clone!(
             #[weak(rename_to = page)]
             self,
-            move |_, key, _, _| page.key_released(key)
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, _, code, _| {
+                page.imp().pressed_code.set(code);
+                glib::Propagation::Proceed
+            }
         ));
-        self.add_controller(releases);
+        codes.connect_key_released(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_, _, code, _| page.key_released(code)
+        ));
+        self.add_controller(codes);
         // A release elsewhere (in the editor, after the page was left) is
         // not seen here: the next S acts.
         keys::when_left(self, |page| {
@@ -707,11 +721,11 @@ impl ReviewPage {
         });
     }
 
-    /// A key went up: after S, the next S suspends again.
-    fn key_released(&self, key: gtk::gdk::Key) {
-        if keys::is_s(key) {
-            self.imp().suspend_key.release();
-        }
+    /// The key with hardware keycode `code` went up: when it is the S that
+    /// suspended, the next S suspends again. By keycode, as any layout
+    /// gives the same one for the key marked S.
+    fn key_released(&self, code: u32) {
+        self.imp().suspend_key.release(code);
     }
 
     /// Gives Show Answer, Fail and Pass their key in the tooltip (#105),
@@ -767,7 +781,7 @@ impl ReviewPage {
             Some(Act::Suspend) => {
                 // Every press counts as one, even one too early: a held S
                 // never suspends, however long it repeats.
-                let first = imp.suspend_key.press();
+                let first = imp.suspend_key.press(imp.pressed_code.get());
                 if first && suspend_allowed(imp.shown_at.get().map(|t| t.elapsed())) {
                     self.remove_current(Removal::Suspend);
                 }
@@ -2365,11 +2379,20 @@ mod tests {
         assert!(suspend_allowed(Some(KEY_SETTLE)));
     }
 
+    /// The hardware keycodes the tests press and release: X11's for S and
+    /// A on a PC keyboard. The page sees only keycodes on a release, so the
+    /// key marked S re-arms Suspend under any layout (a Cyrillic layout
+    /// gives `Cyrillic_yeru` for it, which the Suspend shortcut still
+    /// matches by keycode).
+    const S_CODE: u32 = 39;
+    const A_CODE: u32 = 38;
+
     #[test]
-    fn holding_s_suspends_one_card_not_a_run() {
+    fn s_waits_for_the_next_card_to_settle() {
         crate::testing::with_widgets(|| {
             let (_tmp, state, page, ids) = page_of(3);
             let _window = in_window(&page);
+            page.imp().pressed_code.set(S_CODE);
             let first = current(&page).unwrap();
             assert!(
                 page.imp().shown_at.get().is_some(),
@@ -2385,14 +2408,14 @@ mod tests {
             // Shown a moment: the first S suspends, the repeat finds a new card.
             // (Released in between, so only the settle time is tested here;
             // `a_held_s_suspends_one_card_until_released` tests the repeats.)
-            page.key_released(gtk::gdk::Key::s);
+            page.key_released(S_CODE);
             page.imp()
                 .shown_at
                 .set(Instant::now().checked_sub(Duration::from_secs(1)));
             page.key(Key::Suspend);
-            page.key_released(gtk::gdk::Key::s);
+            page.key_released(S_CODE);
             page.key(Key::Suspend);
-            page.key_released(gtk::gdk::Key::s);
+            page.key_released(S_CODE);
             page.key(Key::Suspend);
             let suspended = ids
                 .iter()
@@ -2409,6 +2432,7 @@ mod tests {
         crate::testing::with_widgets(|| {
             let (_tmp, state, page, ids) = page_of(4);
             let _window = in_window(&page);
+            page.imp().pressed_code.set(S_CODE);
             let suspended = || {
                 ids.iter()
                     .filter(|id| state.card(id).unwrap().suspended)
@@ -2430,27 +2454,65 @@ mod tests {
             assert_eq!(suspended(), 1);
             // Released (another key's release changes nothing), pressed
             // again: one more.
-            page.key_released(gtk::gdk::Key::a);
+            page.key_released(A_CODE);
             long_ago();
             page.key(Key::Suspend);
             assert_eq!(suspended(), 1);
-            page.key_released(gtk::gdk::Key::s);
+            page.key_released(S_CODE);
             long_ago();
             page.key(Key::Suspend);
             assert_eq!(suspended(), 2);
-            // Shift+S's release is S's too.
-            page.key_released(gtk::gdk::Key::S);
+            // Whatever the key's value on its release (Shift+S gives S, a
+            // Cyrillic layout `Cyrillic_yeru`), its keycode re-arms.
+            page.key_released(S_CODE);
             long_ago();
             page.key(Key::Suspend);
             assert_eq!(suspended(), 3);
             // A press too early still counts as the press: its repeats do
             // not suspend once the card has been shown long enough.
-            page.key_released(gtk::gdk::Key::s);
+            page.key_released(S_CODE);
             page.imp().shown_at.set(Some(Instant::now()));
             page.key(Key::Suspend);
             long_ago();
             page.key(Key::Suspend);
             assert_eq!(suspended(), 3);
+        });
+    }
+
+    /// S released while another page was shown is not seen here: leaving
+    /// the page (`keys::when_left`, here its hiding) lets the next S act.
+    #[test]
+    fn leaving_the_page_lets_the_next_s_suspend() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, ids) = page_of(4);
+            let view = adw::NavigationView::new();
+            let window = gtk::Window::builder().child(&view).build();
+            window.present();
+            view.push(&page);
+            crate::testing::settle();
+            page.imp().pressed_code.set(S_CODE);
+            let suspended = || {
+                ids.iter()
+                    .filter(|id| state.card(id).unwrap().suspended)
+                    .count()
+            };
+            let long_ago = || {
+                page.imp()
+                    .shown_at
+                    .set(Instant::now().checked_sub(Duration::from_secs(1)));
+            };
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 1);
+            // Another page over it, then back: no release was seen.
+            view.push(&adw::NavigationPage::new(&gtk::Label::new(None), "Other"));
+            crate::testing::settle();
+            view.pop();
+            crate::testing::settle();
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 2);
+            window.destroy();
         });
     }
 

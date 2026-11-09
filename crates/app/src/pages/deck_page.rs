@@ -454,6 +454,23 @@ impl DeckPage {
             move |_, key, _, modifiers| page.study_key_released(key, modifiers)
         ));
         self.add_controller(keys);
+        // Every press, before any child can claim it (Return on a row or
+        // on a menu button never reaches the bubble phase above): anything
+        // but a plain S cancels a held S. Returns Proceed, so it claims
+        // neither the press nor its release (gtkeventcontrollerkey.c).
+        let observer = gtk::EventControllerKey::new();
+        observer.set_propagation_phase(gtk::PropagationPhase::Capture);
+        observer.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, modifiers| {
+                page.imp().start_hold.observe_press(key, modifiers);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.add_controller(observer);
         // A hold left behind would start a session at a later release.
         keys::when_left(self, |page| {
             if let Some(page) = page.downcast_ref::<Self>() {
