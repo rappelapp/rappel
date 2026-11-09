@@ -564,14 +564,6 @@ impl CardRow {
         imp.list_item.set(None);
     }
 
-    /// The row's position in its list, while bound through
-    /// [`Self::bind_card`] or [`Self::bind_browse`].
-    pub fn position(&self) -> Option<u32> {
-        let item = self.imp().list_item.upgrade()?;
-        let position = item.position();
-        (position != gtk::INVALID_LIST_POSITION).then_some(position)
-    }
-
     /// The bound card's id, empty while unbound.
     pub fn card_id(&self) -> String {
         self.imp().card_id.borrow().clone()

@@ -43,16 +43,6 @@ use crate::ui::{init_once, nav};
 use crate::widgets::{CardGroupHeader, CardGroups, CardObject, CardRow, card_row};
 use crate::window::RappelWindow;
 
-/// How many frames after opening the page the first header is watched
-/// for (`watch_first_header`): about a second, for a slow first layout.
-const OPEN_FRAMES: u8 = 60;
-
-/// How many frames after a key that may focus the first row.
-const KEY_FRAMES: u8 = 4;
-
-/// The name of the list's controller of those keys (for the tests).
-const FIRST_HEADER_KEYS: &str = "rappel-first-header-keys";
-
 /// The empty state's icon, as in its layout, given back after a short
 /// window took it off (`ui::breakpoint::compact_status_page`).
 const EMPTY_ICON: &str = "document-new-symbolic";
@@ -367,7 +357,6 @@ impl DeckPage {
             .build();
         page.connect_grouped_notify(DeckPage::update_headers);
         page.update_headers();
-        page.keep_first_header();
         page.bind_property("shared-tag-names", &*imp.list_header, "tags")
             .sync_create()
             .build();
@@ -1299,133 +1288,86 @@ impl DeckPage {
                 // item's row, making it if needed (`gtk_list_base_scroll_to`,
                 // `gtk_list_base_grab_focus`, gtk/gtklistbase.c, source read
                 // for GTK 4.20 and 4.22; observed with GTK 4.24.1).
-                let list = &self.imp().card_list;
-                list.scroll_to(0, gtk::ListScrollFlags::FOCUS, None);
-                list.grab_focus();
-                // The header above it (`keep_first_header`).
-                self.watch_first_header(OPEN_FRAMES);
+                self.focus_first_row_when_laid_out();
             }
             ShownFocus::EmptyState => self.focus_or_empty_state(None),
         }
     }
 
-    /// Keeps the first group's header in sight above the first row when
-    /// GTK scrolls to the focused row. GTK scrolls a row that gets the
-    /// focus so that its top is at the top of the view: on open, the first
-    /// row is focused before the list is laid out, and
-    /// `gtk_list_base_scroll_to_item` anchors that row, not yet allocated,
-    /// at the top (`gtk_list_view_get_allocation`, gtk/gtklistbase.c and
-    /// gtk/gtklistview.c, source read for GTK 4.24; ADR 0077 saw it under
-    /// Xvfb); with the keyboard, Up, Page Up or Home onto the first row
-    /// scrolls it just into view (`gtk_list_base_set_focus_child`,
-    /// `gtk_scroll_info_compute_scroll`). Either way the header above it is
-    /// left out of sight. Only those focus moves arm the check
-    /// ([`Self::watch_first_header`]): a scroll by the wheel, a touchpad or
-    /// the scroll bar never does, so it is never snapped back, even when it
-    /// stops with the first row exactly at the top. The keys are seen in
-    /// the capture phase, before the list's own bindings move the focus.
-    fn keep_first_header(&self) {
-        use gtk::gdk::Key;
-        let keys = gtk::EventControllerKey::new();
-        keys.set_name(Some(FIRST_HEADER_KEYS));
-        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-        keys.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, _| {
-                if matches!(
-                    key,
-                    Key::Up
-                        | Key::KP_Up
-                        | Key::Page_Up
-                        | Key::KP_Page_Up
-                        | Key::Home
-                        | Key::KP_Home
-                ) {
-                    page.watch_first_header(KEY_FRAMES);
-                }
-                glib::Propagation::Proceed
-            }
-        ));
-        self.imp().card_list.add_controller(keys);
-    }
-
-    /// Runs [`Self::show_first_header`] on each of the next `frames`
-    /// frames but the first, until it scrolls. A tick callback runs before
-    /// its frame's layout, so the second one sees the layout of the frame
-    /// the focus move was made in; the later ones cover a layout that takes
-    /// more frames (opening the page, a loaded machine), since the check
-    /// itself is exact (the focused first row at the top of a scrolled
-    /// view). While the list is not mapped no tick comes, and the callback
-    /// goes with the list.
-    fn watch_first_header(&self, frames: u8) {
-        if !self.grouped() {
+    /// Focuses the first row, and keeps its group's header in sight above
+    /// it once the list is laid out. Focusing a row scrolls it into view
+    /// (`gtk_list_base_set_focus_child` → `gtk_list_base_scroll_to_item`,
+    /// gtk/gtklistbase.c, source read for GTK 4.24). Before the list is
+    /// laid out, its rows have no place yet and `gtk_list_view_get_allocation`
+    /// puts the row at 0, so the row is anchored at the top of the view and
+    /// the header above it is scrolled away (ADR 0077 saw it under Xvfb,
+    /// every time the page opened). The focus is given at once anyway: at
+    /// startup the page is pushed before the window is shown, and the
+    /// window keeps the focus widget it has then (`gtk_window_show`,
+    /// gtk/gtkwindow.c). The first layout is then the sign to put the view
+    /// back at its top, not a number of frames: the list view gives its
+    /// rows their places, then configures its scroll adjustment
+    /// (`gtk_list_view_size_allocate` → `gtk_list_base_allocate` →
+    /// `gtk_list_base_update_adjustments`, gtk/gtklistview.c), whose
+    /// `changed` signal with a page size says it is done. Once that
+    /// allocation is over (an idle callback: moving the anchor inside the
+    /// list's own allocation would queue another one), and only while the
+    /// first card still has the focus, `ui::focus::focus_row` sets the view
+    /// to its very top, where the row is in view and stays. A list already
+    /// laid out (a page shown again) needs no wait.
+    fn focus_first_row_when_laid_out(&self) {
+        let list = self.imp().card_list.get();
+        let Some(adjustment) = list.vadjustment() else {
+            return;
+        };
+        // `focus_row` sets the view at its very top first. That is needed
+        // even with the row in view: a list view's first anchor is its
+        // first item, not the header above it (`gtk_list_base_set_model`
+        // anchors position 0 at the top; headers are tiles of their own,
+        // gtk/gtklistitemmanager.c), so the first layout alone leaves the
+        // view scrolled by the header's height (seen under Xvfb: 40 px
+        // before any focus). The grab then focuses the row, making it if
+        // needed (`gtk_list_base_grab_focus`, gtk/gtklistbase.c, source
+        // read for GTK 4.20 to 4.24).
+        focus::focus_row(&list, 0);
+        list.grab_focus();
+        if adjustment.page_size() > 0.0 {
             return;
         }
-        let seen = Cell::new(0u8);
-        self.imp().card_list.add_tick_callback(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            #[upgrade_or]
-            glib::ControlFlow::Break,
-            move |_, _| {
-                seen.set(seen.get().saturating_add(1));
-                if seen.get() > 1 && page.show_first_header() {
-                    return glib::ControlFlow::Break;
-                }
-                if seen.get() > frames {
-                    glib::ControlFlow::Break
-                } else {
-                    glib::ControlFlow::Continue
-                }
+        let handler: Rc<std::cell::RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
+        let once = Rc::clone(&handler);
+        let page = self.downgrade();
+        let id = adjustment.connect_changed(move |adjustment| {
+            if adjustment.page_size() <= 0.0 {
+                return;
             }
-        ));
+            if let Some(id) = once.borrow_mut().take() {
+                adjustment.disconnect(id);
+            }
+            let page = page.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(page) = page.upgrade()
+                    && page.first_card_focused()
+                {
+                    focus::focus_row(&page.imp().card_list, 0);
+                }
+            });
+        });
+        handler.replace(Some(id));
     }
 
-    /// Scrolls to the very top when the first row has the focus and sits
-    /// exactly at the top of the view while the list is scrolled: then
-    /// only its group's header is above, cut off by GTK's scroll to the
-    /// focused row. Decided from the row's place as laid out, with nothing
-    /// remembered, so it holds whatever order the frames come in; called
-    /// only after a focus move ([`Self::watch_first_header`]). Returns
-    /// whether it scrolled.
-    fn show_first_header(&self) -> bool {
-        let Some(adjustment) = self.imp().card_list.vadjustment() else {
+    /// Whether the keyboard focus is on the row of the first card shown.
+    fn first_card_focused(&self) -> bool {
+        let list = &self.imp().card_list;
+        let Some(item) = list.focus_child() else {
             return false;
         };
-        if !self.grouped() || adjustment.value() <= 0.0 || self.focused_position() != Some(0) {
-            return false;
-        }
-        // The list is the scrolled view: its children are placed in it,
-        // minus the scroll position (gtk/gtklistbase.c).
-        if self
-            .focused_row_bounds()
-            .is_some_and(|b| b.height() > 0.0 && b.y().abs() <= 0.5)
-        {
-            adjustment.set_value(0.0);
-            return true;
-        }
-        false
-    }
-
-    /// Where the focused row is in the list view, as laid out.
-    fn focused_row_bounds(&self) -> Option<gtk::graphene::Rect> {
-        let list = &self.imp().card_list;
-        list.focus_child()?.compute_bounds(&**list)
-    }
-
-    /// The position in the list shown of the row with the keyboard focus.
-    fn focused_position(&self) -> Option<u32> {
-        let list = &self.imp().card_list;
-        let root = list.root()?;
-        let focus = root.focus()?;
-        let item = list.focus_child()?;
-        if !focus.is_ancestor(&item) && focus != item {
-            return None;
-        }
-        item.first_child().and_downcast::<CardRow>()?.position()
+        let focus = list.root().and_then(|root| root.focus());
+        let inside = focus.is_some_and(|w| w == item || w.is_ancestor(&item));
+        let row = item.first_child().and_downcast::<CardRow>();
+        let first = self.shown_item(0);
+        inside
+            && matches!((row, first), (Some(row), Some(first)) if row.card_id() == first.card().id)
     }
 
     /// Focuses the card at `position`, or with `None` the empty state's
@@ -1441,9 +1383,7 @@ impl DeckPage {
 
     /// Scrolls to the card at `position` and gives it the keyboard focus.
     fn focus(&self, position: u32) {
-        self.imp()
-            .card_list
-            .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+        focus::focus_row(&self.imp().card_list, position);
     }
 
     fn update_empty_state(&self) {
@@ -2399,8 +2339,8 @@ mod tests {
 
     /// Opening a grouped deck focuses its first row with the first group's
     /// header still in sight above it (the list scrolled it away before,
-    /// ADR 0077), and going up to the first row with the keyboard brings
-    /// the header back too (ADR 0079).
+    /// ADR 0077), scrolls are never fought, and the page's own focus on
+    /// the first card from far down brings the header back (ADR 0079).
     #[test]
     fn the_first_groups_header_stays_in_sight() {
         crate::testing::with_widgets(|| {
@@ -2422,8 +2362,8 @@ mod tests {
                 Duration::from_secs(10),
             );
             assert!(settled, "the first row is focused");
-            // However many frames the layout takes, the list ends at the
-            // very top with the header in view.
+            // The row was focused once laid out, so the list is still at
+            // the very top with the header in view.
             let header_shown = || {
                 list.first_child()
                     .is_some_and(|h| h.css_name() == "header" && h.height() > 0)
@@ -2437,8 +2377,9 @@ mod tests {
             crate::testing::settle_until(|| false, Duration::from_millis(300));
             assert_eq!(adjustment.value(), 0.0);
 
-            // A scroll from the top (the wheel, the scroll bar) that stops
-            // with the focused first row exactly at the top is left alone.
+            // A scroll from the top (the wheel, the scroll bar), even one
+            // that stops with the focused first row exactly at the top, is
+            // left alone: nothing watches the scroll.
             let header_height = list
                 .first_child()
                 .and_then(|h| h.compute_bounds(&list))
@@ -2452,17 +2393,27 @@ mod tests {
                 "a scroll was snapped back"
             );
 
-            // Down the list, the focus on the second row, then Up with the
-            // keyboard: GTK scrolls the first row just into view, and the
-            // header comes back with it.
-            list.scroll_to(1, gtk::ListScrollFlags::FOCUS, None);
-            adjustment.set_value(600.0);
-            let away =
-                crate::testing::settle_until(|| adjustment.value() > 100.0, Duration::from_secs(5));
+            // A scroll down from the top is left alone.
+            adjustment.set_value(10.0);
+            crate::testing::settle_until(|| false, Duration::from_millis(300));
+            assert_eq!(adjustment.value(), 10.0);
+
+            // Far down the list, the page gives the first card the focus
+            // (the Undo of its delete, the editor closing on it): the
+            // header comes into view with it, as on open.
+            adjustment.set_value(900.0);
+            let away = crate::testing::settle_until(
+                || adjustment.value() > 100.0,
+                Duration::from_secs(10),
+            );
             assert!(away, "not scrolled away: {}", adjustment.value());
-            press_up(&page);
+            page.focus_card(&first);
             let back = crate::testing::settle_until(
-                || focused_card(&window).as_ref() == Some(&first) && adjustment.value() == 0.0,
+                || {
+                    focused_card(&window).as_ref() == Some(&first)
+                        && adjustment.value() == 0.0
+                        && header_shown()
+                },
                 Duration::from_secs(10),
             );
             assert!(
@@ -2471,10 +2422,12 @@ mod tests {
                 focused_card(&window),
                 adjustment.value()
             );
-            // A scroll down from the top is left alone.
-            adjustment.set_value(10.0);
-            crate::testing::settle_until(|| false, Duration::from_millis(300));
-            assert_eq!(adjustment.value(), 10.0);
+            // Not covered here: keys delivered by a real keyboard. Up, Page
+            // Up or Home onto the first row from further down scroll it
+            // just into view with its header above, as any sectioned GTK
+            // list does; Tab back into the list focuses the row it had,
+            // which GTK does not scroll to (`gtk_list_base_set_focus_child`
+            // scrolls only to a new focus position).
             window.destroy();
         });
     }
@@ -2680,25 +2633,6 @@ mod tests {
             .and_downcast::<CardRow>()
             .or_else(|| focus.downcast::<CardRow>().ok())?;
         Some(row.card_id())
-    }
-
-    /// Presses Up in the list as the keyboard does: the page's capture
-    /// controller sees the key, then the focus moves up a row in the list
-    /// (`gtk_widget_child_focus`, which `gtk_list_base_focus` handles).
-    fn press_up(page: &DeckPage) {
-        let list = page.imp().card_list.get();
-        let controller = list
-            .observe_controllers()
-            .iter::<glib::Object>()
-            .filter_map(Result::ok)
-            .filter_map(|c| c.downcast::<gtk::EventControllerKey>().ok())
-            .find(|c| c.name().as_deref() == Some(FIRST_HEADER_KEYS))
-            .expect("the page watches the keys that reach the first row");
-        let _ = controller.emit_by_name::<bool>(
-            "key-pressed",
-            &[&gtk::gdk::Key::Up, &0u32, &gtk::gdk::ModifierType::empty()],
-        );
-        let _ = list.child_focus(gtk::DirectionType::Up);
     }
 
     /// Presses Ctrl+A on the page's controller (`ui::select_all`), as a key

@@ -921,9 +921,7 @@ impl BrowserPage {
     }
 
     fn focus(&self, position: u32) {
-        self.imp()
-            .card_list
-            .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+        crate::ui::focus::focus_row(&self.imp().card_list, position);
     }
 
     // --- actions on cards ------------------------------------------------

@@ -280,10 +280,7 @@ impl<P: SelectionPage, T: SelectableCard> CardSelection<P, T> {
 
     /// Scrolls to the card at `position` and gives it the keyboard focus.
     fn focus(&self, position: u32) {
-        self.0
-            .parts
-            .list
-            .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+        crate::ui::focus::focus_row(&self.0.parts.list, position);
     }
 
     /// Keeps the items in line with the choice whatever changes the list,
