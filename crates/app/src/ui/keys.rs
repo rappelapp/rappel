@@ -44,23 +44,29 @@ pub const START_STUDY_TRIGGER: &str = "s";
 /// given whether a text field has the keyboard focus (`text_focus`: a typed
 /// letter belongs to it). Ctrl, Alt, Shift, Super, Meta and Hyper make it
 /// another shortcut (Ctrl+S, Shift+S, which the review page binds to
-/// Suspend), so they give `false`. Caps Lock and Num Lock are not
-/// modifiers in this sense, and Caps Lock's capital S is still S. The
-/// grades 1 to 4 are not decided here: the review page binds them as
-/// shortcut triggers (`pages::review_page::KEYS`).
+/// Suspend), so they give `false`. Caps Lock (`LOCK_MASK`) is not a
+/// modifier in this sense, and Caps Lock's capital S is still S; GDK 4 has
+/// no Num Lock bit in `GdkModifierType` at all. The grades 1 to 4 are not
+/// decided here: the review page binds them as shortcut triggers
+/// (`pages::review_page::KEYS`).
 pub fn starts_studying(
     key: gtk::gdk::Key,
     modifiers: gtk::gdk::ModifierType,
     text_focus: bool,
 ) -> bool {
-    use gtk::gdk::{Key, ModifierType};
+    use gtk::gdk::ModifierType;
     let others = ModifierType::CONTROL_MASK
         | ModifierType::ALT_MASK
         | ModifierType::SHIFT_MASK
         | ModifierType::SUPER_MASK
         | ModifierType::META_MASK
         | ModifierType::HYPER_MASK;
-    !text_focus && !modifiers.intersects(others) && matches!(key, Key::s | Key::S)
+    !text_focus && !modifiers.intersects(others) && is_s(key)
+}
+
+/// Whether `key` is the letter S, small or capital.
+pub fn is_s(key: gtk::gdk::Key) -> bool {
+    matches!(key, gtk::gdk::Key::s | gtk::gdk::Key::S)
 }
 
 /// S starts studying when it is *released*, not when it is pressed. A held
@@ -71,32 +77,134 @@ pub fn starts_studying(
 /// repeats and its own S (Suspend) would suspend cards one after another.
 /// So the press, and every repeat, is swallowed on the page that stays, and
 /// the release starts the session once.
-#[derive(Debug, Default)]
-pub struct StartHold {
-    held: std::cell::Cell<bool>,
+///
+/// `T` is what S would start, recorded at the press: `()` on a deck's page,
+/// the deck's id on the deck list, so a release on another row starts
+/// nothing. A hold is only ever the *last* key press the page saw: every
+/// other press (Ctrl, Shift, Return, …) cancels it, the release must be a
+/// plain S too, and the page clears it when it is hidden, unmapped or loses
+/// the focus ([`StartHold::clear`]). Otherwise an S pressed on one page and
+/// released on another left a hold behind, and a later Ctrl+S started a
+/// session.
+#[derive(Debug)]
+pub struct StartHold<T> {
+    held: std::cell::RefCell<Option<T>>,
 }
 
-impl StartHold {
-    /// A key press or repeat: `true` when the page swallows it (it is the
-    /// S that starts studying, now held).
+impl<T> Default for StartHold<T> {
+    fn default() -> Self {
+        Self {
+            held: std::cell::RefCell::new(None),
+        }
+    }
+}
+
+impl<T: PartialEq> StartHold<T> {
+    /// Every key press or repeat the page sees. `target` is what S would
+    /// start now (`None`: nothing, as on a row that is not a deck's). Gives
+    /// `true` when the page swallows the press: it is the S that starts
+    /// studying, now held. Any other press cancels the hold.
     pub fn pressed(
         &self,
         key: gtk::gdk::Key,
         modifiers: gtk::gdk::ModifierType,
         text_focus: bool,
+        target: Option<T>,
     ) -> bool {
-        let start = starts_studying(key, modifiers, text_focus);
-        if start {
-            self.held.set(true);
-        }
-        start
+        let held = target.filter(|_| starts_studying(key, modifiers, text_focus));
+        let swallowed = held.is_some();
+        self.held.replace(held);
+        swallowed
     }
 
-    /// A key release: `true` when it ends a held S and no text field has
-    /// the focus now, so the session starts. Only the first release counts.
-    pub fn released(&self, key: gtk::gdk::Key, text_focus: bool) -> bool {
-        let is_s = matches!(key, gtk::gdk::Key::s | gtk::gdk::Key::S);
-        is_s && self.held.take() && !text_focus
+    /// A key release, with the modifiers it came with and what S would
+    /// start now. `true` when it ends a held S as a plain S (no Ctrl, Alt,
+    /// Shift, Super; no text field focused by now) on the same target as
+    /// the press: the session starts. Only the first such release counts;
+    /// the release of another key leaves the hold as it is (keys roll over
+    /// when typing fast).
+    pub fn released(
+        &self,
+        key: gtk::gdk::Key,
+        modifiers: gtk::gdk::ModifierType,
+        text_focus: bool,
+        target: Option<&T>,
+    ) -> bool {
+        if !is_s(key) {
+            return false;
+        }
+        let held = self.held.take();
+        held.is_some() && held.as_ref() == target && starts_studying(key, modifiers, text_focus)
+    }
+
+    /// Forgets the hold: the page is hidden, unmapped or lost the focus,
+    /// so the release may come anywhere.
+    pub fn clear(&self) {
+        self.held.replace(None);
+    }
+}
+
+/// Calls `left` when `page` starts hiding (another page pushed over it, or
+/// it is popped: `AdwNavigationPage::hiding`), is unmapped (GTK unmaps a
+/// hidden page, adw-navigation-view.c sets its child-visible to false, and a
+/// hidden or closed window unmaps its children), or the keyboard focus
+/// leaves it (`GtkEventControllerFocus::leave`: into a dialog, which is not
+/// a descendant of the page). A key held on `page` may then be released
+/// anywhere, so a page forgets its held keys here.
+pub fn when_left(
+    page: &impl IsA<adw::NavigationPage>,
+    left: impl Fn(&adw::NavigationPage) + 'static,
+) {
+    let left = std::rc::Rc::new(left);
+    let page = page.upcast_ref::<adw::NavigationPage>();
+    let on_hiding = std::rc::Rc::clone(&left);
+    adw::prelude::NavigationPageExt::connect_hiding(page, move |page| on_hiding(page));
+    let on_unmap = std::rc::Rc::clone(&left);
+    page.connect_unmap(move |page| on_unmap(page));
+    let focus = gtk::EventControllerFocus::new();
+    let weak = page.downgrade();
+    focus.connect_leave(move |_| {
+        if let Some(page) = weak.upgrade() {
+            left(&page);
+        }
+    });
+    page.add_controller(focus);
+}
+
+/// One action per press of a key, however long it is held: a held key
+/// repeats as further presses with no release between (`key-pressed` and
+/// `key-released` of `GtkEventControllerKey`, gtkeventcontrollerkey.c). The
+/// review page's S suspends one card per press with this (ADR 0081).
+#[derive(Debug)]
+pub struct OnePress {
+    /// No press seen since the last release.
+    up: std::cell::Cell<bool>,
+}
+
+impl Default for OnePress {
+    fn default() -> Self {
+        Self {
+            up: std::cell::Cell::new(true),
+        }
+    }
+}
+
+impl OnePress {
+    /// A press or a repeat: `true` for the first since the key was last
+    /// released (or ever, or since [`OnePress::reset`]).
+    pub fn press(&self) -> bool {
+        self.up.replace(false)
+    }
+
+    /// The key went up: the next press acts again.
+    pub fn release(&self) {
+        self.up.set(true);
+    }
+
+    /// The release may have gone elsewhere (the page lost the focus): the
+    /// next press acts.
+    pub fn reset(&self) {
+        self.release();
     }
 }
 
@@ -156,7 +264,7 @@ mod tests {
         use gtk::gdk::{Key, ModifierType as M};
         let none = M::empty();
         assert!(starts_studying(Key::s, none, false));
-        // Caps Lock (and Num Lock) are not modifiers here.
+        // Caps Lock is not a modifier here (GDK 4 has no Num Lock bit).
         assert!(starts_studying(Key::S, M::LOCK_MASK, false));
         assert!(starts_studying(Key::s, M::LOCK_MASK, false));
         assert!(!starts_studying(Key::s, none, true));
@@ -193,27 +301,109 @@ mod tests {
     fn a_held_s_starts_once_on_its_release() {
         use gtk::gdk::{Key, ModifierType as M};
         let none = M::empty();
-        let hold = StartHold::default();
+        let hold = StartHold::<()>::default();
         // A release with no press seen starts nothing.
-        assert!(!hold.released(Key::s, false));
+        assert!(!hold.released(Key::s, none, false, Some(&())));
         // The press and every repeat are swallowed; none starts.
         for _ in 0..5 {
-            assert!(hold.pressed(Key::s, none, false));
+            assert!(hold.pressed(Key::s, none, false, Some(())));
         }
-        // Another key's release does not start; the first S release does,
-        // once.
-        assert!(!hold.released(Key::a, false));
-        assert!(hold.released(Key::s, false));
-        assert!(!hold.released(Key::s, false));
-        // Other keys, modifiers and text fields are not swallowed.
-        assert!(!hold.pressed(Key::a, none, false));
-        assert!(!hold.pressed(Key::s, M::CONTROL_MASK, false));
-        assert!(!hold.pressed(Key::s, none, true));
-        assert!(!hold.released(Key::s, false));
+        // Another key's release does not start, nor cancel; the first S
+        // release does, once.
+        assert!(!hold.released(Key::a, none, false, Some(&())));
+        assert!(hold.released(Key::s, none, false, Some(&())));
+        assert!(!hold.released(Key::s, none, false, Some(&())));
+        // Other keys, modifiers, text fields and no target are not swallowed.
+        assert!(!hold.pressed(Key::a, none, false, Some(())));
+        assert!(!hold.pressed(Key::s, M::CONTROL_MASK, false, Some(())));
+        assert!(!hold.pressed(Key::s, none, true, Some(())));
+        assert!(!hold.pressed(Key::s, none, false, None));
+        assert!(!hold.released(Key::s, none, false, Some(&())));
         // A text field that took the focus meanwhile cancels the start.
-        assert!(hold.pressed(Key::S, none, false));
-        assert!(!hold.released(Key::S, true));
-        assert!(!hold.released(Key::S, false));
+        assert!(hold.pressed(Key::S, none, false, Some(())));
+        assert!(!hold.released(Key::S, none, true, Some(&())));
+        assert!(!hold.released(Key::S, none, false, Some(&())));
+        // So does a target gone meanwhile (selection mode began).
+        assert!(hold.pressed(Key::s, none, false, Some(())));
+        assert!(!hold.released(Key::s, none, false, None));
+    }
+
+    /// The stale hold of the review: any other press cancels it, so a later
+    /// Ctrl+S or Shift+S cannot start a session.
+    #[test]
+    fn any_other_press_cancels_the_hold() {
+        use gtk::gdk::{Key, ModifierType as M};
+        let none = M::empty();
+        for other in [Key::Control_L, Key::Shift_L, Key::Return, Key::a] {
+            let hold = StartHold::<()>::default();
+            assert!(hold.pressed(Key::s, none, false, Some(())));
+            assert!(!hold.pressed(other, none, false, Some(())));
+            assert!(!hold.released(Key::s, none, false, Some(&())), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_release_with_a_modifier_starts_nothing() {
+        use gtk::gdk::{Key, ModifierType as M};
+        for modifiers in [M::CONTROL_MASK, M::SHIFT_MASK, M::ALT_MASK, M::SUPER_MASK] {
+            let hold = StartHold::<()>::default();
+            assert!(hold.pressed(Key::s, M::empty(), false, Some(())));
+            assert!(
+                !hold.released(Key::s, modifiers, false, Some(&())),
+                "{modifiers:?}"
+            );
+            // The hold is spent: a plain release now starts nothing either.
+            assert!(!hold.released(Key::s, M::empty(), false, Some(&())));
+        }
+        // Caps Lock is no modifier.
+        let hold = StartHold::<()>::default();
+        assert!(hold.pressed(Key::S, M::LOCK_MASK, false, Some(())));
+        assert!(hold.released(Key::S, M::LOCK_MASK, false, Some(&())));
+    }
+
+    #[test]
+    fn clearing_forgets_the_hold() {
+        use gtk::gdk::{Key, ModifierType as M};
+        let hold = StartHold::<()>::default();
+        assert!(hold.pressed(Key::s, M::empty(), false, Some(())));
+        // The page was hidden (another page pushed) or lost the focus.
+        hold.clear();
+        assert!(!hold.released(Key::s, M::empty(), false, Some(&())));
+    }
+
+    /// On the deck list the release must come on the row the press came on.
+    #[test]
+    fn the_release_must_be_on_the_target_of_the_press() {
+        use gtk::gdk::{Key, ModifierType as M};
+        let none = M::empty();
+        let hold = StartHold::<&str>::default();
+        assert!(hold.pressed(Key::s, none, false, Some("a")));
+        assert!(!hold.released(Key::s, none, false, Some(&"b")));
+        assert!(!hold.released(Key::s, none, false, Some(&"a")));
+        assert!(hold.pressed(Key::s, none, false, Some("a")));
+        assert!(!hold.released(Key::s, none, false, None));
+        assert!(hold.pressed(Key::s, none, false, Some("a")));
+        assert!(hold.released(Key::s, none, false, Some(&"a")));
+    }
+
+    #[test]
+    fn one_press_acts_once_per_release() {
+        let key = OnePress::default();
+        // The first press ever acts; its repeats do not.
+        assert!(key.press());
+        assert!(!key.press());
+        assert!(!key.press());
+        key.release();
+        assert!(key.press());
+        assert!(!key.press());
+        // A release seen elsewhere: reset lets the next press act.
+        key.reset();
+        assert!(key.press());
+        // Releases without presses change nothing.
+        key.release();
+        key.release();
+        assert!(key.press());
+        assert!(!key.press());
     }
 
     #[test]

@@ -96,7 +96,7 @@ mod imp {
         #[template_child]
         pub header_study_button: TemplateChild<gtk::Button>,
         /// S pressed and not yet released (`add_study_key`).
-        pub start_hold: crate::ui::keys::StartHold,
+        pub start_hold: crate::ui::keys::StartHold<()>,
         #[template_child]
         pub bar_study_button: TemplateChild<gtk::Button>,
         #[template_child]
@@ -451,9 +451,15 @@ impl DeckPage {
         keys.connect_key_released(glib::clone!(
             #[weak(rename_to = page)]
             self,
-            move |_, key, _, _| page.study_key_released(key)
+            move |_, key, _, modifiers| page.study_key_released(key, modifiers)
         ));
         self.add_controller(keys);
+        // A hold left behind would start a session at a later release.
+        keys::when_left(self, |page| {
+            if let Some(page) = page.downcast_ref::<Self>() {
+                page.imp().start_hold.clear();
+            }
+        });
         let imp = self.imp();
         if let Some(label) = keys::label(keys::START_STUDY_TRIGGER) {
             let tip = keys::tooltip(&gettext("Study"), &label);
@@ -462,27 +468,39 @@ impl DeckPage {
         }
     }
 
-    /// A key press or repeat: S is swallowed (its release starts the
-    /// session) except while cards are being chosen, where it does nothing.
+    /// Every key press or repeat the page sees: S is swallowed (its release
+    /// starts the session) except while cards are being chosen, where it
+    /// does nothing; any other key cancels a held S.
     fn study_key_pressed(
         &self,
         key: gtk::gdk::Key,
         modifiers: gtk::gdk::ModifierType,
     ) -> glib::Propagation {
         let typing = keys::text_has_focus(self);
-        if !self.selecting() && self.imp().start_hold.pressed(key, modifiers, typing) {
+        let target = (!self.selecting()).then_some(());
+        if self
+            .imp()
+            .start_hold
+            .pressed(key, modifiers, typing, target)
+        {
             glib::Propagation::Stop
         } else {
             glib::Propagation::Proceed
         }
     }
 
-    /// The release of S: `deck.study` is activated when the press was seen
-    /// here. It is disabled when there is nothing to study, and activating
-    /// a disabled action does nothing (`gtk_widget_activate_action`).
-    fn study_key_released(&self, key: gtk::gdk::Key) {
+    /// A key release: a plain S whose press was the last one seen here
+    /// activates `deck.study`. It is disabled when there is nothing to
+    /// study, and activating a disabled action does nothing
+    /// (`gtk_widget_activate_action`).
+    fn study_key_released(&self, key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) {
         let typing = keys::text_has_focus(self);
-        if self.imp().start_hold.released(key, typing) && !self.selecting() {
+        let target = (!self.selecting()).then_some(&());
+        if self
+            .imp()
+            .start_hold
+            .released(key, modifiers, typing, target)
+        {
             // Err: Study is disabled, there is nothing to start.
             let _ = self.activate_action("deck.study", None);
         }
@@ -2420,10 +2438,10 @@ mod tests {
                 );
             }
             assert!(!reviewing(&view));
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert!(reviewing(&view));
             // A second release starts nothing more.
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert_eq!(view.navigation_stack().n_items(), 2);
             window.destroy();
         });
@@ -2446,9 +2464,42 @@ mod tests {
                 page.study_key_pressed(Key::a, M::empty()),
                 glib::Propagation::Proceed
             );
-            page.study_key_released(Key::s);
-            page.study_key_released(Key::a);
+            page.study_key_released(Key::s, M::empty());
+            page.study_key_released(Key::a, M::empty());
             assert!(!reviewing(&view));
+            window.destroy();
+        });
+    }
+
+    /// A hold does not outlive the press: another key's press, a modifier
+    /// on the release, or the page being hidden (a page pushed over it)
+    /// each make the release start nothing.
+    #[test]
+    fn a_stale_hold_starts_nothing() {
+        use gtk::gdk::{Key, ModifierType as M};
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, _ids) = page_of(3);
+            let (window, view, _entry) = in_view(&page);
+            crate::testing::settle();
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            let _ = page.study_key_pressed(Key::Control_L, M::empty());
+            page.study_key_released(Key::s, M::CONTROL_MASK);
+            assert!(!reviewing(&view));
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            page.study_key_released(Key::s, M::SHIFT_MASK);
+            assert!(!reviewing(&view));
+            // Hidden under another page and shown again.
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            view.push(&adw::NavigationPage::new(&gtk::Label::new(None), "Other"));
+            crate::testing::settle();
+            view.pop();
+            crate::testing::settle();
+            page.study_key_released(Key::s, M::empty());
+            assert!(!reviewing(&view));
+            // A fresh press and release still start.
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            page.study_key_released(Key::s, M::empty());
+            assert!(reviewing(&view));
             window.destroy();
         });
     }
@@ -2467,7 +2518,7 @@ mod tests {
                 page.study_key_pressed(Key::s, M::empty()),
                 glib::Propagation::Proceed
             );
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert!(!reviewing(&view));
             page.selection().set_active(false);
             // A text field with the focus keeps the letter.
@@ -2476,7 +2527,7 @@ mod tests {
                 page.study_key_pressed(Key::s, M::empty()),
                 glib::Propagation::Proceed
             );
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert!(!reviewing(&view));
             // Pressed on the page, then the focus moves into a text field:
             // the release starts nothing.
@@ -2486,7 +2537,7 @@ mod tests {
                 glib::Propagation::Stop
             );
             entry.grab_focus();
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert!(!reviewing(&view));
             window.destroy();
 
@@ -2495,7 +2546,7 @@ mod tests {
             let (window, view, _entry) = in_view(&page);
             crate::testing::settle();
             let _ = page.study_key_pressed(Key::s, M::empty());
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert!(!reviewing(&view));
             window.destroy();
         });

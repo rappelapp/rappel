@@ -67,7 +67,7 @@ mod imp {
         #[template_child]
         pub empty_new_button: TemplateChild<gtk::Button>,
         /// S pressed and not yet released (`add_study_key`).
-        pub start_hold: crate::ui::keys::StartHold,
+        pub start_hold: crate::ui::keys::StartHold<String>,
         #[template_child]
         pub archived_list: TemplateChild<gtk::ListBox>,
         #[template_child]
@@ -337,9 +337,15 @@ impl DecksPage {
         keys.connect_key_released(glib::clone!(
             #[weak(rename_to = page)]
             self,
-            move |_, key, _, _| page.study_key_released(key)
+            move |_, key, _, modifiers| page.study_key_released(key, modifiers)
         ));
         self.add_controller(keys);
+        // A hold left behind would start a session at a later release.
+        keys::when_left(self, |page| {
+            if let Some(page) = page.downcast_ref::<Self>() {
+                page.imp().start_hold.clear();
+            }
+        });
     }
 
     /// The deck row that has the keyboard focus, or holds the widget that
@@ -351,29 +357,39 @@ impl DecksPage {
             .and_downcast::<DeckRow>()
     }
 
-    /// A key press or repeat: S on a deck row is swallowed (its release
-    /// starts the session).
+    /// Every key press or repeat the page sees: S on a deck row is
+    /// swallowed (its release starts the session), and the row's deck is
+    /// remembered; any other key cancels a held S.
     fn study_key_pressed(
         &self,
         key: gtk::gdk::Key,
         modifiers: gtk::gdk::ModifierType,
     ) -> glib::Propagation {
         let typing = keys::text_has_focus(self);
-        if self.focused_row().is_some() && self.imp().start_hold.pressed(key, modifiers, typing) {
+        let target = self.focused_row().map(|row| row.deck_id());
+        if self
+            .imp()
+            .start_hold
+            .pressed(key, modifiers, typing, target)
+        {
             glib::Propagation::Stop
         } else {
             glib::Propagation::Proceed
         }
     }
 
-    /// The release of S: studies the deck of the row focused now, if the
-    /// press was seen here.
-    fn study_key_released(&self, key: gtk::gdk::Key) {
+    /// A key release: a plain S whose press was the last one seen here,
+    /// on the same deck's row as now, studies that deck.
+    fn study_key_released(&self, key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) {
         let typing = keys::text_has_focus(self);
-        if self.imp().start_hold.released(key, typing)
-            && let Some(row) = self.focused_row()
+        let target = self.focused_row().map(|row| row.deck_id());
+        if self
+            .imp()
+            .start_hold
+            .released(key, modifiers, typing, target.as_ref())
+            && let Some(id) = target
         {
-            self.study(&row.deck_id());
+            self.study(&id);
         }
     }
 
@@ -1065,9 +1081,9 @@ mod key_tests {
                     );
                 }
                 assert!(!reviewing(&view));
-                page.study_key_released(Key::s);
+                page.study_key_released(Key::s, M::empty());
                 assert!(reviewing(&view));
-                page.study_key_released(Key::s);
+                page.study_key_released(Key::s, M::empty());
                 assert_eq!(view.navigation_stack().n_items(), 2);
                 window.destroy();
             }
@@ -1086,7 +1102,7 @@ mod key_tests {
                     glib::Propagation::Proceed
                 );
             }
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert!(!reviewing(&view));
             // The Archived Decks row is not a deck row.
             assert!(page.archived_row_shown());
@@ -1096,13 +1112,107 @@ mod key_tests {
                 page.study_key_pressed(Key::s, M::empty()),
                 glib::Propagation::Proceed
             );
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert!(!reviewing(&view));
             // A deck with nothing to study starts nothing.
             row(&page, "B").grab_focus();
             let _ = page.study_key_pressed(Key::s, M::empty());
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert!(!reviewing(&view));
+            window.destroy();
+        });
+    }
+
+    fn deck_page_shown(view: &adw::NavigationView) -> bool {
+        view.visible_page()
+            .is_some_and(|p| p.is::<crate::pages::DeckPage>())
+    }
+
+    /// The review's stale hold: S pressed on a row, Return opens the deck
+    /// (the row's own binding takes Return, so this page never sees that
+    /// press), S released on the deck page; back on the list, Ctrl+S must
+    /// start nothing. Hiding the page cleared the hold; Ctrl's press and
+    /// the release's modifier would each have refused it too.
+    #[test]
+    fn a_hold_left_by_opening_a_deck_starts_nothing_later() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, page, window, view) = list();
+            let a = row(&page, "A");
+            a.grab_focus();
+            assert_eq!(
+                page.study_key_pressed(Key::s, M::empty()),
+                glib::Propagation::Stop
+            );
+            // Return on the row: its activation opens the deck page.
+            a.activate();
+            crate::testing::settle();
+            assert!(deck_page_shown(&view));
+            // S goes up on the deck page, which never saw it pressed (its
+            // own tests cover that): this page does not see that release.
+            view.pop();
+            crate::testing::settle();
+            row(&page, "A").grab_focus();
+            // A plain release alone: the hold is gone.
+            page.study_key_released(Key::s, M::empty());
+            assert!(!reviewing(&view));
+            // Ctrl, then Ctrl+S pressed and released.
+            let _ = page.study_key_pressed(Key::Control_L, M::empty());
+            assert_eq!(
+                page.study_key_pressed(Key::s, M::CONTROL_MASK),
+                glib::Propagation::Proceed
+            );
+            page.study_key_released(Key::s, M::CONTROL_MASK);
+            assert!(!reviewing(&view));
+            assert_eq!(view.navigation_stack().n_items(), 1);
+            window.destroy();
+        });
+    }
+
+    /// Even with the hold still there (no navigation), another key's press
+    /// or a modifier on the release refuses it.
+    #[test]
+    fn ctrl_or_shift_cancel_a_held_s() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, page, window, view) = list();
+            row(&page, "A").grab_focus();
+            for (other, release) in [
+                (Some(Key::Control_L), M::CONTROL_MASK),
+                (Some(Key::Shift_L), M::SHIFT_MASK),
+                (None, M::CONTROL_MASK),
+            ] {
+                let _ = page.study_key_pressed(Key::s, M::empty());
+                if let Some(other) = other {
+                    assert_eq!(
+                        page.study_key_pressed(other, M::empty()),
+                        glib::Propagation::Proceed
+                    );
+                }
+                page.study_key_released(Key::s, release);
+                assert!(!reviewing(&view), "{other:?} {release:?}");
+            }
+            window.destroy();
+        });
+    }
+
+    /// S pressed on one deck's row and released on another's starts
+    /// nothing; pressed and released on the same row, it starts that deck.
+    #[test]
+    fn the_release_must_come_on_the_row_of_the_press() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, page, window, view) = list();
+            let state = page.imp().state().cloned().unwrap();
+            let b = row(&page, "B");
+            state
+                .add_card_with_tags(&b.deck_id(), "front", "back", &[])
+                .unwrap();
+            row(&page, "A").grab_focus();
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            row(&page, "B").grab_focus();
+            page.study_key_released(Key::s, M::empty());
+            assert!(!reviewing(&view));
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            page.study_key_released(Key::s, M::empty());
+            assert!(reviewing(&view));
             window.destroy();
         });
     }
@@ -1124,7 +1234,7 @@ mod key_tests {
                 page.study_key_pressed(Key::s, M::empty()),
                 glib::Propagation::Proceed
             );
-            page.study_key_released(Key::s);
+            page.study_key_released(Key::s, M::empty());
             assert!(!reviewing(&view));
             window.destroy();
         });

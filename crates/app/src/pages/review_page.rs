@@ -159,6 +159,8 @@ mod imp {
         pub back_cut: Cell<bool>,
         /// When the current card's front was shown.
         pub shown_at: Cell<Option<Instant>>,
+        /// S suspends one card per press, not one per repeat (ADR 0081).
+        pub suspend_key: crate::ui::keys::OnePress,
         pub revealed: Cell<bool>,
         /// When the back was shown.
         pub revealed_at: Cell<Option<Instant>>,
@@ -482,7 +484,9 @@ enum Side {
 /// Whether S may suspend a card that has been on screen for `shown_for`.
 /// After the first S the next card is on screen, and key repeat would
 /// suspend it too: a card must be shown for [`KEY_SETTLE`] first. Clicking
-/// the menu item is not delayed.
+/// the menu item is not delayed. A held S also repeats every 30 ms or so
+/// long after that, so the page also needs S to have been released since
+/// its last press (`suspend_key`, [`keys::OnePress`], ADR 0081).
 fn suspend_allowed(shown_for: Option<Duration>) -> bool {
     shown_for.is_some_and(|t| t >= KEY_SETTLE)
 }
@@ -679,6 +683,35 @@ impl ReviewPage {
             ));
         }
         self.add_controller(shortcuts);
+        // The release of S lets the next S suspend (`suspend_key`). Capture
+        // phase, so it sees the release before any child could claim it;
+        // with no `key-pressed` handler it claims no release itself
+        // (`gtk_event_controller_key_handle_event` returns TRUE for a
+        // release only when this controller handled the press,
+        // gtkeventcontrollerkey.c), and shortcut triggers match presses
+        // only (gtkshortcuttrigger.c), so the shortcuts lose nothing.
+        let releases = gtk::EventControllerKey::new();
+        releases.set_propagation_phase(gtk::PropagationPhase::Capture);
+        releases.connect_key_released(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_, key, _, _| page.key_released(key)
+        ));
+        self.add_controller(releases);
+        // A release elsewhere (in the editor, after the page was left) is
+        // not seen here: the next S acts.
+        keys::when_left(self, |page| {
+            if let Some(page) = page.downcast_ref::<Self>() {
+                page.imp().suspend_key.reset();
+            }
+        });
+    }
+
+    /// A key went up: after S, the next S suspends again.
+    fn key_released(&self, key: gtk::gdk::Key) {
+        if keys::is_s(key) {
+            self.imp().suspend_key.release();
+        }
     }
 
     /// Gives Show Answer, Fail and Pass their key in the tooltip (#105),
@@ -732,7 +765,10 @@ impl ReviewPage {
             Some(Act::Edit) => self.edit(),
             Some(Act::Info) => self.card_info(),
             Some(Act::Suspend) => {
-                if suspend_allowed(imp.shown_at.get().map(|t| t.elapsed())) {
+                // Every press counts as one, even one too early: a held S
+                // never suspends, however long it repeats.
+                let first = imp.suspend_key.press();
+                if first && suspend_allowed(imp.shown_at.get().map(|t| t.elapsed())) {
                     self.remove_current(Removal::Suspend);
                 }
             }
@@ -2347,17 +2383,74 @@ mod tests {
             assert_eq!(current(&page).as_deref(), Some(first.as_str()));
             assert!(!state.card(&first).unwrap().suspended);
             // Shown a moment: the first S suspends, the repeat finds a new card.
+            // (Released in between, so only the settle time is tested here;
+            // `a_held_s_suspends_one_card_until_released` tests the repeats.)
+            page.key_released(gtk::gdk::Key::s);
             page.imp()
                 .shown_at
                 .set(Instant::now().checked_sub(Duration::from_secs(1)));
             page.key(Key::Suspend);
+            page.key_released(gtk::gdk::Key::s);
             page.key(Key::Suspend);
+            page.key_released(gtk::gdk::Key::s);
             page.key(Key::Suspend);
             let suspended = ids
                 .iter()
                 .filter(|id| state.card(id).unwrap().suspended)
                 .count();
             assert_eq!(suspended, 1);
+        });
+    }
+
+    /// A held S repeats long after the settle time: only a press that
+    /// follows a release suspends (ADR 0081), one card per press.
+    #[test]
+    fn a_held_s_suspends_one_card_until_released() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, ids) = page_of(4);
+            let _window = in_window(&page);
+            let suspended = || {
+                ids.iter()
+                    .filter(|id| state.card(id).unwrap().suspended)
+                    .count()
+            };
+            let long_ago = || {
+                page.imp()
+                    .shown_at
+                    .set(Instant::now().checked_sub(Duration::from_secs(1)));
+            };
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 1);
+            // The repeats, each after the next card has been shown a while.
+            for _ in 0..5 {
+                long_ago();
+                page.key(Key::Suspend);
+            }
+            assert_eq!(suspended(), 1);
+            // Released (another key's release changes nothing), pressed
+            // again: one more.
+            page.key_released(gtk::gdk::Key::a);
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 1);
+            page.key_released(gtk::gdk::Key::s);
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 2);
+            // Shift+S's release is S's too.
+            page.key_released(gtk::gdk::Key::S);
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 3);
+            // A press too early still counts as the press: its repeats do
+            // not suspend once the card has been shown long enough.
+            page.key_released(gtk::gdk::Key::s);
+            page.imp().shown_at.set(Some(Instant::now()));
+            page.key(Key::Suspend);
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 3);
         });
     }
 
