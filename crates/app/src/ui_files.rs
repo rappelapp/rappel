@@ -30,7 +30,7 @@ use crate::pages::{
 use crate::ui::dialog;
 use crate::widgets::{
     BackupRow, CardListHeader, CardRow, DeckRow, HistoryRow, SelectionBar, SelectionHeader,
-    TagEntry, TagPills, TagSuggestions, chart_card::ChartCard,
+    TagEntry, TagPills, TagSuggestions,
 };
 use crate::window::RappelWindow;
 
@@ -64,7 +64,6 @@ const CHECKS: &[(&str, Load)] = &[
         Load::Template(template::<CardListHeader>),
     ),
     ("card_row.blp", Load::Template(template::<CardRow>)),
-    ("chart_card.blp", Load::Template(template::<ChartCard>)),
     (
         "deck_name_dialog.blp",
         Load::Plain(|| {

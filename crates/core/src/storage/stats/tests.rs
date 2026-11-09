@@ -115,6 +115,44 @@ fn reviews_time_pass_rate_and_forecast_of_a_small_deck() {
 }
 
 #[test]
+fn the_first_activity_is_the_earliest_surviving_review() {
+    let (mut store, decks, cards) = store_with_decks(2, 1);
+    assert_eq!(store.first_activity_at(Scope::All).unwrap(), None);
+    assert_eq!(
+        store.first_activity_at(Scope::Deck(&decks[0])).unwrap(),
+        None
+    );
+    answer(&mut store, &cards[0], Grade::Fail, NOW - 90 * DAY_MS, 3);
+    answer(&mut store, &cards[0], Grade::Pass, NOW - 80 * DAY_MS, 3);
+    answer(&mut store, &cards[1], Grade::Pass, NOW - 50 * DAY_MS, 3);
+    assert_eq!(
+        store.first_activity_at(Scope::All).unwrap(),
+        Some(NOW - 90 * DAY_MS)
+    );
+    assert_eq!(
+        store.first_activity_at(Scope::Deck(&decks[1])).unwrap(),
+        Some(NOW - 50 * DAY_MS)
+    );
+    // A reset keeps the activity; the archived deck still counts.
+    store.reset_card(&cards[0], NOW - 40 * DAY_MS).unwrap();
+    store.archive_deck(&decks[0]).unwrap();
+    assert_eq!(
+        store.first_activity_at(Scope::All).unwrap(),
+        Some(NOW - 90 * DAY_MS)
+    );
+    // A deleted card no longer counts, nor does a missing deck.
+    store.delete_card(&cards[0]).unwrap();
+    assert_eq!(
+        store.first_activity_at(Scope::All).unwrap(),
+        Some(NOW - 50 * DAY_MS)
+    );
+    assert!(matches!(
+        store.first_activity_at(Scope::Deck("nope")),
+        Err(Error::DeckNotFound(_))
+    ));
+}
+
+#[test]
 fn deleted_cards_and_decks_do_not_count() {
     let (mut store, decks, cards) = store_with_decks(2, 1);
     for card in &cards {
@@ -345,6 +383,24 @@ fn oracle(store: &Store, deck: Option<&str>) -> Stats {
     Stats::compute(&past(), &ahead(), NOW, reviews, cards)
 }
 
+/// The earliest review the activity counts, from the logs with the pure
+/// rule: the oracle for [`Store::first_activity_at`].
+fn first_activity(store: &Store, deck: Option<&str>) -> Option<i64> {
+    let mut first = None;
+    for d in store.decks().unwrap() {
+        if deck.is_some_and(|id| id != d.id) {
+            continue;
+        }
+        for card in store.list_cards(&d.id).unwrap() {
+            let log = store.review_events(&card.id).unwrap();
+            for e in stats::activity_reviews(&log).unwrap() {
+                first = Some(first.map_or(e.reviewed_at, |f: i64| f.min(e.reviewed_at)));
+            }
+        }
+    }
+    first
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
 
@@ -354,8 +410,13 @@ proptest! {
     fn sql_equals_the_pure_oracle(ops in prop::collection::vec(op(6), 0..120)) {
         let (store, decks, ..) = run(&ops);
         assert_same(&stats_of(&store, Scope::All), &oracle(&store, None));
+        prop_assert_eq!(store.first_activity_at(Scope::All).unwrap(), first_activity(&store, None));
         for deck in &decks {
             assert_same(&stats_of(&store, Scope::Deck(deck)), &oracle(&store, Some(deck)));
+            prop_assert_eq!(
+                store.first_activity_at(Scope::Deck(deck)).unwrap(),
+                first_activity(&store, Some(deck))
+            );
         }
     }
 
@@ -562,7 +623,13 @@ fn stats_are_fast_at_five_thousand_cards_and_a_hundred_thousand_reviews() {
     });
     assert!(info.reviews >= 2_000);
 
+    let (first_time, first) = fastest("first activity, all decks", 3, || {
+        store.first_activity_at(Scope::All).unwrap()
+    });
+    assert!(first.is_some());
+
     assert_cpu_within(all_time, LIMIT, "global stats");
+    assert_cpu_within(first_time, LIMIT, "first activity");
     assert_cpu_within(deck_time, LIMIT, "deck stats");
     assert_cpu_within(card_time, CARD_LIMIT, "card info");
 }

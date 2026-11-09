@@ -63,6 +63,21 @@ pub fn day_with_weekday(ms: i64) -> String {
     local_format(ms, &pgettext("date format", "%a %-d %b")).unwrap_or_default()
 }
 
+/// The day of the month alone: "14" (a chart's date within a month
+/// already named).
+pub fn day_number(ms: i64) -> String {
+    local_format(ms, "%-d").unwrap_or_default()
+}
+
+/// The year and month of `ms` as one number (`year * 12 + month`), to
+/// tell whether two days are in the same month; 0 when `GLib` cannot
+/// represent the date.
+pub fn month_index(ms: i64) -> i64 {
+    glib::DateTime::from_unix_local(ms.div_euclid(1000)).map_or(0, |time| {
+        i64::from(time.year()) * 12 + i64::from(time.month())
+    })
+}
+
 /// How far `due` is from `now`: "due now", "in 3 days", "in 10 min",
 /// "overdue by 2 days". A card that is less than a day late is "due now".
 pub fn relative_due(due: i64, now: i64) -> String {
@@ -119,8 +134,17 @@ mod tests {
                 day_short(ms),
                 day_long(ms),
             );
-            let _ = day_with_weekday(ms);
+            let _ = (day_with_weekday(ms), day_number(ms), month_index(ms));
         }
+        // 2023-11-14 22:13 UTC: the 14th or 15th, whatever the zone.
+        let day = day_number(1_700_000_000_000);
+        assert!(day == "14" || day == "15", "{day}");
+        // Mid-month days: the same month a day apart in any zone, another
+        // month 30 days later (15 and 16 November, 15 December 2023).
+        let mid = 1_700_000_000_000 + DAY_MS;
+        assert_eq!(month_index(mid), month_index(mid + DAY_MS));
+        assert_eq!(month_index(mid + 30 * DAY_MS), month_index(mid) + 1);
+        assert_ne!(day_number(mid), day_number(mid + DAY_MS));
         assert_ne!(day_short(1_700_000_000_000), "");
     }
 

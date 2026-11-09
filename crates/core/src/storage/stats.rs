@@ -64,6 +64,26 @@ impl Store {
         Ok(Stats::compute(past, ahead, now, reviews, cards))
     }
 
+    /// When the earliest review of `scope` that the activity counts was
+    /// made (UTC milliseconds), by the rule of [`Store::stats`]: surviving
+    /// reviews of live cards in live decks, archived ones too with
+    /// [`Scope::All`]. `None` without any. The statistics page pages back
+    /// no further than the period holding it (ADR 0078).
+    ///
+    /// # Errors
+    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound) for a missing or
+    /// deleted deck; SQLite errors.
+    pub fn first_activity_at(&self, scope: Scope<'_>) -> Result<Option<i64>> {
+        let tx = self.conn.unchecked_transaction()?;
+        if let Scope::Deck(id) = scope {
+            ensure_live_deck(&tx, id)?;
+        }
+        let first = tx.query_row(FIRST_ACTIVITY, params![scope.deck()], |r| r.get(0))?;
+        // Read only: ending it commits nothing.
+        tx.finish()?;
+        Ok(first)
+    }
+
     /// The properties and history of card `card_id` at `now`, replayed from
     /// its log in one read transaction (issue #39, ADR 0032).
     ///
@@ -90,6 +110,16 @@ const ACTIVITY_IN_WINDOW: &str = "SELECT e.reviewed_at, e.grade = 'pass', e.dura
      WHERE c.deleted_at IS NULL AND d.deleted_at IS NULL
        AND (?1 IS NULL OR c.deck_id = ?1)
        AND e.reviewed_at >= ?2 AND e.reviewed_at < ?3
+       AND e.kind = 'review'
+       AND NOT EXISTS (SELECT 1 FROM review_events u WHERE u.undoes = e.id)";
+
+/// The time of the earliest review [`ACTIVITY_IN_WINDOW`] would count, at
+/// any time (`?1`: the deck, or NULL for all); NULL without any.
+const FIRST_ACTIVITY: &str = "SELECT MIN(e.reviewed_at)
+     FROM review_events e
+     JOIN cards c ON c.id = e.card_id JOIN decks d ON d.id = c.deck_id
+     WHERE c.deleted_at IS NULL AND d.deleted_at IS NULL
+       AND (?1 IS NULL OR c.deck_id = ?1)
        AND e.kind = 'review'
        AND NOT EXISTS (SELECT 1 FROM review_events u WHERE u.undoes = e.id)";
 

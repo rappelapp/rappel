@@ -1,35 +1,59 @@
 //! What the statistics page says and draws, as pure functions of the
-//! numbers (unit-tested; the page only puts the results in widgets). Day
-//! names come in through [`DayNames`], so the tests need no time zone.
+//! numbers (unit-tested; the page only puts the results in widgets): the
+//! headline figures of each view, the chart with its axis, dates and
+//! sentences, the Memory rows, and the paging (ADR 0033, 0078). Day names
+//! come in through [`DayNames`], so the tests need no time zone.
 
 use crate::i18n::{fill, gettext, ngettext};
-use crate::state::StatsData;
-use crate::ui::text::{counted, group_digits, percent, studied_text};
-use crate::ui::tile::Tile;
-use crate::widgets::bar_chart::ChartBar;
-use crate::widgets::bar_chart::layout::{Bar, nice_ceiling};
-use crate::widgets::chart_card::ChartModel;
+use crate::state::{STATS_DAYS, STATS_MAX_PERIOD, StatsData};
+use crate::ui::text::{counted, group_digits, minutes, percent, studied_text};
+use crate::widgets::bar_chart::layout::{Bar, ticks};
+use crate::widgets::bar_chart::{ChartBar, ChartModel, Tick};
 
 /// How a day, given by when it begins, is named.
 pub struct DayNames<'a> {
-    /// "17 Sep", on an axis.
+    /// "17 Sep", under a chart.
     pub short: &'a dyn Fn(i64) -> String,
     /// "Tue 17 Sep", for a selected day.
     pub with_weekday: &'a dyn Fn(i64) -> String,
     /// "17 September", in a summary.
     pub long: &'a dyn Fn(i64) -> String,
+    /// "17", under a chart within a month already named.
+    pub number: &'a dyn Fn(i64) -> String,
+    /// The same number for two days of the same month.
+    pub month: &'a dyn Fn(i64) -> i64,
 }
 
-pub fn reviews_title() -> String {
-    gettext("Reviews per Day")
+/// The three views of the card, as the toggle group names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Reviews,
+    Time,
+    Forecast,
 }
 
-pub fn time_title() -> String {
-    gettext("Time Studied per Day")
-}
+impl View {
+    /// The view of a toggle's name; Reviews for anything else.
+    pub fn from_name(name: Option<&str>) -> Self {
+        match name {
+            Some("time") => Self::Time,
+            Some("forecast") => Self::Forecast,
+            _ => Self::Reviews,
+        }
+    }
 
-pub fn forecast_title() -> String {
-    gettext("Due Forecast")
+    /// Whether the view shows past days, which page back and forth; the
+    /// forecast is always the next 30 days.
+    pub fn pages(self) -> bool {
+        self != Self::Forecast
+    }
+
+    /// The day selected when the view's days are first shown: today, the
+    /// last of a period (also after paging), or tomorrow, the first day of
+    /// the forecast.
+    pub fn first_selected(self) -> usize {
+        if self.pages() { STATS_DAYS - 1 } else { 0 }
+    }
 }
 
 const NO_DATA: &str = "—";
@@ -44,37 +68,73 @@ pub fn back_label(one_deck: bool) -> String {
     }
 }
 
-/// The three headline numbers.
-pub fn headline(data: &StatsData) -> [Tile; 3] {
+/// Whether there is nothing at all to show: no review ever, no scheduled
+/// card and nothing due. The page is then a status page.
+pub fn nothing_to_show(data: &StatsData) -> bool {
     let stats = &data.stats;
-    let tile = |value: Option<String>, caption: String, none: String| {
-        let shown = value.clone().unwrap_or_else(|| NO_DATA.to_owned());
-        let said = value.unwrap_or(none);
-        Tile {
-            value: shown,
-            // Translators: what a screen reader says for a headline figure:
-            // {caption} is "Pass rate, last 30 days", {value} "91%".
-            accessible: fill(
-                &gettext("{caption}: {value}"),
-                &[("caption", &caption), ("value", &said)],
-            ),
-            caption,
-        }
+    data.first_review_at.is_none()
+        && stats.scheduled_cards == 0
+        && stats.days.iter().all(|d| d.reviews == 0)
+        && stats.forecast.iter().all(|&n| n == 0)
+}
+
+/// Whether Previous may page back from `period` (0 is the current one) of
+/// `data`: only while the first review is before the period's first day,
+/// so paging stops at the period that holds it and never runs on through
+/// empty months.
+pub fn can_page_back(data: &StatsData, period: u32) -> bool {
+    let start = data.past_starts.first().copied();
+    period < STATS_MAX_PERIOD
+        && matches!((data.first_review_at, start), (Some(first), Some(start)) if first < start)
+}
+
+/// Whether Next may page forward: not from the current period.
+pub fn can_page_forward(period: u32) -> bool {
+    period > 0
+}
+
+/// The period after a press of Previous (`back`) or Next, kept within
+/// 0 and the furthest.
+pub fn paged(period: u32, back: bool) -> u32 {
+    if back {
+        period.saturating_add(1).min(STATS_MAX_PERIOD)
+    } else {
+        period.saturating_sub(1)
+    }
+}
+
+/// A Memory row: its title, the value at its end, and what a screen
+/// reader says for the value ("no reviews" for "—").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    pub title: String,
+    pub value: String,
+    pub said: String,
+}
+
+/// The Memory rows: retention now, and the pass rate and time studied of
+/// the current period (`current` is period 0).
+pub fn memory(current: &StatsData) -> [Row; 3] {
+    let stats = &current.stats;
+    let row = |value: Option<String>, title: String, none: String| Row {
+        value: value.clone().unwrap_or_else(|| NO_DATA.to_owned()),
+        said: value.unwrap_or(none),
+        title,
     };
     let reviews = total_u32(stats.days.iter().map(|d| d.reviews));
     let studied_ms = total_ms(stats.days.iter().map(|d| d.duration_ms));
     [
-        tile(
+        row(
             stats.expected_retention.map(percent),
             gettext("Expected retention"),
             gettext("no reviewed cards"),
         ),
-        tile(
+        row(
             stats.pass_rate.map(percent),
             gettext("Pass rate, last 30 days"),
             gettext("no reviews"),
         ),
-        tile(
+        row(
             (reviews > 0).then(|| studied_text(studied_ms)),
             gettext("Time studied, last 30 days"),
             gettext("no reviews"),
@@ -82,13 +142,199 @@ pub fn headline(data: &StatsData) -> [Tile; 3] {
     ]
 }
 
-/// Whether there is nothing at all to show: no review in the window, no
-/// scheduled card and nothing due. The page is then a status page.
-pub fn nothing_to_show(data: &StatsData) -> bool {
+/// One headline figure: "Today" over "54", with "3 failed" under it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Figure {
+    pub key: String,
+    pub value: String,
+    /// What a screen reader says for the value: "54 reviews".
+    pub said: String,
+    pub detail: Option<String>,
+}
+
+/// The two headline figures of `view`: the selected day, then the whole
+/// period (or the next 30 days).
+pub fn figures(
+    view: View,
+    data: &StatsData,
+    period: u32,
+    selected: usize,
+    names: &DayNames<'_>,
+) -> [Figure; 2] {
     let stats = &data.stats;
-    stats.scheduled_cards == 0
-        && stats.days.iter().all(|d| d.reviews == 0)
-        && stats.forecast.iter().all(|&n| n == 0)
+    let day = day_key(view, data, period, selected, names);
+    let whole = period_name(view, data, period, names);
+    match view {
+        View::Reviews => {
+            let d = stats.days.get(selected).copied().unwrap_or_default();
+            let total = total_u32(stats.days.iter().map(|d| d.reviews));
+            [
+                Figure {
+                    key: day,
+                    value: number(d.reviews),
+                    said: reviews(d.reviews),
+                    detail: Some(failed(d.reviews.saturating_sub(d.passes))),
+                },
+                Figure {
+                    key: whole,
+                    value: number(total),
+                    said: reviews(total),
+                    detail: None,
+                },
+            ]
+        }
+        View::Time => {
+            let ms = stats.days.get(selected).map_or(0, |d| d.duration_ms);
+            let total = studied_text(total_ms(stats.days.iter().map(|d| d.duration_ms)));
+            [
+                Figure {
+                    key: day,
+                    value: studied_text(ms),
+                    said: studied_text(ms),
+                    detail: None,
+                },
+                Figure {
+                    key: whole,
+                    value: total.clone(),
+                    said: total,
+                    detail: None,
+                },
+            ]
+        }
+        View::Forecast => {
+            let n = stats.forecast.get(selected).copied().unwrap_or(0);
+            let total = total_u32(stats.forecast.iter().copied());
+            [
+                Figure {
+                    key: day,
+                    value: cards(n),
+                    said: cards_due(n),
+                    detail: None,
+                },
+                Figure {
+                    key: whole,
+                    value: cards(total),
+                    said: cards_due(total),
+                    detail: None,
+                },
+            ]
+        }
+    }
+}
+
+/// The accessible label of the chart of `view`.
+pub fn chart_title(view: View) -> String {
+    match view {
+        View::Reviews => gettext("Reviews per Day"),
+        View::Time => gettext("Time Studied per Day"),
+        View::Forecast => gettext("Due Forecast"),
+    }
+}
+
+/// The chart of `view` for the period `period` of `data`.
+pub fn chart(view: View, data: &StatsData, period: u32, names: &DayNames<'_>) -> ChartModel {
+    let starts = if view.pages() {
+        &data.past_starts
+    } else {
+        &data.ahead_starts
+    };
+    let (bars, summary, label): (Vec<ChartBar>, String, fn(f64) -> String) = match view {
+        View::Reviews => (
+            reviews_bars(data, period, names),
+            reviews_summary(data, period, names),
+            count_label,
+        ),
+        View::Time => (
+            time_bars(data, period, names),
+            time_summary(data, period, names),
+            minutes_label,
+        ),
+        View::Forecast => (
+            forecast_bars(data, period, names),
+            forecast_summary(data, period, names),
+            count_label,
+        ),
+    };
+    let axis = ticks(bars.iter().map(|b| b.bar.total()).fold(0.0, f64::max));
+    ChartModel {
+        ticks: axis
+            .values()
+            .into_iter()
+            .map(|value| Tick {
+                value,
+                label: label(value),
+            })
+            .collect(),
+        dates: week_dates(starts, names),
+        label: chart_title(view),
+        summary,
+        bars,
+    }
+}
+
+/// The date under every seventh day, from the first: "7 Oct", then "14",
+/// "21", "28", and "4 Nov" where the month changes.
+pub fn week_dates(starts: &[i64], names: &DayNames<'_>) -> Vec<Option<String>> {
+    let mut month = None;
+    starts
+        .iter()
+        .enumerate()
+        .map(|(i, &start)| {
+            (i % 7 == 0).then(|| {
+                let this = (names.month)(start);
+                let text = if month == Some(this) {
+                    (names.number)(start)
+                } else {
+                    (names.short)(start)
+                };
+                month = Some(this);
+                text
+            })
+        })
+        .collect()
+}
+
+/// The name of the selected day: "Today" (the last day of the current
+/// period), "Tomorrow" (the forecast's first), else "Tue 14 Oct".
+fn day_key(view: View, data: &StatsData, period: u32, i: usize, names: &DayNames<'_>) -> String {
+    if view.pages() {
+        if period == 0 && i + 1 == data.past_starts.len() {
+            return gettext("Today");
+        }
+        data.past_starts
+            .get(i)
+            .map_or_else(String::new, |&s| (names.with_weekday)(s))
+    } else {
+        if i == 0 {
+            return gettext("Tomorrow");
+        }
+        data.ahead_starts
+            .get(i)
+            .map_or_else(String::new, |&s| (names.with_weekday)(s))
+    }
+}
+
+/// The name of the whole period: "Last 30 Days", "8 Sep – 7 Oct" for an
+/// earlier one, or "Next 30 Days" for the forecast.
+pub fn period_name(view: View, data: &StatsData, period: u32, names: &DayNames<'_>) -> String {
+    if !view.pages() {
+        return gettext("Next 30 Days");
+    }
+    if period == 0 {
+        return gettext("Last 30 Days");
+    }
+    match (data.past_starts.first(), data.past_starts.last()) {
+        (Some(&first), Some(&last)) => fill(
+            // Translators: a period of the statistics; {first} and {last}
+            // are its first and last days, as "8 Sep".
+            &gettext("{first} – {last}"),
+            &[
+                ("first", &(names.short)(first)),
+                ("last", &(names.short)(last)),
+            ],
+        ),
+        _ => String::new(),
+    }
 }
 
 /// The sum of `counts`, stopping at `u32::MAX`: a day's counts come from
@@ -111,18 +357,53 @@ fn reviews(n: u32) -> String {
     counted(&ngettext("{count} review", "{count} reviews", n), n)
 }
 
+/// "3 failed", under the selected day's reviews.
+fn failed(n: u32) -> String {
+    let n = n as usize;
+    // Translators: {count} is a number of failed reviews on a day ("3
+    // failed"), under its number of reviews.
+    counted(&ngettext("{count} failed", "{count} failed", n), n)
+}
+
+/// "12 cards", a forecast's headline figure.
+fn cards(n: u32) -> String {
+    let n = n as usize;
+    // Translators: {count} is a number of cards falling due ("12 cards").
+    counted(&ngettext("{count} card", "{count} cards", n), n)
+}
+
+/// "12 cards due".
+fn cards_due(n: u32) -> String {
+    let n = n as usize;
+    // Translators: {count} is a number of cards due on a day.
+    counted(&ngettext("{count} card due", "{count} cards due", n), n)
+}
+
 /// A count from the statistics, grouped.
 fn number(n: u32) -> String {
     group_digits(n as usize)
 }
 
-/// "Up to 40", the top of a chart's scale.
-fn scale_text(ceiling: f64) -> String {
-    // Translators: the top of a chart's scale; {value} is a number.
-    fill(
-        &gettext("Up to {value}"),
-        &[("value", &group_digits(whole(ceiling)))],
-    )
+/// A chart value as a whole number for display (values are counts, or
+/// minutes of one day, so far below the limit).
+fn whole(value: f64) -> usize {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "rounded and clamped to 0..=1e9 first"
+    )]
+    let n = value.round().clamp(0.0, 1e9) as usize;
+    n
+}
+
+/// A grid line's value: "40".
+fn count_label(value: f64) -> String {
+    group_digits(whole(value))
+}
+
+/// A grid line's value in minutes: "20 min".
+fn minutes_label(value: f64) -> String {
+    minutes(u64::try_from(whole(value)).unwrap_or(u64::MAX))
 }
 
 /// The day with the largest value, the earliest of equal ones; `None` if
@@ -138,21 +419,9 @@ fn busiest(values: impl IntoIterator<Item = f64>) -> Option<(usize, f64)> {
         })
 }
 
-/// A chart value as a whole number for display (values are counts, or
-/// minutes of one day, so far below the limit).
-fn whole(value: f64) -> usize {
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "rounded and clamped to 0..=1e9 first"
-    )]
-    let n = value.round().clamp(0.0, 1e9) as usize;
-    n
-}
-
 /// Milliseconds as minutes (one day is far below `u32::MAX` ms; more is
 /// clamped).
-fn minutes(ms: i64) -> f64 {
+fn minutes_of(ms: i64) -> f64 {
     let ms = u32::try_from(ms.clamp(0, i64::from(u32::MAX))).unwrap_or(0);
     f64::from(ms) / 60_000.0
 }
@@ -162,19 +431,14 @@ fn day_name(starts: &[i64], i: usize, names: &DayNames<'_>) -> String {
     starts.get(i).map_or_else(String::new, |&s| (names.long)(s))
 }
 
-fn ceiling_of(bars: &[ChartBar]) -> f64 {
-    nice_ceiling(bars.iter().map(|b| b.bar.total()).fold(0.0, f64::max))
-}
-
-/// Reviews per day over the past 30 days: passes solid, fails hatched.
-pub fn reviews_chart(data: &StatsData, names: &DayNames<'_>) -> ChartModel {
-    let days = &data.stats.days;
-    let bars: Vec<ChartBar> = days
+fn reviews_bars(data: &StatsData, period: u32, names: &DayNames<'_>) -> Vec<ChartBar> {
+    data.stats
+        .days
         .iter()
-        .zip(&data.past_starts)
-        .map(|(day, &start)| {
+        .enumerate()
+        .map(|(i, day)| {
             let failed = day.reviews.saturating_sub(day.passes);
-            let when = (names.with_weekday)(start);
+            let when = day_key(View::Reviews, data, period, i, names);
             let caption = if day.reviews == 0 {
                 // Translators: a chart's day; {day} is "Tue 14 Oct".
                 fill(&gettext("{day}: no reviews"), &[("day", &when)])
@@ -193,54 +457,51 @@ pub fn reviews_chart(data: &StatsData, names: &DayNames<'_>) -> ChartModel {
             };
             ChartBar {
                 bar: Bar {
-                    solid: f64::from(day.passes),
-                    hatched: f64::from(failed),
+                    lower: f64::from(day.passes.min(day.reviews)),
+                    upper: f64::from(failed),
                 },
                 caption,
             }
         })
-        .collect();
+        .collect()
+}
+
+fn reviews_summary(data: &StatsData, period: u32, names: &DayNames<'_>) -> String {
+    let days = &data.stats.days;
+    let name = period_name(View::Reviews, data, period, names);
     let total = total_u32(days.iter().map(|d| d.reviews));
-    let passed = total_u32(days.iter().map(|d| d.passes));
-    let summary = match busiest(days.iter().map(|d| f64::from(d.reviews))) {
-        None => gettext("Last 30 days: no reviews."),
+    let passed = total_u32(days.iter().map(|d| d.passes.min(d.reviews)));
+    match busiest(days.iter().map(|d| f64::from(d.reviews))) {
+        // Translators: a chart's summary for screen readers; {period} is
+        // "Last 30 Days" or "8 Sep – 7 Oct".
+        None => fill(&gettext("{period}: no reviews."), &[("period", &name)]),
         Some((i, most)) => fill(
-            // Translators: a chart's summary for screen readers: {reviews}
-            // is "120 reviews", {passed} a number, {day} "14 October",
+            // Translators: a chart's summary for screen readers: {period}
+            // is "Last 30 Days" or "8 Sep – 7 Oct", {reviews} "120
+            // reviews", {passed} and {failed} numbers, {day} "14 October",
             // {most} a number of reviews.
-            &gettext("Last 30 days: {reviews}, {passed} passed, busiest day {day} with {most}."),
+            &gettext(
+                "{period}: {reviews}, {passed} passed, {failed} failed, busiest day {day} with {most}.",
+            ),
             &[
+                ("period", &name),
                 ("reviews", &reviews(total)),
                 ("passed", &number(passed)),
+                ("failed", &number(total.saturating_sub(passed))),
                 ("day", &day_name(&data.past_starts, i, names)),
                 ("most", &group_digits(whole(most))),
             ],
         ),
-    };
-    let ceiling = ceiling_of(&bars);
-    ChartModel {
-        scale: scale_text(ceiling),
-        summary,
-        first_day: data
-            .past_starts
-            .first()
-            .map_or_else(String::new, |&s| (names.short)(s)),
-        last_day: gettext("Today"),
-        empty: (total == 0).then(|| gettext("No reviews in the last 30 days")),
-        note: None,
-        bars,
-        ceiling,
     }
 }
 
-/// Time studied per day over the past 30 days, in minutes.
-pub fn time_chart(data: &StatsData, names: &DayNames<'_>) -> ChartModel {
-    let days = &data.stats.days;
-    let bars: Vec<ChartBar> = days
+fn time_bars(data: &StatsData, period: u32, names: &DayNames<'_>) -> Vec<ChartBar> {
+    data.stats
+        .days
         .iter()
-        .zip(&data.past_starts)
-        .map(|(day, &start)| {
-            let when = (names.with_weekday)(start);
+        .enumerate()
+        .map(|(i, day)| {
+            let when = day_key(View::Time, data, period, i, names);
             let caption = if day.duration_ms <= 0 {
                 // Translators: a chart's day; {day} is "Tue 14 Oct".
                 fill(&gettext("{day}: no time studied"), &[("day", &when)])
@@ -254,160 +515,95 @@ pub fn time_chart(data: &StatsData, names: &DayNames<'_>) -> ChartModel {
             };
             ChartBar {
                 bar: Bar {
-                    solid: minutes(day.duration_ms),
-                    hatched: 0.0,
+                    lower: minutes_of(day.duration_ms),
+                    upper: 0.0,
                 },
                 caption,
             }
         })
-        .collect();
+        .collect()
+}
+
+fn time_summary(data: &StatsData, period: u32, names: &DayNames<'_>) -> String {
+    let days = &data.stats.days;
+    let name = period_name(View::Time, data, period, names);
     let total = total_ms(days.iter().map(|d| d.duration_ms));
-    let summary = match busiest(days.iter().map(|d| minutes(d.duration_ms))) {
-        None => gettext("Last 30 days: no time studied."),
+    match busiest(days.iter().map(|d| minutes_of(d.duration_ms))) {
+        // Translators: a chart's summary for screen readers; {period} is
+        // "Last 30 Days" or "8 Sep – 7 Oct".
+        None => fill(&gettext("{period}: no time studied."), &[("period", &name)]),
         Some((i, _)) => fill(
-            // Translators: a chart's summary for screen readers: {time} is
-            // "3 h 12 min", {day} "14 October", {most} "25 min".
-            &gettext("Last 30 days: {time} studied, longest day {day} with {most}."),
+            // Translators: a chart's summary for screen readers: {period}
+            // is "Last 30 Days" or "8 Sep – 7 Oct", {time} "3 h 12 min",
+            // {day} "14 October", {most} "25 min".
+            &gettext("{period}: {time} studied, longest day {day} with {most}."),
             &[
+                ("period", &name),
                 ("time", &studied_text(total)),
                 ("day", &day_name(&data.past_starts, i, names)),
                 ("most", &studied_text(days[i].duration_ms)),
             ],
         ),
-    };
-    let ceiling = ceiling_of(&bars);
-    ChartModel {
-        scale: fill(
-            // Translators: the top of a chart's scale; {value} is a number
-            // of minutes.
-            &gettext("Up to {value} min"),
-            &[("value", &group_digits(whole(ceiling)))],
-        ),
-        summary,
-        first_day: data
-            .past_starts
-            .first()
-            .map_or_else(String::new, |&s| (names.short)(s)),
-        last_day: gettext("Today"),
-        empty: (total <= 0).then(|| gettext("No time studied in the last 30 days")),
-        note: None,
-        bars,
-        ceiling,
     }
 }
 
-/// Cards due on each of the next 14 days; today also holds the overdue ones.
-pub fn forecast_chart(data: &StatsData, names: &DayNames<'_>) -> ChartModel {
-    let stats = &data.stats;
-    let cards = |n: u32| {
-        let n = n as usize;
-        // Translators: {count} is a number of cards due on a day.
-        counted(&ngettext("{count} card due", "{count} cards due", n), n)
-    };
-    let bars: Vec<ChartBar> = stats
+fn forecast_bars(data: &StatsData, period: u32, names: &DayNames<'_>) -> Vec<ChartBar> {
+    data.stats
         .forecast
         .iter()
-        .zip(&data.ahead_starts)
         .enumerate()
-        .map(|(i, (&n, &start))| {
-            let when = if i == 0 {
-                gettext("Today")
-            } else {
-                (names.with_weekday)(start)
-            };
+        .map(|(i, &n)| {
+            let when = day_key(View::Forecast, data, period, i, names);
             let caption = if n == 0 {
                 // Translators: a chart's day; {day} is "Tue 14 Oct".
                 fill(&gettext("{day}: nothing due"), &[("day", &when)])
-            } else if i == 0 && stats.overdue > 0 {
-                fill(
-                    // Translators: a chart's day; {day} is "Today", {cards}
-                    // "12 cards due", {overdue} a number.
-                    &gettext("{day}: {cards}, {overdue} of them overdue"),
-                    &[
-                        ("day", &when),
-                        ("cards", &cards(n)),
-                        ("overdue", &number(stats.overdue)),
-                    ],
-                )
             } else {
                 // Translators: a chart's day; {day} is "Tue 14 Oct", {cards}
                 // "12 cards due".
                 fill(
                     &gettext("{day}: {cards}"),
-                    &[("day", &when), ("cards", &cards(n))],
+                    &[("day", &when), ("cards", &cards_due(n))],
                 )
             };
             ChartBar {
                 bar: Bar {
-                    solid: f64::from(n),
-                    hatched: 0.0,
+                    lower: f64::from(n),
+                    upper: 0.0,
                 },
                 caption,
             }
         })
-        .collect();
-    let total = total_u32(stats.forecast.iter().copied());
-    let summary = if total == 0 {
-        gettext("Next 14 days: nothing due.")
-    } else {
-        let (i, most) = busiest(stats.forecast.iter().map(|&n| f64::from(n))).unwrap_or((0, 0.0));
-        let day = if i == 0 {
-            gettext("today")
-        } else {
-            day_name(&data.ahead_starts, i, names)
-        };
-        let values = [
-            ("cards", cards(total)),
-            ("overdue", number(stats.overdue)),
-            ("day", day),
-            ("most", group_digits(whole(most))),
-        ];
-        let values: Vec<(&str, &str)> = values.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        if stats.overdue > 0 {
+        .collect()
+}
+
+fn forecast_summary(data: &StatsData, period: u32, names: &DayNames<'_>) -> String {
+    let forecast = &data.stats.forecast;
+    let name = period_name(View::Forecast, data, period, names);
+    let total = total_u32(forecast.iter().copied());
+    match busiest(forecast.iter().map(|&n| f64::from(n))) {
+        // Translators: a chart's summary for screen readers; {period} is
+        // "Next 30 Days".
+        None => fill(&gettext("{period}: nothing due."), &[("period", &name)]),
+        Some((i, most)) => {
+            let day = if i == 0 {
+                gettext("tomorrow")
+            } else {
+                day_name(&data.ahead_starts, i, names)
+            };
             fill(
                 // Translators: a chart's summary for screen readers:
-                // {cards} is "40 cards due", {overdue} a number, {day}
-                // "today" or "14 October", {most} a number of cards.
-                &gettext(
-                    "Next 14 days: {cards}, {overdue} of them overdue, busiest day {day} with {most}.",
-                ),
-                &values,
-            )
-        } else {
-            fill(
-                // Translators: a chart's summary for screen readers:
-                // {cards} is "40 cards due", {day} "today" or "14
-                // October", {most} a number of cards.
-                &gettext("Next 14 days: {cards}, busiest day {day} with {most}."),
-                &values,
+                // {period} is "Next 30 Days", {cards} "40 cards due",
+                // {day} "tomorrow" or "14 October", {most} a number of
+                // cards.
+                &gettext("{period}: {cards}, busiest day {day} with {most}."),
+                &[
+                    ("period", &name),
+                    ("cards", &cards_due(total)),
+                    ("day", &day),
+                    ("most", &group_digits(whole(most))),
+                ],
             )
         }
-    };
-    let ceiling = ceiling_of(&bars);
-    ChartModel {
-        scale: scale_text(ceiling),
-        summary,
-        first_day: gettext("Today"),
-        last_day: data
-            .ahead_starts
-            .last()
-            .map_or_else(String::new, |&s| (names.short)(s)),
-        empty: (total == 0).then(|| gettext("Nothing due in the next 14 days")),
-        note: (stats.overdue > 0).then(|| {
-            let n = stats.overdue as usize;
-            counted(
-                // Translators: under the forecast chart; {count} is a
-                // number of cards.
-                &ngettext(
-                    "{count} overdue card is counted under Today",
-                    "{count} overdue cards are counted under Today",
-                    n,
-                ),
-                n,
-            )
-        }),
-        bars,
-        ceiling,
     }
 }
 
@@ -417,11 +613,14 @@ mod tests {
 
     use super::*;
 
+    /// Days 100.. are in month 1 until 113, then month 2.
     fn names() -> DayNames<'static> {
         DayNames {
             short: &|t| format!("d{t}"),
             with_weekday: &|t| format!("Day {t}"),
             long: &|t| format!("day {t}"),
+            number: &|t| format!("{}", t % 100),
+            month: &|t| i64::from(t >= 114),
         }
     }
 
@@ -433,8 +632,8 @@ mod tests {
         }
     }
 
-    /// 30 past days, starting at 100, and 14 days ahead, starting at 1000.
-    fn data(days: Vec<DayActivity>, forecast: Vec<u32>, overdue: u32) -> StatsData {
+    /// 30 period days, starting at 100, and 30 days ahead, starting at 1000.
+    fn data(days: Vec<DayActivity>, forecast: Vec<u32>) -> StatsData {
         let n = i64::try_from(days.len()).unwrap();
         let a = i64::try_from(forecast.len()).unwrap();
         let scheduled = total_u32(forecast.iter().copied());
@@ -443,17 +642,18 @@ mod tests {
                 days,
                 pass_rate: None,
                 forecast,
-                overdue,
+                overdue: 0,
                 scheduled_cards: scheduled,
                 expected_retention: None,
             },
             past_starts: (0..n).map(|i| 100 + i).collect(),
             ahead_starts: (0..a).map(|i| 1000 + i).collect(),
+            first_review_at: None,
         }
     }
 
     fn quiet() -> StatsData {
-        data(vec![day(0, 0, 0); 30], vec![0; 14], 0)
+        data(vec![day(0, 0, 0); 30], vec![0; 30])
     }
 
     #[test]
@@ -463,37 +663,45 @@ mod tests {
     }
 
     #[test]
-    fn the_headline_shows_dashes_without_data() {
-        let tiles = headline(&quiet());
-        assert_eq!(tiles[0].value, "—");
-        assert_eq!(tiles[0].accessible, "Expected retention: no reviewed cards");
-        assert_eq!(tiles[1].accessible, "Pass rate, last 30 days: no reviews");
-        assert_eq!(tiles[2].value, "—");
-        assert_eq!(
-            tiles[2].accessible,
-            "Time studied, last 30 days: no reviews"
-        );
+    fn views_are_named_as_the_toggles_are() {
+        assert_eq!(View::from_name(Some("reviews")), View::Reviews);
+        assert_eq!(View::from_name(Some("time")), View::Time);
+        assert_eq!(View::from_name(Some("forecast")), View::Forecast);
+        assert_eq!(View::from_name(None), View::Reviews);
+        assert_eq!(View::Reviews.first_selected(), 29);
+        assert_eq!(View::Time.first_selected(), 29);
+        assert_eq!(View::Forecast.first_selected(), 0);
+        assert!(View::Time.pages() && !View::Forecast.pages());
     }
 
     #[test]
-    fn the_headline_shows_percentages_and_time() {
+    fn the_memory_rows_show_dashes_without_data() {
+        let rows = memory(&quiet());
+        assert_eq!(rows[0].value, "—");
+        assert_eq!(rows[0].said, "no reviewed cards");
+        assert_eq!(rows[1].title, "Pass rate, last 30 days");
+        assert_eq!(rows[1].said, "no reviews");
+        assert_eq!(rows[2].value, "—");
+        assert_eq!(rows[2].said, "no reviews");
+    }
+
+    #[test]
+    fn the_memory_rows_show_percentages_and_time() {
         let mut d = quiet();
         d.stats.expected_retention = Some(0.912);
         d.stats.pass_rate = Some(0.874);
         d.stats.days[3] = day(10, 9, 3_600_000);
         d.stats.days[29] = day(2, 2, 12 * 60_000);
-        let tiles = headline(&d);
-        assert_eq!(tiles[0].value, "91%");
-        assert_eq!(tiles[1].value, "87%");
-        assert_eq!(tiles[2].value, "1 h 12 min");
-        assert_eq!(
-            tiles[2].accessible,
-            "Time studied, last 30 days: 1 h 12 min"
-        );
+        let rows = memory(&d);
+        assert_eq!(rows[0].value, "91%");
+        assert_eq!(rows[1].value, "87%");
+        assert_eq!(rows[2].value, "1 h 12 min");
+        assert_eq!(rows[2].said, "1 h 12 min");
+        assert_eq!(rows[2].title, "Time studied, last 30 days");
     }
 
     #[test]
-    fn nothing_to_show_needs_no_reviews_no_schedule_and_nothing_due() {
+    fn nothing_to_show_needs_no_history_no_schedule_and_nothing_due() {
         assert!(nothing_to_show(&quiet()));
         let mut d = quiet();
         d.stats.days[0] = day(1, 1, 5_000);
@@ -504,25 +712,117 @@ mod tests {
         let mut d = quiet();
         d.stats.forecast[4] = 2;
         assert!(!nothing_to_show(&d));
+        // Reviews long ago, of cards since reset: there are months to see.
+        let mut d = quiet();
+        d.first_review_at = Some(3);
+        assert!(!nothing_to_show(&d));
     }
 
     #[test]
-    fn the_reviews_summary_names_the_busiest_day() {
+    fn paging_back_stops_at_the_period_of_the_first_review() {
+        let mut d = quiet();
+        // No review at all: no paging.
+        assert!(!can_page_back(&d, 0));
+        // The first review in this period (which starts at 100).
+        d.first_review_at = Some(100);
+        assert!(!can_page_back(&d, 0));
+        d.first_review_at = Some(120);
+        assert!(!can_page_back(&d, 3));
+        // Before it: one more period back.
+        d.first_review_at = Some(99);
+        assert!(can_page_back(&d, 0));
+        assert!(can_page_back(&d, 7));
+        // Never past the furthest period.
+        assert!(!can_page_back(&d, STATS_MAX_PERIOD));
+        d.past_starts.clear();
+        assert!(!can_page_back(&d, 0));
+    }
+
+    #[test]
+    fn next_is_off_on_the_current_period_and_paging_stays_in_range() {
+        assert!(!can_page_forward(0));
+        assert!(can_page_forward(1));
+        assert_eq!(paged(0, true), 1);
+        assert_eq!(paged(3, false), 2);
+        assert_eq!(paged(0, false), 0);
+        assert_eq!(paged(STATS_MAX_PERIOD, true), STATS_MAX_PERIOD);
+        assert_eq!(paged(u32::MAX, true), STATS_MAX_PERIOD);
+    }
+
+    #[test]
+    fn the_reviews_figures_name_today_and_its_failed_reviews() {
+        let mut days = vec![day(0, 0, 0); 30];
+        days[29] = day(54, 51, 0);
+        days[2] = day(1_200, 1_000, 0);
+        let d = data(days, vec![0; 30]);
+        let [today, period] = figures(View::Reviews, &d, 0, 29, &names());
+        assert_eq!(today.key, "Today");
+        assert_eq!(today.value, "54");
+        assert_eq!(today.said, "54 reviews");
+        assert_eq!(today.detail.as_deref(), Some("3 failed"));
+        assert_eq!(period.key, "Last 30 Days");
+        assert_eq!(period.value, "1,254");
+        assert_eq!(period.detail, None);
+        // Another day, and an earlier period: named by their dates.
+        let [other, _] = figures(View::Reviews, &d, 0, 2, &names());
+        assert_eq!(other.key, "Day 102");
+        assert_eq!(other.detail.as_deref(), Some("200 failed"));
+        let [last, period] = figures(View::Reviews, &d, 2, 29, &names());
+        assert_eq!(last.key, "Day 129");
+        assert_eq!(period.key, "d100 – d129");
+        let [one, _] = figures(
+            View::Reviews,
+            &data(vec![day(1, 0, 0); 30], vec![0; 30]),
+            0,
+            0,
+            &names(),
+        );
+        assert_eq!(one.said, "1 review");
+        assert_eq!(one.detail.as_deref(), Some("1 failed"));
+    }
+
+    #[test]
+    fn the_time_and_forecast_figures() {
+        let mut days = vec![day(0, 0, 0); 30];
+        days[29] = day(5, 5, 12 * 60_000);
+        days[10] = day(5, 5, 60 * 60_000);
+        let mut forecast = vec![0; 30];
+        forecast[0] = 3;
+        forecast[9] = 1;
+        let d = data(days, forecast);
+        let [today, period] = figures(View::Time, &d, 0, 29, &names());
+        assert_eq!(
+            (today.key.as_str(), today.value.as_str()),
+            ("Today", "12 min")
+        );
+        assert_eq!(period.value, "1 h 12 min");
+        let [tomorrow, next] = figures(View::Forecast, &d, 0, 0, &names());
+        assert_eq!(tomorrow.key, "Tomorrow");
+        assert_eq!(tomorrow.value, "3 cards");
+        assert_eq!(tomorrow.said, "3 cards due");
+        assert_eq!(next.key, "Next 30 Days");
+        assert_eq!(next.value, "4 cards");
+        let [later, _] = figures(View::Forecast, &d, 0, 9, &names());
+        assert_eq!(
+            (later.key.as_str(), later.value.as_str()),
+            ("Day 1009", "1 card")
+        );
+    }
+
+    #[test]
+    fn the_reviews_chart_stacks_failed_on_passed_and_says_both() {
         let mut days = vec![day(0, 0, 0); 30];
         days[2] = day(38, 35, 0);
         days[9] = day(38, 30, 0);
         days[29] = day(5, 5, 0);
-        let m = reviews_chart(&data(days, vec![0; 14], 0), &names());
-        // 81 reviews, 70 passed; the earliest of the equal busiest days.
+        let m = chart(View::Reviews, &data(days, vec![0; 30]), 0, &names());
+        // 81 reviews, 70 passed, 11 failed; the earliest of the equal
+        // busiest days.
         assert_eq!(
             m.summary,
-            "Last 30 days: 81 reviews, 70 passed, busiest day day 102 with 38."
+            "Last 30 Days: 81 reviews, 70 passed, 11 failed, busiest day day 102 with 38."
         );
-        assert_eq!(m.empty, None);
-        assert_eq!(m.ceiling, 50.0);
-        assert_eq!(m.scale, "Up to 50");
-        assert_eq!(m.first_day, "d100");
-        assert_eq!(m.last_day, "Today");
+        assert_eq!(m.label, "Reviews per Day");
         assert_eq!(m.bars.len(), 30);
         assert_eq!(
             m.bars[2].caption,
@@ -531,27 +831,27 @@ mod tests {
         assert_eq!(
             m.bars[2].bar,
             Bar {
-                solid: 35.0,
-                hatched: 3.0
+                lower: 35.0,
+                upper: 3.0
             }
         );
         assert_eq!(m.bars[0].caption, "Day 100: no reviews");
+        assert_eq!(m.bars[29].caption, "Today: 5 reviews, 5 passed, 0 failed");
+        // Grid lines every 10 up to 40, labelled.
+        let labels: Vec<&str> = m.ticks.iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(labels, ["0", "10", "20", "30", "40"]);
+        assert_eq!(m.ceiling(), 40.0);
     }
 
     #[test]
-    fn one_review_is_singular_and_an_empty_window_is_said() {
-        let mut days = vec![day(0, 0, 0); 30];
-        days[5] = day(1, 0, 4_000);
-        let m = reviews_chart(&data(days, vec![0; 14], 0), &names());
-        assert_eq!(m.bars[5].caption, "Day 105: 1 review, 0 passed, 1 failed");
-        assert_eq!(
-            m.summary,
-            "Last 30 days: 1 review, 0 passed, busiest day day 105 with 1."
-        );
-        let m = reviews_chart(&quiet(), &names());
-        assert_eq!(m.summary, "Last 30 days: no reviews.");
-        assert_eq!(m.empty.as_deref(), Some("No reviews in the last 30 days"));
-        assert_eq!(m.ceiling, 1.0);
+    fn an_empty_period_is_said() {
+        let m = chart(View::Reviews, &quiet(), 0, &names());
+        assert_eq!(m.summary, "Last 30 Days: no reviews.");
+        assert_eq!(m.ceiling(), 1.0);
+        let m = chart(View::Time, &quiet(), 1, &names());
+        assert_eq!(m.summary, "d100 – d129: no time studied.");
+        let m = chart(View::Forecast, &quiet(), 0, &names());
+        assert_eq!(m.summary, "Next 30 Days: nothing due.");
     }
 
     #[test]
@@ -559,64 +859,67 @@ mod tests {
         let mut days = vec![day(0, 0, 0); 30];
         days[1] = day(10, 8, 90_000);
         days[7] = day(40, 30, 25 * 60_000);
-        let m = time_chart(&data(days, vec![0; 14], 0), &names());
-        assert_eq!(m.bars[7].bar.solid, 25.0);
+        let m = chart(View::Time, &data(days, vec![0; 30]), 0, &names());
+        assert_eq!(m.bars[7].bar.lower, 25.0);
         assert_eq!(m.bars[1].caption, "Day 101: 1 min studied");
         assert_eq!(m.bars[0].caption, "Day 100: no time studied");
         assert_eq!(
             m.summary,
-            "Last 30 days: 26 min studied, longest day day 107 with 25 min."
+            "Last 30 Days: 26 min studied, longest day day 107 with 25 min."
         );
-        assert_eq!(m.scale, "Up to 50 min");
-        let m = time_chart(&quiet(), &names());
-        assert_eq!(m.summary, "Last 30 days: no time studied.");
-        assert_eq!(
-            m.empty.as_deref(),
-            Some("No time studied in the last 30 days")
-        );
+        let labels: Vec<&str> = m.ticks.iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(labels, ["0 min", "10 min", "20 min", "30 min"]);
     }
 
     #[test]
-    fn the_forecast_counts_overdue_cards_under_today() {
-        let mut forecast = vec![0; 14];
+    fn the_forecast_starts_tomorrow() {
+        let mut forecast = vec![0; 30];
         forecast[0] = 12;
         forecast[5] = 40;
-        forecast[6] = 3;
-        let m = forecast_chart(&data(vec![day(0, 0, 0); 30], forecast, 9), &names());
+        let m = chart(
+            View::Forecast,
+            &data(vec![day(0, 0, 0); 30], forecast),
+            0,
+            &names(),
+        );
         assert_eq!(
             m.summary,
-            "Next 14 days: 55 cards due, 9 of them overdue, busiest day day 1005 with 40."
+            "Next 30 Days: 52 cards due, busiest day day 1005 with 40."
         );
-        assert_eq!(m.bars[0].caption, "Today: 12 cards due, 9 of them overdue");
+        assert_eq!(m.bars[0].caption, "Tomorrow: 12 cards due");
         assert_eq!(m.bars[5].caption, "Day 1005: 40 cards due");
         assert_eq!(m.bars[1].caption, "Day 1001: nothing due");
-        assert_eq!(
-            m.note.as_deref(),
-            Some("9 overdue cards are counted under Today")
+        assert_eq!(m.dates[0].as_deref(), Some("d1000"));
+        let mut forecast = vec![0; 30];
+        forecast[0] = 1;
+        let m = chart(
+            View::Forecast,
+            &data(vec![day(0, 0, 0); 30], forecast),
+            0,
+            &names(),
         );
         assert_eq!(
-            (m.first_day.as_str(), m.last_day.as_str()),
-            ("Today", "d1013")
+            m.summary,
+            "Next 30 Days: 1 card due, busiest day tomorrow with 1."
         );
     }
 
     #[test]
-    fn the_forecast_busiest_day_can_be_today_and_can_be_empty() {
-        let mut forecast = vec![0; 14];
-        forecast[0] = 1;
-        let m = forecast_chart(&data(vec![day(0, 0, 0); 30], forecast, 1), &names());
+    fn a_date_is_written_under_each_week_with_the_month_when_it_changes() {
+        let starts: Vec<i64> = (100..130).collect();
+        let dates = week_dates(&starts, &names());
+        assert_eq!(dates.len(), 30);
+        let written: Vec<(usize, &str)> = dates
+            .iter()
+            .enumerate()
+            .filter_map(|(i, d)| d.as_deref().map(|d| (i, d)))
+            .collect();
+        // Day 114 starts month 2, so 114 is named in full.
         assert_eq!(
-            m.summary,
-            "Next 14 days: 1 card due, 1 of them overdue, busiest day today with 1."
+            written,
+            [(0, "d100"), (7, "7"), (14, "d114"), (21, "21"), (28, "28")]
         );
-        assert_eq!(
-            m.note.as_deref(),
-            Some("1 overdue card is counted under Today")
-        );
-        let m = forecast_chart(&quiet(), &names());
-        assert_eq!(m.summary, "Next 14 days: nothing due.");
-        assert_eq!(m.empty.as_deref(), Some("Nothing due in the next 14 days"));
-        assert_eq!(m.note, None);
+        assert_eq!(week_dates(&[], &names()).len(), 0);
     }
 
     /// Counts and durations as large as the database can hold, negative
@@ -631,48 +934,61 @@ mod tests {
         ];
         let mut days: Vec<DayActivity> = hostile.iter().copied().cycle().take(30).collect();
         days[0] = day(u32::MAX, u32::MAX, i64::MAX);
-        let mut all = data(days, vec![u32::MAX; 14], u32::MAX);
+        let mut all = data(days, vec![u32::MAX; 30]);
         all.stats.pass_rate = Some(f64::NAN);
         all.stats.expected_retention = Some(f64::INFINITY);
         all.past_starts = vec![i64::MIN; 30];
-        all.ahead_starts = vec![i64::MAX; 14];
+        all.ahead_starts = vec![i64::MAX; 30];
+        all.first_review_at = Some(i64::MIN);
         let names = DayNames {
             short: &crate::ui::time::day_short,
             with_weekday: &crate::ui::time::day_with_weekday,
             long: &crate::ui::time::day_long,
+            number: &crate::ui::time::day_number,
+            month: &crate::ui::time::month_index,
         };
-        let tiles = headline(&all);
-        for tile in &tiles {
+        for row in &memory(&all) {
             assert!(
-                !tile.value.contains("NaN") && !tile.value.contains("inf"),
-                "{tile:?}"
+                !row.value.contains("NaN") && !row.value.contains("inf"),
+                "{row:?}"
             );
         }
-        for chart in [
-            reviews_chart(&all, &names),
-            time_chart(&all, &names),
-            forecast_chart(&all, &names),
-        ] {
-            assert!(chart.ceiling.is_finite() && chart.ceiling >= 1.0);
-            for bar in &chart.bars {
-                assert!(bar.bar.solid.is_finite() && bar.bar.solid >= 0.0);
-                assert!(bar.bar.hatched.is_finite() && bar.bar.hatched >= 0.0);
+        for view in [View::Reviews, View::Time, View::Forecast] {
+            for period in [0, 1, STATS_MAX_PERIOD] {
+                let chart = chart(view, &all, period, &names);
+                assert!(chart.ceiling().is_finite() && chart.ceiling() >= 1.0);
+                assert!(chart.ticks.len() <= 6);
+                for bar in &chart.bars {
+                    assert!(bar.bar.lower.is_finite() && bar.bar.lower >= 0.0);
+                    assert!(bar.bar.upper.is_finite() && bar.bar.upper >= 0.0);
+                }
+                assert!(!chart.summary.contains('-'), "{}", chart.summary);
+                assert!(chart.summary.len() < 300, "{}", chart.summary);
+                for selected in [0, 29, 400] {
+                    let _ = figures(view, &all, period, selected, &names);
+                }
             }
-            assert!(!chart.summary.contains('-'), "{}", chart.summary);
-            assert!(chart.summary.len() < 300, "{}", chart.summary);
         }
         assert!(
-            reviews_chart(&all, &names)
+            chart(View::Reviews, &all, 0, &names)
                 .summary
-                .starts_with("Last 30 days: 4,294,967,295 reviews")
+                .starts_with("Last 30 Days: 4,294,967,295 reviews")
         );
+        assert!(!can_page_back(&all, 0));
     }
 
     #[test]
-    fn every_caption_is_one_per_day() {
-        let d = quiet();
-        assert_eq!(reviews_chart(&d, &names()).bars.len(), 30);
-        assert_eq!(time_chart(&d, &names()).bars.len(), 30);
-        assert_eq!(forecast_chart(&d, &names()).bars.len(), 14);
+    fn the_texts_are_french_in_french() {
+        crate::i18n::tests::in_french(|| {
+            let mut days = vec![day(0, 0, 0); 30];
+            days[29] = day(54, 51, 0);
+            let d = data(days, vec![0; 30]);
+            let [today, period] = figures(View::Reviews, &d, 0, 29, &names());
+            assert_eq!(today.key, "Aujourd’hui");
+            assert_eq!(today.detail.as_deref(), Some("3 ratées"));
+            assert_eq!(period.key, "30 derniers jours");
+            let [tomorrow, _] = figures(View::Forecast, &d, 0, 0, &names());
+            assert_eq!(tomorrow.key, "Demain");
+        });
     }
 }

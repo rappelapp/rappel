@@ -240,7 +240,7 @@ fn hours_minutes(h: u64, m: u64) -> String {
 }
 
 /// "12 min".
-fn minutes(m: u64) -> String {
+pub fn minutes(m: u64) -> String {
     // Translators: a time in minutes ("12 min").
     fill(&gettext("{minutes} min"), &[("minutes", &number(m))])
 }
