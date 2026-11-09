@@ -75,7 +75,7 @@ mod imp {
     use crate::widgets::{TagPills, TagSuggestions};
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/tag_entry.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/tag_entry.ui")]
     pub struct TagEntry {
         #[template_child]
         pub frame: TemplateChild<gtk::Frame>,

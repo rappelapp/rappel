@@ -33,7 +33,7 @@ mod imp {
     use crate::widgets::chart_card::ChartCard;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/stats_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/stats_page.ui")]
     pub struct StatsPage {
         #[template_child]
         pub empty_short: TemplateChild<adw::Breakpoint>,

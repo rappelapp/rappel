@@ -49,7 +49,7 @@ mod imp {
 
     #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::BrowserPage)]
-    #[template(resource = "/io/github/rsmirke/Rappel/browser_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/browser_page.ui")]
     pub struct BrowserPage {
         #[template_child]
         pub empty_short: TemplateChild<adw::Breakpoint>,

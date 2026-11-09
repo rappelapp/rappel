@@ -44,7 +44,7 @@ mod imp {
     use super::{BarChart, StyleWatch};
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/chart_card.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/chart_card.ui")]
     pub struct ChartCard {
         #[template_child]
         pub title_label: TemplateChild<gtk::Label>,

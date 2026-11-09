@@ -132,8 +132,8 @@ const NOT_TRANSLATED: &[(&str, &str, &str)] = &[
     ),
     (
         "crates/app/src/dialogs/about.rs",
-        "Robert Smirke",
-        "a person's name",
+        "The Rappel Project",
+        "the project's name",
     ),
     (
         "crates/app/src/dialogs/about.rs",
@@ -197,8 +197,8 @@ const NOT_TRANSLATED: &[(&str, &str, &str)] = &[
 /// will translate with the catalogs: the `.desktop` entry and the `AppStream`
 /// metainfo.
 pub const DESKTOP_DRAFTS: [&str; 2] = [
-    "data/io.github.rsmirke.Rappel.desktop.in",
-    "data/io.github.rsmirke.Rappel.metainfo.xml.in",
+    "data/io.github.rappelapp.Rappel.desktop.in",
+    "data/io.github.rappelapp.Rappel.metainfo.xml.in",
 ];
 
 /// Every source file scanned for messages, relative to the repository,

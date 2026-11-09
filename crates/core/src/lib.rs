@@ -23,7 +23,7 @@ pub use error::{Error, Result};
 pub const APP_NAME: &str = "Rappel";
 
 /// Reverse-DNS application ID, used by GTK and the desktop environment.
-pub const APP_ID: &str = "io.github.rsmirke.Rappel";
+pub const APP_ID: &str = "io.github.rappelapp.Rappel";
 
 #[cfg(test)]
 mod tests {

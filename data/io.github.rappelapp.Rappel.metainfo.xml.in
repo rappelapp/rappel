@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Copyright 2026 Robert Smirke -->
+<!-- Copyright 2026 The Rappel Project -->
 <!-- A draft for packaging (ADR 0060): checked by the tests, not installed yet. -->
 <component type="desktop-application">
-  <id>io.github.rsmirke.Rappel</id>
+  <id>io.github.rappelapp.Rappel</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
 
   <name>Rappel</name>
   <!-- Translators: The app's summary in software stores, at most 35 characters. -->
   <summary>Memorize with flashcards</summary>
-  <developer id="io.github.rsmirke">
-    <name translate="no">Robert Smirke</name>
+  <developer id="io.github.rappelapp">
+    <name translate="no">The Rappel Project</name>
   </developer>
 
   <description>
@@ -27,15 +27,15 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">io.github.rsmirke.Rappel.desktop</launchable>
+  <launchable type="desktop-id">io.github.rappelapp.Rappel.desktop</launchable>
   <provides>
     <binary>rappel</binary>
   </provides>
   <translation type="gettext">rappel</translation>
 
-  <url type="homepage">https://github.com/rsmirke/rappel</url>
-  <url type="bugtracker">https://github.com/rsmirke/rappel/issues</url>
-  <url type="vcs-browser">https://github.com/rsmirke/rappel</url>
+  <url type="homepage">https://github.com/rappelapp/rappel</url>
+  <url type="bugtracker">https://github.com/rappelapp/rappel/issues</url>
+  <url type="vcs-browser">https://github.com/rappelapp/rappel</url>
 
   <!-- No network, no sharing, no ads, no purchases: nothing to rate. -->
   <content_rating type="oars-1.1"/>
@@ -56,23 +56,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/rsmirke/rappel/main/data/screenshots/review.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/main/data/screenshots/review.png</image>
       <caption>Study a card, then say whether you knew it</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rsmirke/rappel/main/data/screenshots/decks.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/main/data/screenshots/decks.png</image>
       <caption>Your decks with the cards due today</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rsmirke/rappel/main/data/screenshots/editor.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/main/data/screenshots/editor.png</image>
       <caption>Write cards in Markdown with a live preview</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rsmirke/rappel/main/data/screenshots/statistics.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/main/data/screenshots/statistics.png</image>
       <caption>See how much you studied and how well you remember</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rsmirke/rappel/main/data/screenshots/phone.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/main/data/screenshots/phone.png</image>
       <caption>Pictures on cards, on a phone</caption>
     </screenshot>
   </screenshots>

@@ -2,7 +2,7 @@
 
 A native GNOME flashcard app. Rust, GTK4, libadwaita, Blueprint. Two grades only: **Fail** and **Pass**. Cards are Markdown with LaTeX math. Scheduling is FSRS. Everything is local: no network access, no accounts.
 
-App name: **Rappel**. App ID: `io.github.rsmirke.Rappel`. Licence: **GPL-3.0-or-later**.
+App name: **Rappel**. App ID: `io.github.rappelapp.Rappel`. Licence: **GPL-3.0-or-later**.
 
 - Crates: `rappel-core` (`crates/core`, library) and `rappel` (`crates/app`, GTK binary).
 - Data directory: `~/.local/share/rappel/`. Debug builds use `~/.local/share/rappel-dev/` so development never touches real data. Both can be overridden with the `RAPPEL_DATA_DIR` environment variable.
