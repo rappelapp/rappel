@@ -156,12 +156,7 @@ mod imp {
         /// When the next study day begins, for the due words.
         #[property(get, set)]
         pub next_day: Cell<i64>,
-        /// The vertical scroll position last seen, to tell a scroll up
-        /// from a scroll down (`keep_first_header`).
-        pub last_scroll: Cell<f64>,
-        /// The first group's header's height, as last seen at the top.
-        pub first_header: Cell<f32>,
-        /// A check of `keep_first_header` is pending.
+        /// A check of `keep_first_header` is waiting for the next frame.
         pub header_check: Cell<bool>,
         /// The window is under 500 sp (`selection_narrow` applies): with
         /// `compact`, Select All and the action bar keep only their icons.
@@ -1299,57 +1294,25 @@ impl DeckPage {
                 let list = &self.imp().card_list;
                 list.scroll_to(0, gtk::ListScrollFlags::FOCUS, None);
                 list.grab_focus();
-                self.reveal_first_header();
+                // The header above it: `keep_first_header`.
             }
             ShownFocus::EmptyState => self.focus_or_empty_state(None),
         }
     }
 
-    /// Scrolls back to the very top once the list has been laid out, so
-    /// the first group's header shows above the first row. Focusing the
-    /// first row before the list is laid out (every time the page opens)
-    /// anchors that row at the top of the view: `gtk_list_base_scroll_to_item`
-    /// places an item not yet allocated at 0 (`gtk_list_view_get_allocation`,
-    /// gtk/gtklistbase.c and gtk/gtklistview.c, source read for GTK 4.24),
-    /// and the header above it ends out of sight (ADR 0077 saw it under
-    /// Xvfb). On the second frame the list has its size: setting the
-    /// scroll position then moves the anchor to the top
-    /// (`gtk_list_base_adjustment_value_changed_cb`), with the focus left
-    /// on the first row. Nothing happens if the focus has left it by then.
-    fn reveal_first_header(&self) {
-        // No header without groups: the first row is the top already.
-        if !self.grouped() {
-            return;
-        }
-        let frames = Cell::new(0u8);
-        self.imp().card_list.add_tick_callback(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            #[upgrade_or]
-            glib::ControlFlow::Break,
-            move |list, _| {
-                frames.set(frames.get() + 1);
-                if frames.get() < 2 {
-                    return glib::ControlFlow::Continue;
-                }
-                if page.focused_position() == Some(0)
-                    && let Some(adjustment) = list.vadjustment()
-                {
-                    adjustment.set_value(0.0);
-                }
-                glib::ControlFlow::Break
-            }
-        ));
-    }
-
-    /// Keeps the first group's header in sight when the keyboard goes up
-    /// to the first row: GTK scrolls a row that gets the focus just into
-    /// view (`gtk_list_base_set_focus_child` and `gtk_scroll_info_compute_scroll`,
-    /// gtk/gtklistbase.c, source read for GTK 4.24), which leaves the first
-    /// row at the top and its header above the view. A scroll up that ends
-    /// within the first header, with the first row focused, goes on to the
-    /// top. A scroll down is left alone, so the wheel and the scroll bar
-    /// still move away from the top.
+    /// Keeps the first group's header in sight above the first row. GTK
+    /// scrolls a row that gets the focus so that its top is at the top of
+    /// the view: on open, the first row is focused before the list is laid
+    /// out, and `gtk_list_base_scroll_to_item` anchors that row, not yet
+    /// allocated, at the top (`gtk_list_view_get_allocation`, gtk/gtklistbase.c
+    /// and gtk/gtklistview.c, source read for GTK 4.24; ADR 0077 saw it
+    /// under Xvfb); with the keyboard, Up onto the first row scrolls it
+    /// just into view (`gtk_list_base_set_focus_child`,
+    /// `gtk_scroll_info_compute_scroll`). Either way the header above it
+    /// is left out of sight. So after every scroll, on the next frame (a
+    /// tick callback runs before that frame's layout, so the scroll's own
+    /// layout is done, however many frames it took),
+    /// [`Self::show_first_header`] looks at where the row is.
     fn keep_first_header(&self) {
         let list = self.imp().card_list.get();
         let Some(adjustment) = list.vadjustment() else {
@@ -1358,66 +1321,54 @@ impl DeckPage {
         adjustment.connect_value_changed(glib::clone!(
             #[weak(rename_to = page)]
             self,
-            move |adjustment| {
-                let value = adjustment.value();
-                let before = page.imp().last_scroll.replace(value);
-                if !page.grouped() || value >= before {
+            move |_| {
+                // One check pending at a time, however many steps a
+                // kinetic scroll takes.
+                if !page.grouped() || page.imp().header_check.replace(true) {
                     return;
                 }
-                // Checked once the list has laid out what the change
-                // shows: during the change (often in the list's own
-                // allocation) the header may not be allocated yet. One
-                // check pending at a time, however many steps a kinetic
-                // scroll takes.
-                if page.imp().header_check.replace(true) {
-                    return;
-                }
-                let adjustment = adjustment.clone();
-                glib::idle_add_local_full(
-                    glib::Priority::HIGH_IDLE,
-                    glib::clone!(
-                        #[weak]
-                        page,
-                        #[upgrade_or]
-                        glib::ControlFlow::Break,
-                        move || {
-                            page.imp().header_check.set(false);
-                            let value = adjustment.value();
-                            let header = page.first_header_height();
-                            if value > 0.0
-                                && value <= f64::from(header) + 0.5
-                                && page.focused_position() == Some(0)
-                            {
-                                adjustment.set_value(0.0);
-                            }
-                            glib::ControlFlow::Break
-                        }
-                    ),
-                );
+                page.imp().card_list.add_tick_callback(glib::clone!(
+                    #[weak]
+                    page,
+                    #[upgrade_or]
+                    glib::ControlFlow::Break,
+                    move |_, _| {
+                        page.imp().header_check.set(false);
+                        page.show_first_header();
+                        glib::ControlFlow::Break
+                    }
+                ));
             }
         ));
     }
 
-    /// The height of the first group's header, as last seen at the top of
-    /// the list (0 before). At the top, the list's first child is that
-    /// header: GTK keeps its widgets in the list's order
-    /// (gtk/gtklistitemmanager.c), and a header's CSS name is `header`
-    /// (`GtkListView` docs, "CSS nodes"). Away from the top, the header may
-    /// have no widget, hence the height kept.
-    fn first_header_height(&self) -> f32 {
-        let imp = self.imp();
-        let list = &imp.card_list;
-        let at_top = list.vadjustment().is_some_and(|a| a.value() <= 0.0);
-        // Its bounds, padding included (`gtk_widget_get_height` is the
-        // content's only, GtkWidget docs).
-        if at_top
-            && let Some(header) = list.first_child().filter(|w| w.css_name() == "header")
-            && let Some(bounds) = header.compute_bounds(&**list)
-            && bounds.height() > 0.0
-        {
-            imp.first_header.set(bounds.height());
+    /// Scrolls to the very top when the first row has the focus and sits
+    /// exactly at the top of the view while the list is scrolled: then
+    /// only its group's header is above, cut off by GTK's own scroll. A
+    /// scroll by the wheel or the scroll bar leaves the row anywhere else,
+    /// and is left alone. Decided from the row's place as laid out, with
+    /// nothing remembered, so it holds whatever order the frames come in.
+    fn show_first_header(&self) {
+        let Some(adjustment) = self.imp().card_list.vadjustment() else {
+            return;
+        };
+        if !self.grouped() || adjustment.value() <= 0.0 || self.focused_position() != Some(0) {
+            return;
         }
-        imp.first_header.get()
+        // The list is the scrolled view: its children are placed in it,
+        // minus the scroll position (gtk/gtklistbase.c).
+        if self
+            .focused_row_bounds()
+            .is_some_and(|b| b.height() > 0.0 && b.y().abs() <= 0.5)
+        {
+            adjustment.set_value(0.0);
+        }
+    }
+
+    /// Where the focused row is in the list view, as laid out.
+    fn focused_row_bounds(&self) -> Option<gtk::graphene::Rect> {
+        let list = &self.imp().card_list;
+        list.focus_child()?.compute_bounds(&**list)
     }
 
     /// The position in the list shown of the row with the keyboard focus.
@@ -2426,22 +2377,33 @@ mod tests {
                 Duration::from_secs(10),
             );
             assert!(settled, "the first row is focused");
-            // A few frames for the list to lay out and the fix to run.
-            crate::testing::settle_until(|| false, Duration::from_millis(500));
-            assert_eq!(adjustment.value(), 0.0, "scrolled to the very top");
-            let header = list.first_child().unwrap();
-            assert_eq!(header.css_name(), "header");
-            assert!(header.height() > 0);
+            // However many frames the layout takes, the list ends at the
+            // very top with the header in view.
+            let header_shown = || {
+                list.first_child()
+                    .is_some_and(|h| h.css_name() == "header" && h.height() > 0)
+            };
+            let top = crate::testing::settle_until(
+                || adjustment.value() == 0.0 && header_shown(),
+                Duration::from_secs(10),
+            );
+            assert!(top, "scrolled to {}", adjustment.value());
+            // It stays there.
+            crate::testing::settle_until(|| false, Duration::from_millis(300));
+            assert_eq!(adjustment.value(), 0.0);
 
             // Down the list, then the keyboard focus back on the first row:
             // GTK scrolls it just into view, the header comes back with it.
             adjustment.set_value(600.0);
-            crate::testing::settle_until(|| false, Duration::from_millis(300));
-            assert!(adjustment.value() > 100.0);
+            let away =
+                crate::testing::settle_until(|| adjustment.value() > 100.0, Duration::from_secs(5));
+            assert!(away);
             list.scroll_to(0, gtk::ListScrollFlags::FOCUS, None);
-            crate::testing::settle_until(|| false, Duration::from_millis(500));
-            assert_eq!(focused_card(&window).as_ref(), Some(&first));
-            assert_eq!(adjustment.value(), 0.0);
+            let back = crate::testing::settle_until(
+                || focused_card(&window).as_ref() == Some(&first) && adjustment.value() == 0.0,
+                Duration::from_secs(10),
+            );
+            assert!(back, "scrolled to {}", adjustment.value());
             // A scroll down from the top is left alone.
             adjustment.set_value(10.0);
             crate::testing::settle_until(|| false, Duration::from_millis(300));
