@@ -1005,6 +1005,10 @@ msgid "Rappel Could Not Start"
 msgstr "Rappel n’a pas pu démarrer"
 
 #: crates/app/src/auto_backup.rs
+msgid "Automatic backups off: their setting could not be read. Choose the folder again in Preferences."
+msgstr "Sauvegardes désactivées : leur réglage n’a pas pu être lu. Choisissez à nouveau le dossier dans les Préférences."
+
+#: crates/app/src/auto_backup.rs
 msgid "the backup folder was not found; is its disk connected?"
 msgstr "le dossier de sauvegarde est introuvable ; son disque est-il branché ?"
 
@@ -1485,6 +1489,10 @@ msgstr "Le sélecteur de dossier a échoué : {error}"
 #: crates/app/src/dialogs/preferences.rs
 msgid "Choose a folder on this computer"
 msgstr "Choisissez un dossier local"
+
+#: crates/app/src/dialogs/preferences.rs
+msgid "Choose a folder outside Rappel’s data folder"
+msgstr "Choisissez un dossier hors du dossier de données de Rappel"
 
 #: crates/app/src/dialogs/preferences.rs
 msgid "Recalculating…"

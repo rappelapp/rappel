@@ -104,25 +104,40 @@ impl Store {
         Ok(summary)
     }
 
-    /// A fingerprint of everything an export holds but its date: the
-    /// SHA-256, in hex, of `cards.json` as an export with media would write
-    /// it with `exported_at` 0, every media record included. Two calls give
-    /// the same text exactly when an export would hold the same decks,
-    /// cards, tags, log, settings and media list (the export is
-    /// deterministic, ADR 0017). The automatic backup compares it with the
+    /// A fingerprint of what an export with media would hold, but its
+    /// date: the SHA-256, in hex, of `cards.json` as such an export writes
+    /// it with `exported_at` 0 and every media record, followed by the
+    /// hashes of the media files that are in the media folder now (a
+    /// regular file of the recorded size; not read). So it changes with
+    /// every change to the decks, cards, tags, log, settings or media list
+    /// (the export is deterministic, ADR 0017), and when a media file goes
+    /// missing or comes back. The automatic backup compares it with the
     /// last backup's to know whether the collection changed (ADR 0080):
     /// unlike a timestamp, it sees every kind of change (tags, suspension,
-    /// a move, archiving), and it needs no new column. The media files
-    /// are not read: their records name them by content.
+    /// a move, archiving), and it needs no new column. A file damaged in
+    /// place at its recorded size is not seen.
     ///
     /// # Errors
     /// SQLite errors.
     pub(crate) fn collection_fingerprint(&self) -> Result<String> {
         let (mut document, rows) = read_document(&self.conn, 0)?;
-        document.media = rows.into_iter().map(|(record, _)| record).collect();
+        document.media = rows.iter().map(|(record, _)| record.clone()).collect();
         let mut hasher = HashWriter(Sha256::new());
         serde_json::to_writer(&mut hasher, &document)
             .map_err(|e| Error::ExportFailed(Box::new(e)))?;
+        for (record, media) in &rows {
+            let present = media
+                .as_ref()
+                .and_then(|m| self.media_path(m))
+                .and_then(|path| fs::symlink_metadata(path).ok())
+                .is_some_and(|meta| {
+                    meta.is_file() && i64::try_from(meta.len()).ok() == Some(record.bytes)
+                });
+            if present {
+                hasher.0.update(b"\npresent ");
+                hasher.0.update(record.hash.as_bytes());
+            }
+        }
         Ok(crate::media::hex(&hasher.0.finalize()))
     }
 

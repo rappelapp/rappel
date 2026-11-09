@@ -174,8 +174,25 @@ fn a_backup_is_due_once_a_day_and_per_folder() {
     assert!(!due(Some(&last), folder, date("2026-11-09")));
     assert!(due(Some(&last), folder, date("2026-11-10")));
     assert!(due(Some(&last), folder, date("2027-01-01")));
-    // Dated after today (flown west, or the clock put back): not twice.
+    // Dated up to two days after today (flown west): not twice.
     assert!(!due(Some(&last), folder, date("2026-11-08")));
+    assert!(!due(Some(&last), folder, date("2026-11-07")));
+    // Dated three days or more ahead: a clock set wrong once, which must
+    // not stop backups until then.
+    assert!(due(Some(&last), folder, date("2026-11-06")));
+    assert!(due(Some(&last), folder, date("2025-11-09")));
+    let far = LastBackup {
+        date: date("2030-01-01"),
+        ..last.clone()
+    };
+    assert!(due(Some(&far), folder, date("2026-11-09")));
+    // Across a year end.
+    let new_year = LastBackup {
+        date: date("2027-01-02"),
+        ..last.clone()
+    };
+    assert!(!due(Some(&new_year), folder, date("2026-12-31")));
+    assert!(due(Some(&new_year), folder, date("2026-12-30")));
     // Another folder gets its first backup at once.
     assert!(due(
         Some(&last),
@@ -392,10 +409,23 @@ fn the_fingerprint_changes_with_the_collection() {
     step(&env, "unsuspending");
     answer(&mut env.store, &first, Grade::Pass, T0);
     step(&env, "a review");
-    env.store
+    let media = env
+        .store
         .add_media_bytes(&crate::test_support::png_bytes(3))
         .unwrap();
     step(&env, "a media file");
+    // The file going missing, and coming back, are changes too: a backup
+    // that had to leave it out is followed by one that has it.
+    let path = env.store.media_path(&media).unwrap();
+    let bytes = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    let missing = env.fingerprint();
+    assert!(
+        !seen.contains(&missing),
+        "a missing media file changed nothing"
+    );
+    fs::write(&path, &bytes).unwrap();
+    assert_eq!(&env.fingerprint(), seen.last().unwrap(), "back as it was");
     // Reading and time passing change nothing.
     let now = env.fingerprint();
     env.store.list_decks(T0 + DAY_MS, T0).unwrap();

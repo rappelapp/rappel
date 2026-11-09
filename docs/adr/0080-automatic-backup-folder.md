@@ -32,13 +32,14 @@ It has four groups:
 
 The shared reading and writing moved from `window_state.rs` to `key_file.rs`. Each value is checked when read: the folder must be an absolute path; the date must be a real `YYYY-MM-DD`; the fingerprint must be 64 lowercase hex digits. An unknown reason reads as "other", so a failure is never lost. A broken file means backups are off, which is the default. The file is not in the database, so it stays out of exports, imports and database restores. The folder belongs to this computer.
 
-**"Changed since the last backup".** `Store::collection_fingerprint` is the SHA-256 of `cards.json` as an export with media would write it, with `exported_at` set to 0. It hashes the export's own reading, so it changes exactly when a backup would hold something different. That covers every kind of change: edits, tags, suspension, moves, archiving, settings, reviews and media records. A timestamp would miss most of these: tags, suspension and moves do not touch `updated_at`, and there is no revision counter. Nothing is stored in the database and no migration is needed. It costs one read of every row and no media file. It runs on the worker, so the close never waits for it. It runs before the folder is opened: on a day nothing changed, an unplugged disk says nothing, and an unchanged check moves the last backup's date to today, so the next close that day does not read everything again.
+**"Changed since the last backup".** `Store::collection_fingerprint` is the SHA-256 of `cards.json` as an export with media would write it, with `exported_at` set to 0, followed by the hashes of the media files present in the media folder (a regular file of the recorded size; looked at, not read). It hashes the export's own reading, so it changes when a backup would hold something different. A media file damaged in place at its recorded size is the one change it does not see. That covers every kind of change: edits, tags, suspension, moves, archiving, settings, reviews and media records. A timestamp would miss most of these: tags, suspension and moves do not touch `updated_at`, and there is no revision counter. Nothing is stored in the database and no migration is needed. It costs one read of every row and one `stat` per media file. It runs on the worker, so the close never waits for it. It runs before the folder is opened: on a day nothing changed, an unplugged disk says nothing, and an unchanged check sets the last backup's date to today (never keeping a later date), so the next close that day does not read everything again.
 
-The fingerprint reads the database, not the media files. A backup that left out a missing or damaged media file is therefore recorded with an unknown fingerprint, so the next day backs up again; once the file is back, it gets into a backup.
+A backup that had to leave out a missing media file keeps its fingerprint, which has that file absent. The next day's backup is skipped while nothing else changes, so no identical incomplete backup is written each day; once the file is back, the fingerprint differs and the file gets into a backup.
 
 **Once a day.** A pure function `due(last, folder, today)` decides:
 - a backup is due when the last one went to another folder or is dated before `today`;
-- a last backup dated after `today` (the user flew west, or the clock was put back) counts as today's;
+- a last backup dated one or two days after `today` counts as today's: the local dates of one instant differ by at most two days (UTC+14 and UTC−12 are 26 hours apart, `MAX_ZONE_SPREAD_DAYS`), so this is the user who flew west;
+- a last backup dated three days or more ahead was made with a clock set wrong. It is due, so one bad clock never stops backups until that date; the next backup records today's date;
 - so travelling never gives two backups with one date, and a new folder gets its first backup at once.
 
 `changed(last, folder, fingerprint)` then compares the fingerprints. An unknown fingerprint counts as changed. Core tests walk closes through Paris, New York, Tokyo, UTC+14 and UTC−12, and across a daylight-saving change, with `LocalDate::from_utc_ms`. The app takes today from `g_date_time_new_now_local`.
@@ -46,7 +47,7 @@ The fingerprint reads the database, not the media files. A backup that left out 
 **Writing safely, with one handle on the folder.** Core's `auto_backup::run` opens the folder once, with `O_DIRECTORY | O_NOFOLLOW`. Everything else is relative to that handle, through `rustix`'s safe `openat`, `renameat2`, `unlinkat` and `fstatat`:
 - The export goes to `.Rappel backup 2026-11-09.rappel.<16 random hex>.partial`. It is a new file (`O_CREAT | O_EXCL | O_NOFOLLOW`, mode 0600) whose name never matches the pattern: the leading dot and the suffix see to that, and a test checks it.
 - It is synced, then renamed with `RENAME_NOREPLACE`, then the folder is synced. A half-written backup therefore never has a backup's name.
-- On a file system without `RENAME_NOREPLACE` (`EINVAL`), a check that the name is free comes first, then a plain rename.
+- On a file system without `RENAME_NOREPLACE` (`EINVAL`, `ENOTSUP`, `ENOSYS`), a check that the name is free comes first, then a plain rename.
 - On error, the partial file this call created is removed.
 - If something already has today's name, nothing is written and it is kept. A regular file there is today's backup already (its record was lost, or the folder was used again the same day): the record keeps the date with an unknown fingerprint. Anything else (a link, a folder) is not Rappel's: the backup fails as "name taken", so the user is told instead of believing a backup was made.
 - The export stops at its next write once a cancel flag is set (`Store::export_into` wraps the file). The partial file is then removed like on any other error.
@@ -59,7 +60,7 @@ Because everything goes through the handle, a folder that is renamed, removed or
 - the check is a literal prefix and suffix, four, two and two ASCII digits, and a date that exists;
 - each file is checked with `fstatat(AT_SYMLINK_NOFOLLOW)`, since a directory entry's type may be unknown.
 
-The pure `to_delete` keeps the 14 newest by the date in the name, not by the file's time, so a sync tool that touches the files changes nothing. The file just written always stays: if a clock that ran ahead left 14 later dates, the oldest of those goes instead. Each file is checked again just before `unlinkat`, which never follows a link anyway, so nothing outside the folder can be deleted. One gap remains: a regular file swapped for a link in the instant between that check and `unlinkat` would have the link removed (never its target). Linux has no "unlink only if regular", so this cannot be closed; only a process racing on purpose in the user's own folder could hit it. A test fills a folder with old backups, look-alike names, links named like backups (to a file outside, to a backup inside, dangling) and a folder named like one. Only the old regular backups go, and every link target is untouched. A failed deletion is logged and does not fail the backup.
+The pure `to_delete` keeps the 14 newest by the date in the name, not by the file's time, so a sync tool that touches the files changes nothing. The file just written always stays: if a clock that ran ahead left 14 later dates, the oldest of those goes instead. Backups dated far ahead are not ranked below today's: the pre-approved rule allows deleting only files beyond the 14 newest by date, and a future-dated file is among the newest by date. So a wrong clock that left several future-dated files makes them take slots until they are older than 14 later backups, and they are never deleted early; the review suggested ranking them lower, and this rule is why it was not done. Each file is checked again just before `unlinkat`, which never follows a link anyway, so nothing outside the folder can be deleted. One gap remains: a regular file swapped for a link in the instant between that check and `unlinkat` would have the link removed (never its target). Linux has no "unlink only if regular", so this cannot be closed; only a process racing on purpose in the user's own folder could hit it. A test fills a folder with old backups, look-alike names, links named like backups (to a file outside, to a backup inside, dangling) and a folder named like one. Only the old regular backups go, and every link target is untouched. A failed deletion is logged and does not fail the backup.
 
 **The folder as chosen.** Choose… opens `GtkFileDialog::select_folder`. Under a sandbox (the snap, a Flatpak) it goes through the desktop portal's file chooser. The path GTK returns (`g_file_get_path`) is stored with its links resolved (`canonicalize`), so a link the user went through is followed once, when chosen. If it cannot be resolved, the choice is refused with a toast, rather than saving a setting whose every backup would fail. A link found in the folder's place later was put there since, so it is refused ("replaced by a link; choose it again"). A link higher up the path is the user's own layout and is followed; a test covers it.
 
@@ -68,7 +69,7 @@ Under the portal the path may be a document-portal path, `/run/user/<uid>/doc/<i
 **Closing.** Closing must never wait. `close_request` runs `save_state`, then `start_auto_backup`, then lets the window close:
 1. If backups are on and one is due, `[running]` is written.
 2. The application is held (`g_application_hold`), so the process outlives its window.
-3. The job runs on GIO's thread pool, with its own read-only connection.
+3. The job runs on GIO's thread pool, on its own database connection, which it only reads through.
 4. When it ends, the result is recorded and the hold is released. The process then exits as usual.
 
 A cap of 5 minutes (`TIME_CAP`) bounds this. If the job still runs then:
@@ -98,7 +99,9 @@ The mapping from `errno` is a pure function, tested.
 
 **Preferences.** A new group, "Automatic Backups", sits after Data. Its description is "Each day Rappel closes after a change, it saves an export to this folder and keeps the 14 newest". It has one `AdwActionRow`, "Folder", whose subtitle is "Off" or the folder's name, with two suffixes:
 - **Choose…**, the row's activatable widget, which opens the chooser;
-- a flat ✕ button, "Turn Off Automatic Backups" (tooltip and accessible label), shown only while a folder is set.
+- a flat button with the `edit-clear-symbolic` icon, "Turn Off Automatic Backups" (tooltip and accessible label), shown only while a folder is set.
+
+A folder inside the data directory (the data directory itself, its `backups/` or `media/`, with links resolved) is refused when chosen ("Choose a folder outside Rappel’s data folder"): a backup there would be lost with what it backs up. An `auto-backup.ini` that is there but cannot be read means backups are off; each start says so ("Automatic backups off: their setting could not be read. Choose the folder again in Preferences."), and choosing a folder writes the file anew.
 
 Both save at once; a failed write shows the dialog's error toast. Turn Off hidden under the focus hands the focus to Choose….
 

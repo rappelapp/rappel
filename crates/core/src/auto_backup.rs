@@ -48,6 +48,12 @@ pub const KEEP: usize = 14;
 const PREFIX: &str = "Rappel backup ";
 /// What every automatic backup's name ends with (`interchange::FILE_EXTENSION`).
 const SUFFIX: &str = ".rappel";
+/// The most two local dates of one instant differ by: UTC+14 and UTC−12
+/// are 26 hours apart, so 23:30 on one side is 01:30 two dates later on
+/// the other. A last backup dated further ahead of today was made with a
+/// wrong clock.
+pub const MAX_ZONE_SPREAD_DAYS: i64 = 2;
+
 /// The start of the hidden file a backup is written to before it is
 /// renamed. A leading dot, so it never matches [`PREFIX`].
 const PARTIAL_PREFIX: &str = ".Rappel backup ";
@@ -65,6 +71,15 @@ pub struct LocalDate {
 }
 
 impl LocalDate {
+    /// Days since 1970-01-01.
+    fn days(self) -> i64 {
+        crate::time::days_from_civil(
+            i64::from(self.year),
+            i64::from(self.month),
+            i64::from(self.day),
+        )
+    }
+
     /// The date `year`-`month`-`day`, if it exists and the year is 1 to
     /// 9999.
     #[must_use]
@@ -181,13 +196,17 @@ pub struct LastBackup {
 }
 
 /// Whether a backup to `folder` may be due on `today`: none was made today
-/// to this folder. A last backup dated after `today` (the user flew west,
-/// or the clock was put back) counts as today's, so travelling never
-/// makes two backups in one day. A new folder gets one at once.
+/// to this folder. A last backup dated up to [`MAX_ZONE_SPREAD_DAYS`] after
+/// `today` (the user flew west) counts as today's, so travelling never
+/// makes two backups with one date. One dated further ahead was made with
+/// a clock set wrong; it does not stop backups until that date. A new
+/// folder gets one at once.
 #[must_use]
 pub fn due(last: Option<&LastBackup>, folder: &Path, today: LocalDate) -> bool {
     match last {
-        Some(last) if last.folder == folder => last.date < today,
+        Some(last) if last.folder == folder => {
+            last.date < today || last.date.days() - today.days() > MAX_ZONE_SPREAD_DAYS
+        }
         _ => true,
     }
 }
@@ -496,7 +515,7 @@ fn rename_no_replace(dir: &OwnedFd, from: &str, to: &str) -> Result<(), Written>
     match rustix::fs::renameat_with(dir, from, dir, to, RenameFlags::NOREPLACE) {
         Ok(()) => Ok(()),
         Err(Errno::EXIST) => Err(Written::Exists),
-        Err(Errno::INVAL | Errno::NOSYS) => {
+        Err(Errno::INVAL | Errno::NOSYS | Errno::NOTSUP) => {
             match rustix::fs::statat(dir, to, AtFlags::SYMLINK_NOFOLLOW) {
                 Ok(_) => return Err(Written::Exists),
                 Err(Errno::NOENT) => {}

@@ -208,20 +208,38 @@ fn path(data_dir: &Path) -> PathBuf {
 /// The record in `data_dir`; empty (backups off) if there is none or it
 /// cannot be read. Never fails, never blocks (`key_file::read_bounded`).
 pub fn load(data_dir: &Path) -> Record {
-    match key_file::read_bounded(&path(data_dir), MAX_FILE_BYTES) {
-        Ok(bytes) => match key_file::parse(&bytes) {
-            Ok(file) => from_key_file(&file),
-            Err(err) => {
-                tracing::warn!("the automatic backup setting is not readable: {err}");
-                Record::default()
-            }
-        },
-        Err(Unread::Missing) => Record::default(),
-        Err(Unread::Refused(why)) => {
-            tracing::warn!("the automatic backup setting is not readable: {why}");
-            Record::default()
-        }
+    load_or_why(data_dir).unwrap_or_default()
+}
+
+/// The record in `data_dir` (empty if there is no file), or why a file
+/// that is there could not be read: then backups are off, which the next
+/// start says ([`report_at_start`]).
+fn load_or_why(data_dir: &Path) -> Result<Record, String> {
+    let read = match key_file::read_bounded(&path(data_dir), MAX_FILE_BYTES) {
+        Ok(bytes) => key_file::parse(&bytes).map(|file| from_key_file(&file)),
+        Err(Unread::Missing) => Ok(Record::default()),
+        Err(Unread::Refused(why)) => Err(why),
+    };
+    if let Err(why) = &read {
+        tracing::warn!("the automatic backup setting is not readable: {why}");
     }
+    read
+}
+
+/// Whether `folder` is inside `data_dir` (both with their links resolved):
+/// a backup there would be lost with the data it backs up, and could land
+/// in the media or backups folders Rappel manages itself.
+pub fn inside_data_dir(folder: &Path, data_dir: &Path) -> bool {
+    let data_dir = std::fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    folder.starts_with(data_dir)
+}
+
+/// The toast at the start when `auto-backup.ini` is there but cannot be
+/// read: backups are off until the folder is chosen again.
+pub fn unreadable_text() -> String {
+    gettext(
+        "Automatic backups off: their setting could not be read. Choose the folder again in Preferences.",
+    )
 }
 
 /// Saves `record` in `data_dir` in one atomic step, mode 0600.
@@ -266,14 +284,16 @@ pub fn after(
             summary,
             ..
         }) => {
-            // A media file missing from this backup makes the next day's
-            // check see a change, so the file is in a backup once it is
-            // back (the fingerprint reads only the database).
-            let complete = summary.missing_media == 0;
+            // A media file missing from this backup is in the fingerprint
+            // (the media present), so it gets into a backup once it is back,
+            // and an unchanged collection is not backed up again meanwhile.
+            if summary.missing_media > 0 {
+                tracing::debug!(summary.missing_media, "automatic backup without some media");
+            }
             record.last = Some(LastBackup {
                 date: today,
                 folder: folder.to_path_buf(),
-                fingerprint: complete.then(|| fingerprint.clone()),
+                fingerprint: Some(fingerprint.clone()),
             });
             record.failure = None;
         }
@@ -291,7 +311,9 @@ pub fn after(
             // Checked today: not again until tomorrow. Unchanged means a
             // last backup to this folder with this fingerprint exists.
             if let Some(last) = record.last.as_mut().filter(|l| l.folder == folder) {
-                last.date = last.date.max(today);
+                // Today, not the later of the two: a date ahead of today
+                // (a clock set wrong once) is not carried forward.
+                last.date = today;
             }
             record.failure = None;
         }
@@ -376,7 +398,18 @@ pub fn report_at_start(window: &impl IsA<gtk::Widget>, data_dir: &Path) {
     if IN_PROGRESS.get() {
         return;
     }
-    let mut record = load(data_dir);
+    let mut record = match load_or_why(data_dir) {
+        Ok(record) => record,
+        Err(why) => {
+            tracing::debug!("the automatic backup setting is not readable: {why}");
+            show_error(
+                window,
+                "reading the automatic backup setting",
+                &unreadable_text(),
+            );
+            return;
+        }
+    };
     let Some((reason, detail)) = to_report(&record) else {
         return;
     };
@@ -686,7 +719,19 @@ mod tests {
             removed: 0,
         };
         let record = after(full(), folder, today, Ok(&missing));
-        assert_eq!(record.last.map(|l| l.fingerprint), Some(None));
+        assert_eq!(
+            record.last.map(|l| l.fingerprint),
+            Some(Some(PRINT.to_owned())),
+            "the fingerprint has the media present: kept"
+        );
+        // A last backup dated far ahead (a wrong clock) is not carried
+        // forward by an unchanged check.
+        let mut ahead = full();
+        if let Some(last) = ahead.last.as_mut() {
+            last.date = date("2030-01-01");
+        }
+        let record = after(ahead, folder, today, Ok(&Outcome::Unchanged));
+        assert_eq!(record.last.map(|l| l.date), Some(today));
         // Cancelled by the cap reads back as "took too long".
         assert_eq!(
             Reason::from_code(Reason::Failed(FailureKind::Cancelled).code()),
@@ -701,6 +746,37 @@ mod tests {
         assert_eq!(record.failure, Some(failed));
         assert_eq!(record.last, full().last, "tried again at the next close");
         assert_eq!(record.running, None);
+    }
+
+    #[test]
+    fn a_folder_inside_the_data_directory_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(data.join("backups")).unwrap();
+        let data = std::fs::canonicalize(&data).unwrap();
+        assert!(inside_data_dir(&data, &data));
+        assert!(inside_data_dir(&data.join("backups"), &data));
+        assert!(inside_data_dir(&data.join("media"), &data));
+        assert!(!inside_data_dir(&dir.path().join("data-backups"), &data));
+        assert!(!inside_data_dir(dir.path(), &data));
+        // Through a link to the data directory: still inside.
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&data, &link).unwrap();
+        assert!(inside_data_dir(&data.join("backups"), &link));
+    }
+
+    #[test]
+    fn an_unreadable_setting_is_said() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load_or_why(dir.path()), Ok(Record::default()));
+        std::fs::write(dir.path().join(FILE_NAME), b"\xff\xfe").unwrap();
+        assert!(load_or_why(dir.path()).is_err());
+        assert_eq!(load(dir.path()), Record::default(), "backups off");
+        // Its title fits beside Details at 360 px.
+        assert!(matches!(
+            crate::ui::toast::toast_text(&unreadable_text()),
+            crate::ui::toast::ToastText::Detailed { title, .. } if title == "Automatic backups off"
+        ));
     }
 
     #[test]

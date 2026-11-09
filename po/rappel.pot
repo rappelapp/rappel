@@ -1003,6 +1003,10 @@ msgid "Rappel Could Not Start"
 msgstr ""
 
 #: crates/app/src/auto_backup.rs
+msgid "Automatic backups off: their setting could not be read. Choose the folder again in Preferences."
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
 msgid "the backup folder was not found; is its disk connected?"
 msgstr ""
 
@@ -1482,6 +1486,10 @@ msgstr ""
 
 #: crates/app/src/dialogs/preferences.rs
 msgid "Choose a folder on this computer"
+msgstr ""
+
+#: crates/app/src/dialogs/preferences.rs
+msgid "Choose a folder outside Rappel’s data folder"
 msgstr ""
 
 #: crates/app/src/dialogs/preferences.rs
