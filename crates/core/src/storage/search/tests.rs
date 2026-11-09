@@ -274,6 +274,52 @@ fn state_filters_and_statuses() {
     assert_eq!(store.browse_row(&held.id, NOW).unwrap(), None);
 }
 
+/// A deck page reads where every card of its deck stands in one query,
+/// as All Cards says it for each row.
+#[test]
+fn a_decks_standings_match_its_all_cards_rows() {
+    let (mut store, deck) = store_with_deck();
+    let other = store.create_deck_at("Other", T0).unwrap().id;
+    let new = store.add_card_at(&deck, "new", "", T0).unwrap();
+    let learning = store.add_card_at(&deck, "learning", "", T0).unwrap();
+    let due = store.add_card_at(&deck, "due", "", T0).unwrap();
+    let held = store.add_card_at(&deck, "held", "", T0).unwrap();
+    let gone = store.add_card_at(&deck, "gone", "", T0).unwrap();
+    let elsewhere = store.add_card_at(&other, "elsewhere", "", T0).unwrap();
+    store
+        .record_review(&learning.id, Grade::Pass, Duration::ZERO, NOW)
+        .unwrap();
+    review_twice(&mut store, &due.id);
+    review_twice(&mut store, &held.id);
+    store
+        .set_suspended(std::slice::from_ref(&held.id), true)
+        .unwrap();
+    store.delete_card_at(&gone.id, T0 + 1).unwrap();
+    let standings = store.deck_standings(&deck, NOW).unwrap();
+    assert_eq!(standings.len(), 4, "{standings:?}");
+    assert!(!standings.contains_key(&gone.id));
+    assert!(!standings.contains_key(&elsewhere.id));
+    for card in [&new, &learning, &due, &held] {
+        let row = store.browse_row(&card.id, NOW).unwrap().unwrap();
+        assert_eq!(
+            standings[&card.id],
+            CardStanding {
+                status: row.status,
+                is_new: row.is_new
+            },
+            "{}",
+            card.front_md
+        );
+    }
+    assert_eq!(standings[&held.id].status, CardStatus::Suspended);
+    assert!(!standings[&held.id].is_new);
+    assert!(standings[&new.id].is_new);
+    assert!(matches!(
+        store.deck_standings("missing", NOW),
+        Err(crate::Error::DeckNotFound(_))
+    ));
+}
+
 #[test]
 fn a_suspended_card_is_not_studied_and_comes_back_unsuspended() {
     let (mut store, deck) = store_with_deck();

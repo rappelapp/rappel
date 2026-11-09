@@ -70,6 +70,7 @@ crates/app/src/ui/text.rs
 crates/app/src/ui/time.rs
 crates/app/src/ui/toast.rs
 crates/app/src/widgets/backup_row.rs
+crates/app/src/widgets/card_groups/text.rs
 crates/app/src/widgets/card_row/text.rs
 crates/app/src/widgets/deck_row/text.rs
 crates/app/src/widgets/tag_entry.rs

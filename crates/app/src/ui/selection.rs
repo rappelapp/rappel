@@ -98,8 +98,9 @@ pub struct Parts {
     pub header: SelectionHeader,
     pub bar: SelectionBar,
     pub list: gtk::ListView,
-    /// The list's items, in the order shown.
-    pub items: gio::ListStore,
+    /// The list's items, in the order shown (the list view's model under
+    /// its selection model): positions here are the rows' positions.
+    pub items: gio::ListModel,
     /// The deck whose page this is: Move… does not offer it.
     pub own_deck: Option<String>,
 }

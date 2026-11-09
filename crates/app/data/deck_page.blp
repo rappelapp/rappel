@@ -150,10 +150,11 @@ template $RappelDeckPage: Adw.NavigationPage {
 
           // A GtkListView with a model, not a GtkListBox: it only creates
           // rows for what is on screen, so thousands of cards stay smooth
-          // (ADR 0013). `.boxed-list` styles only GtkListBox, so the rows
-          // draw the boxed list themselves (`listview.card-list` in
-          // data/style.css, ADR 0077) on the window's background, as
-          // boxed lists sit. The tags every card shares are said once
+          // (ADR 0013). The rows sit on the window's background with thin
+          // lines between them (`separators`, `listview.card-list` in
+          // data/style.css, ADR 0079), grouped by their tags under
+          // headers (pages/deck_page.rs gives the header factory while the
+          // cards are grouped). The tags every card shares are said once
           // above it.
           child: Gtk.Box {
             orientation: vertical;
@@ -161,7 +162,7 @@ template $RappelDeckPage: Adw.NavigationPage {
             // The tags every listed card has (pages/deck_page.rs
             // follows them), clamped with the list.
             Adw.Clamp {
-              maximum-size: 600;
+              maximum-size: 640;
 
               child: $RappelCardListHeader list_header {};
             }
@@ -171,7 +172,7 @@ template $RappelDeckPage: Adw.NavigationPage {
               vexpand: true;
 
               child: Adw.ClampScrollable {
-                maximum-size: 600;
+                maximum-size: 640;
 
                 child: Gtk.ListView card_list {
                   single-click-activate: true;
@@ -185,6 +186,7 @@ template $RappelDeckPage: Adw.NavigationPage {
                   // `box.header` (data/card_row.blp).
                   styles [
                     "card-list",
+                    "separators",
                   ]
                 };
               };

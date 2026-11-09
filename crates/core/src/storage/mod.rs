@@ -39,7 +39,7 @@ pub use restore::{Restored, finish_restore, is_unusable_copy, restore_backup, st
 pub use same_front::{MAX_SAME_FRONT_BYTES, SameFront};
 pub(crate) use schedule::rebuild_cards;
 pub(crate) use search::index_card_in;
-pub use search::{BrowseQuery, BrowseRow, CardStatus, MAX_QUERY_BYTES, StateFilter};
+pub use search::{BrowseQuery, BrowseRow, CardStanding, CardStatus, MAX_QUERY_BYTES, StateFilter};
 pub use settings::{AfterReset, SettingReset, reset_setting};
 pub(crate) use settings::{StoredSettings, replace_settings, scheduler_in, stored_settings};
 pub use stats::Scope;

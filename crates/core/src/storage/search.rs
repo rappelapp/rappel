@@ -253,6 +253,17 @@ pub struct BrowseRow {
     pub is_new: bool,
 }
 
+/// Where one card of a deck stands, for its row on the deck page
+/// ([`Store::deck_standings`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CardStanding {
+    /// Where it stands at the time of the query.
+    pub status: CardStatus,
+    /// No surviving review since it was created or last reset (also for a
+    /// suspended card, whose `status` hides it), as [`BrowseRow::is_new`].
+    pub is_new: bool,
+}
+
 const ROW_SELECT: &str = "c.id, c.deck_id, c.front_md, c.back_md, c.created_at, c.updated_at, \
      c.suspended, d.name, s.phase, s.due_at";
 
@@ -365,6 +376,61 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Where each live card of deck `deck_id` stands at `now` (UTC
+    /// milliseconds), by card id: one query for the whole deck, for the
+    /// due word at the end of its rows and their Reset Progress.
+    ///
+    /// # Errors
+    /// [`crate::Error::DeckNotFound`], SQLite errors.
+    pub fn deck_standings(&self, deck_id: &str, now: i64) -> Result<HashMap<String, CardStanding>> {
+        let tx = self.conn.unchecked_transaction()?;
+        super::decks::ensure_live_deck(&tx, deck_id)?;
+        let standings = {
+            let mut stmt = tx.prepare(
+                "SELECT c.id, c.suspended, s.phase, s.due_at FROM cards c
+                 LEFT JOIN card_schedule s ON s.card_id = c.id
+                 WHERE c.deck_id = ?1 AND c.deleted_at IS NULL",
+            )?;
+            let rows = stmt.query_map([deck_id], |r| {
+                let id: String = r.get(0)?;
+                let suspended: bool = r.get(1)?;
+                let phase: Option<String> = r.get(2)?;
+                let due_at: Option<i64> = r.get(3)?;
+                Ok((
+                    id,
+                    CardStanding {
+                        status: status_of(suspended, phase.as_deref(), due_at, now),
+                        is_new: phase.is_none(),
+                    },
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<HashMap<_, _>>>()?
+        };
+        tx.finish()?;
+        Ok(standings)
+    }
+}
+
+/// Where a card with `suspended`, a schedule `phase` and `due_at` (none
+/// for a new card) stands at `now`.
+fn status_of(suspended: bool, phase: Option<&str>, due_at: Option<i64>, now: i64) -> CardStatus {
+    if suspended {
+        return CardStatus::Suspended;
+    }
+    match (phase, due_at) {
+        (Some(p), Some(due)) if p == Phase::Review.as_str() => {
+            if due <= now {
+                CardStatus::Due(due)
+            } else {
+                CardStatus::Scheduled(due)
+            }
+        }
+        (Some(_), Some(due)) => CardStatus::Learning(due),
+        _ => CardStatus::New,
+    }
+}
+
 /// A [`BrowseRow`] (without tags) from a row selected with `ROW_SELECT`.
 fn row_from(r: &rusqlite::Row<'_>, now: i64) -> rusqlite::Result<BrowseRow> {
     let card = card_from_row(r)?;
@@ -372,21 +438,7 @@ fn row_from(r: &rusqlite::Row<'_>, now: i64) -> rusqlite::Result<BrowseRow> {
     let phase: Option<String> = r.get(8)?;
     let due_at: Option<i64> = r.get(9)?;
     let is_new = phase.is_none();
-    let status = if card.suspended {
-        CardStatus::Suspended
-    } else {
-        match (phase.as_deref(), due_at) {
-            (Some(p), Some(due)) if p == Phase::Review.as_str() => {
-                if due <= now {
-                    CardStatus::Due(due)
-                } else {
-                    CardStatus::Scheduled(due)
-                }
-            }
-            (Some(_), Some(due)) => CardStatus::Learning(due),
-            _ => CardStatus::New,
-        }
-    };
+    let status = status_of(card.suspended, phase.as_deref(), due_at, now);
     Ok(BrowseRow {
         card,
         deck_name,

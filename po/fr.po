@@ -91,8 +91,10 @@ msgstr "État"
 msgid "Any State"
 msgstr "Tous les états"
 
+#. Translators: at the end of a card's row: a card never studied.
 #: crates/app/data/browser_page.blp
 #: crates/app/src/pages/browser_page/text.rs
+#: crates/app/src/widgets/card_row/text.rs
 msgid "New"
 msgstr "Nouvelle"
 
@@ -108,6 +110,7 @@ msgstr "À revoir"
 #: crates/app/data/browser_page.blp
 #: crates/app/data/card_row.blp
 #: crates/app/src/pages/browser_page/text.rs
+#: crates/app/src/widgets/card_row/text.rs
 msgid "Suspended"
 msgstr "Suspendue"
 
@@ -1511,15 +1514,10 @@ msgstr "Lecture des données impossible : {error}"
 msgid "Due {when}"
 msgstr "À revoir {when}"
 
-#. Translators: under a card in All Cards: {status} is "Due in 3 days", {deck} its deck's name.
+#. Translators: the start of the line under a card in All Cards, before the card's back: {deck} is its deck's name.
 #: crates/app/src/pages/browser_page/text.rs
-msgid "{status} · {deck}"
-msgstr "{status} · {deck}"
-
-#. Translators: the start of the line under a card in All Cards, before the card's back: {subtitle} is "Due in 3 days · Maths".
-#: crates/app/src/pages/browser_page/text.rs
-msgid "{subtitle} ·"
-msgstr "{subtitle} ·"
+msgid "{deck} ·"
+msgstr "{deck} ·"
 
 #. Translators: what a screen reader says for a card in All Cards: {card} is the card ("2 + 2, back: 4"), {deck} its deck's name, {status} "Due in 3 days".
 #: crates/app/src/pages/browser_page/text.rs
@@ -3143,6 +3141,45 @@ msgstr "Nettoyage incomplet. Les anciennes sauvegardes n’ont pas pu être supp
 msgid "Restore backup from {when}"
 msgstr "Restaurer la sauvegarde du {when}"
 
+#. Translators: a header in a deck's list of cards, before tag pills: the cards under it have these tags too, besides those on every card.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "Also"
+msgstr "Aussi"
+
+#. Translators: a header in a deck's list of cards, before tag pills, when no tag is on every card of the deck.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "Tagged"
+msgstr "Étiquettes"
+
+#. Translators: a header in a deck's list of cards: the cards under it have no tag but those on every card.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "Only the shared tags"
+msgstr "Seulement les étiquettes communes"
+
+#. Translators: a header in a deck's list of cards: the cards under it have no tag.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "No tags"
+msgstr "Sans étiquette"
+
+#. Translators: what a screen reader says for a group of cards: {title} is "Only the shared tags" or "No tags", {count} "14 cards".
+#: crates/app/src/widgets/card_groups/text.rs
+msgid "{title}, {count}"
+msgstr "{title}, {count}"
+
+#. Translators: what a screen reader says for a group of cards that have these tags besides the shared ones: {tags} is "Analyse, MAT3101", {count} "7 cards".
+#: crates/app/src/widgets/card_groups/text.rs
+msgid "Also tagged {tags}, {count}"
+msgstr "Également : {tags}, {count}"
+
+#. Translators: the same, when no tag is on every card.
+#: crates/app/src/widgets/card_groups/text.rs
+msgid "Tagged {tags}, {count}"
+msgstr "Étiquettes : {tags}, {count}"
+
 #: crates/app/src/widgets/card_row/text.rs
 msgid "empty front"
 msgstr "recto vide"
@@ -3155,6 +3192,63 @@ msgstr "verso : {back}"
 #: crates/app/src/widgets/card_row/text.rs
 msgid "suspended"
 msgstr "suspendue"
+
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "new"
+msgstr "nouvelle"
+
+#. Translators: at the end of a card's row: the card is due now.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "Today"
+msgstr "Aujourd’hui"
+
+#. Translators: what a screen reader says for a card due now.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due today"
+msgstr "à revoir aujourd’hui"
+
+#. Translators: at the end of a card's row: when it is due again, later today; {interval} is "10 min" or "5 h".
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "In {interval}"
+msgstr "Dans {interval}"
+
+#. Translators: the same for a screen reader.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due in {interval}"
+msgstr "à revoir dans {interval}"
+
+#. Translators: at the end of a card's row: due in the next study day.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "Tomorrow"
+msgstr "Demain"
+
+#. Translators: the same for a screen reader.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due tomorrow"
+msgstr "à revoir demain"
+
+#. Translators: at the end of a card's row: due in {count} days (2 or more).
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "In {count} day"
+msgid_plural "In {count} days"
+msgstr[0] "Dans {count} jour"
+msgstr[1] "Dans {count} jours"
+
+#. Translators: the same for a screen reader.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due in {count} day"
+msgid_plural "due in {count} days"
+msgstr[0] "à revoir dans {count} jour"
+msgstr[1] "à revoir dans {count} jours"
 
 #. Translators: starts a study session over the cards that carry a tag, in every deck; {tag} is the tag's name.
 #: crates/app/src/widgets/card_row/text.rs
@@ -3388,6 +3482,24 @@ msgstr "Voyez combien vous avez étudié et ce que vous retenez"
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr "Des images sur les cartes, sur un téléphone"
+
+#~ msgid "Also"
+#~ msgstr "Aussi"
+
+#~ msgid "Tagged"
+#~ msgstr "Étiquetées"
+
+#~ msgid "Only the shared tags"
+#~ msgstr "Seulement les étiquettes communes"
+
+#~ msgid "No tags"
+#~ msgstr "Sans étiquette"
+
+#~ msgid "{status} · {deck}"
+#~ msgstr "{status} · {deck}"
+
+#~ msgid "{subtitle} ·"
+#~ msgstr "{subtitle} ·"
 
 #~ msgid "Chart"
 #~ msgstr "Graphique"

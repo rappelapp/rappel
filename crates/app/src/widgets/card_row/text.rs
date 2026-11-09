@@ -7,10 +7,12 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use rappel_core::domain::Tag;
+use rappel_core::storage::CardStatus;
 
-use crate::i18n::{fill, gettext, ngettext};
+use crate::i18n::{fill, gettext, ngettext, npgettext, pgettext};
 use crate::ui::rows::menu_text;
-use crate::ui::text::{MAX_NAMED, isolate, one_line};
+use crate::ui::text::{MAX_NAMED, counted, interval_text, isolate, one_line};
+use crate::ui::time::DAY_MS;
 use crate::widgets::tag_pills::text::spoken;
 
 /// The front as a screen reader names the card, in the row's label and its
@@ -39,6 +41,109 @@ pub fn row_label(front: &str, back: &str, tags: &[String], suspended: bool) -> S
         parts.push(gettext("suspended"));
     }
     parts.join(&crate::ui::text::list_separator())
+}
+
+/// The short word at the end of a card row, before its menu (ADR 0079):
+/// when the card comes up next. `accent` for a card to study now, which
+/// the row shows in the accent colour; `spoken` is the same for a screen
+/// reader, in words that stand alone in the row's label ("due tomorrow").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueWord {
+    pub text: String,
+    pub accent: bool,
+    pub spoken: String,
+}
+
+/// The [`DueWord`] of a card in `status` at `now`, `next_day` being when
+/// the next study day begins (all UTC milliseconds): "Today" when it can be
+/// studied now (due, or a learning step whose time has come); "In 10 min",
+/// "In 5 h" for a step or a review later in this study day; "Tomorrow" in
+/// the next study day; "In 3 days" after (study days, counted from
+/// `next_day`); "New"; "Suspended". A review due now and one overdue are
+/// both "Today": the row says what to do, All Cards' filter and the card's
+/// information say by how much. Pure.
+pub fn due_word(status: CardStatus, now: i64, next_day: i64) -> DueWord {
+    let word = |text: String, accent: bool, spoken: String| DueWord {
+        text,
+        accent,
+        spoken,
+    };
+    let due = match status {
+        CardStatus::New => {
+            // Translators: at the end of a card's row: a card never studied.
+            return word(gettext("New"), false, pgettext("card due", "new"));
+        }
+        CardStatus::Suspended => return word(gettext("Suspended"), false, gettext("suspended")),
+        CardStatus::Learning(due) | CardStatus::Due(due) | CardStatus::Scheduled(due) => due,
+    };
+    if due <= now {
+        return word(
+            // Translators: at the end of a card's row: the card is due now.
+            pgettext("card due", "Today"),
+            true,
+            // Translators: what a screen reader says for a card due now.
+            pgettext("card due", "due today"),
+        );
+    }
+    if matches!(status, CardStatus::Learning(_)) || due < next_day {
+        let interval = interval_text(due.saturating_sub(now));
+        return word(
+            // Translators: at the end of a card's row: when it is due
+            // again, later today; {interval} is "10 min" or "5 h".
+            fill(
+                &pgettext("card due", "In {interval}"),
+                &[("interval", &interval)],
+            ),
+            false,
+            // Translators: the same for a screen reader.
+            fill(
+                &pgettext("card due", "due in {interval}"),
+                &[("interval", &interval)],
+            ),
+        );
+    }
+    // Whole study days after this one: 1 in the next study day.
+    let days = due.saturating_sub(next_day) / DAY_MS + 1;
+    if days <= 1 {
+        return word(
+            // Translators: at the end of a card's row: due in the next
+            // study day.
+            pgettext("card due", "Tomorrow"),
+            false,
+            // Translators: the same for a screen reader.
+            pgettext("card due", "due tomorrow"),
+        );
+    }
+    let n = usize::try_from(days).unwrap_or(usize::MAX);
+    word(
+        // Translators: at the end of a card's row: due in {count} days
+        // (2 or more).
+        counted(
+            &npgettext("card due", "In {count} day", "In {count} days", n),
+            n,
+        ),
+        false,
+        // Translators: the same for a screen reader.
+        counted(
+            &npgettext("card due", "due in {count} day", "due in {count} days", n),
+            n,
+        ),
+    )
+}
+
+/// The accessible label of a deck page row with its due word: the card
+/// ([`row_label`], which says "suspended" itself) then when it is due,
+/// "2 + 2, back: 4, due tomorrow".
+pub fn with_due(label: String, word: &DueWord, suspended: bool) -> String {
+    if suspended {
+        label
+    } else {
+        format!(
+            "{label}{}{}",
+            crate::ui::text::list_separator(),
+            word.spoken
+        )
+    }
 }
 
 /// The tags every card of a list shares, said once above the list (ADR
@@ -257,6 +362,102 @@ mod tests {
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|&n| n.to_owned()).collect()
+    }
+
+    /// The due word, from "Today" to "In 3 days", with study days
+    /// counted from when the next one begins.
+    #[test]
+    fn the_due_word_says_when_the_card_comes_up() {
+        use crate::ui::time::{HOUR_MS, MINUTE_MS};
+        const NOW: i64 = 1_000_000_000_000;
+        // The next study day begins in 6 hours.
+        let day = NOW + 6 * HOUR_MS;
+        let word = |status| due_word(status, NOW, day);
+        let today = word(CardStatus::Due(NOW - 3 * DAY_MS));
+        assert_eq!(
+            today,
+            DueWord {
+                text: "Today".to_owned(),
+                accent: true,
+                spoken: "due today".to_owned()
+            }
+        );
+        assert_eq!(word(CardStatus::Due(NOW)).text, "Today");
+        // A learning step whose time has come is due too; one to come
+        // says how long.
+        assert!(word(CardStatus::Learning(NOW - MINUTE_MS)).accent);
+        let step = word(CardStatus::Learning(NOW + 10 * MINUTE_MS));
+        assert_eq!((step.text.as_str(), step.accent), ("In 10 min", false));
+        assert_eq!(step.spoken, "due in 10 min");
+        assert_eq!(word(CardStatus::Learning(NOW + HOUR_MS)).text, "In 1 h");
+        // A step can end after the study day does: still its time.
+        assert_eq!(word(CardStatus::Learning(NOW + 8 * HOUR_MS)).text, "In 8 h");
+        // A review later in this study day, then tomorrow, then days.
+        assert_eq!(
+            word(CardStatus::Scheduled(NOW + 5 * HOUR_MS)).text,
+            "In 5 h"
+        );
+        assert_eq!(word(CardStatus::Scheduled(day)).text, "Tomorrow");
+        assert_eq!(
+            word(CardStatus::Scheduled(day + DAY_MS - 1)).text,
+            "Tomorrow"
+        );
+        assert_eq!(word(CardStatus::Scheduled(day)).spoken, "due tomorrow");
+        assert_eq!(word(CardStatus::Scheduled(day + DAY_MS)).text, "In 2 days");
+        let far = word(CardStatus::Scheduled(day + 1_500 * DAY_MS));
+        assert_eq!(far.text, "In 1,501 days");
+        assert_eq!(far.spoken, "due in 1,501 days");
+        // A status read before now came: "Scheduled" but due by now.
+        assert!(word(CardStatus::Scheduled(NOW - 1)).accent);
+        assert_eq!(word(CardStatus::New).text, "New");
+        assert_eq!(word(CardStatus::New).spoken, "new");
+        assert_eq!(word(CardStatus::Suspended).text, "Suspended");
+        // The far ends of the clock: no overflow.
+        assert!(!due_word(CardStatus::Scheduled(i64::MAX), i64::MIN, i64::MIN + 1).accent);
+        let _ = due_word(CardStatus::Scheduled(i64::MAX), 0, i64::MAX);
+        let _ = due_word(CardStatus::Learning(i64::MAX), i64::MIN, 0);
+    }
+
+    #[test]
+    fn the_due_word_is_said_in_french_with_its_plurals() {
+        use crate::ui::time::{HOUR_MS, MINUTE_MS};
+        const NOW: i64 = 1_000_000_000_000;
+        let day = NOW + HOUR_MS;
+        crate::i18n::tests::in_french(|| {
+            let word = |status| due_word(status, NOW, day).text;
+            assert_eq!(word(CardStatus::Due(NOW)), "Aujourd’hui");
+            assert_eq!(
+                word(CardStatus::Learning(NOW + 10 * MINUTE_MS)),
+                "Dans 10\u{a0}min"
+            );
+            assert_eq!(word(CardStatus::Scheduled(day)), "Demain");
+            assert_eq!(
+                word(CardStatus::Scheduled(day + DAY_MS)),
+                "Dans 2\u{a0}jours"
+            );
+            assert_eq!(word(CardStatus::New), "Nouvelle");
+            assert_eq!(word(CardStatus::Suspended), "Suspendue");
+            assert_eq!(
+                due_word(CardStatus::Scheduled(day + 4 * DAY_MS), NOW, day).spoken,
+                "à revoir dans 5\u{a0}jours"
+            );
+        });
+    }
+
+    /// A deck page row says when its card is due, after the card; a
+    /// suspended card says so once.
+    #[test]
+    fn a_rows_label_ends_with_when_it_is_due() {
+        let word = due_word(CardStatus::New, 0, 1);
+        assert_eq!(
+            with_due("2 + 2, back: 4".to_owned(), &word, false),
+            "2 + 2, back: 4, new"
+        );
+        let held = due_word(CardStatus::Suspended, 0, 1);
+        assert_eq!(
+            with_due("2 + 2, suspended".to_owned(), &held, true),
+            "2 + 2, suspended"
+        );
     }
 
     #[test]

@@ -1,8 +1,6 @@
 //! Reading review events and the `card_schedule` cache, and rebuilding the
 //! cache from the review log.
 
-use std::collections::HashSet;
-
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::Store;
@@ -37,7 +35,8 @@ impl Store {
     ///
     /// # Errors
     /// [`Error::DeckNotFound`], SQLite errors.
-    pub fn new_card_ids(&self, deck_id: &str) -> Result<HashSet<String>> {
+    #[cfg(test)]
+    pub(crate) fn new_card_ids(&self, deck_id: &str) -> Result<std::collections::HashSet<String>> {
         super::decks::ensure_live_deck(&self.conn, deck_id)?;
         let mut stmt = self.conn.prepare(
             "SELECT c.id FROM cards c

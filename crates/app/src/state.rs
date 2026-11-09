@@ -2,7 +2,7 @@
 //! and never sees SQL or rusqlite (ADR 0011).
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -21,8 +21,8 @@ use rappel_core::media::{CleanedUp, MediaRef, TrashTidied, UnusedMedia};
 use rappel_core::scheduling::{StudyInput, StudyScope};
 use rappel_core::stats::{CardInfo, DayGrid, Stats};
 use rappel_core::storage::{
-    self, BackupInfo, BrowseQuery, BrowseRow, Merged, Moved, OpenWarning, Restored, SameFront,
-    Scope, Store, TagsAdded,
+    self, BackupInfo, BrowseQuery, BrowseRow, CardStanding, Merged, Moved, OpenWarning, Restored,
+    SameFront, Scope, Store, TagsAdded,
 };
 
 use crate::clock::{local_day_bounds_ms, local_day_start_ms, local_next_day_start_ms};
@@ -679,9 +679,14 @@ impl AppState {
         self.0.store.borrow().card_info(card_id, now)
     }
 
-    /// The ids of a deck's new cards (see [`Store::new_card_ids`]).
-    pub fn new_card_ids(&self, deck_id: &str) -> rappel_core::Result<HashSet<String>> {
-        self.0.store.borrow().new_card_ids(deck_id)
+    /// Where each card of a deck stands at `now`, by id (see
+    /// [`Store::deck_standings`]).
+    pub fn deck_standings(
+        &self,
+        deck_id: &str,
+        now: i64,
+    ) -> rappel_core::Result<HashMap<String, CardStanding>> {
+        self.0.store.borrow().deck_standings(deck_id, now)
     }
 
     /// A card's scheduling state (see [`Store::card_state`]).

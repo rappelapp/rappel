@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-09
+- Amended by: ADR 0079 (the row look: no box, the deck page's cards grouped by their other tags with no pills on the rows, a due word at each row's end, All Cards' status off the second line; the shared tags, the header above the list and the drawn math stay)
 - Refers to: issues #129 and #128; Phase 3b brief, slice 3; mockup `docs/briefs/mockups/deck-page-mockups.html`, proposition A (chosen by the maintainer); ADR 0013 (the deck page's `GtkListView`), 0042 (card rows and tag pills), 0044 (All Cards), 0049 (time bounds), 0073 (a row change costs no walk of the list), 0076 (repaint margin); GTK 4.24 and Pango 1.58 sources cited below
 
 ## Context
