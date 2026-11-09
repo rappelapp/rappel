@@ -3,17 +3,13 @@
 //! (issue #128, ADR 0077). Pure: the app decides how each formula is drawn,
 //! and shows the source of one it cannot draw.
 
-use super::plain::PREVIEW_CHARS;
+use super::plain::{PREVIEW_CHARS, SUMMARY_SOURCE_BYTES};
 use super::{Block, Inline, parse};
 
 /// The longest formula source a summary keeps as a formula, in bytes. A
 /// longer one is far wider than a row, so it is shown as its (cut) source
 /// text, like any other text.
 pub const MAX_SUMMARY_FORMULA_BYTES: usize = 1024;
-
-/// How much of a side [`summary`] parses, in bytes: as for
-/// [`super::plain_summary`].
-const SUMMARY_SOURCE_BYTES: usize = 16 * 1024;
 
 /// One piece of a [`Summary`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,10 +35,13 @@ pub struct Summary {
 /// syntax, every run of whitespace (newlines and block breaks included)
 /// as one space, the ends trimmed, and cut once it holds
 /// [`PREVIEW_CHARS`] characters (a formula counts as its source). Inline
-/// and display formulas become [`SummaryPiece::Math`], unless they start
-/// past the cut or their source is longer than
-/// [`MAX_SUMMARY_FORMULA_BYTES`]; those are text. Only the first
-/// `SUMMARY_SOURCE_BYTES` of `md` are parsed.
+/// and display formulas become [`SummaryPiece::Math`]: one that starts
+/// before the cut is kept whole, one after it is left out like the rest
+/// of the text, and one whose source is longer than
+/// [`MAX_SUMMARY_FORMULA_BYTES`] is text (cut like any text). Spaces at the
+/// ends of a formula's source count as spaces around it, as in
+/// [`super::plain_summary`]. Only the first `SUMMARY_SOURCE_BYTES` of `md`
+/// are parsed.
 #[must_use]
 pub fn summary(md: &str) -> Summary {
     let mut end = md.len().min(SUMMARY_SOURCE_BYTES);
@@ -112,13 +111,22 @@ impl Builder {
         }
     }
 
-    fn math(&mut self, source: &str) {
-        let source = source.trim();
-        if self.done || source.is_empty() {
+    fn math(&mut self, raw: &str) {
+        if self.done {
             return;
         }
+        let source = raw.trim();
+        // Whitespace at the source's ends is a space around the formula,
+        // as the plain summary has it.
+        if raw.starts_with(char::is_whitespace) {
+            self.space = !self.text.is_empty();
+        }
+        if source.is_empty() {
+            return;
+        }
+        let space_after = raw.ends_with(char::is_whitespace);
         if source.len() > MAX_SUMMARY_FORMULA_BYTES {
-            self.text(source);
+            self.text(raw);
             return;
         }
         if !self.space_before() {
@@ -135,6 +143,9 @@ impl Builder {
         }
         if self.chars >= PREVIEW_CHARS {
             self.done = true;
+        }
+        if space_after {
+            self.space = true;
         }
     }
 
@@ -311,7 +322,59 @@ mod tests {
         );
     }
 
+    /// What `summary` must hold for any `md`: every formula non-empty,
+    /// trimmed and short enough; the text the pieces' text with each
+    /// formula's source on one line; at most 200 characters and one
+    /// formula; and, unless the cut was reached, the plain summary.
+    fn check(md: &str) -> Result<(), TestCaseError> {
+        let s = summary(md);
+        let mut text = String::new();
+        let mut longest = 0;
+        for piece in &s.pieces {
+            match piece {
+                SummaryPiece::Text(t) => text.push_str(t),
+                SummaryPiece::Math(source) => {
+                    prop_assert!(!source.is_empty());
+                    prop_assert_eq!(source.trim(), source.as_str());
+                    prop_assert!(source.len() <= MAX_SUMMARY_FORMULA_BYTES);
+                    let one_line = source.split_whitespace().collect::<Vec<_>>().join(" ");
+                    longest = longest.max(one_line.chars().count());
+                    text.push_str(&one_line);
+                }
+            }
+        }
+        prop_assert_eq!(&text, &s.text);
+        prop_assert!(s.text.chars().count() <= PREVIEW_CHARS + longest);
+        if s.text.chars().count() < PREVIEW_CHARS {
+            prop_assert_eq!(&s.text, &plain_summary(md));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn odd_dollars_hold_the_rules() {
+        for md in [
+            "a $x",
+            "$$x$",
+            "$5-$10",
+            "a$ x$b",
+            "a$ $b",
+            "$x$ $y$",
+            "\\$x$",
+            "é $σ$ 漢字",
+            "$$\n$$",
+            "",
+        ] {
+            check(md).unwrap_or_else(|e| panic!("{md:?}: {e}"));
+        }
+    }
+
     proptest! {
+        #[test]
+        fn any_side_holds_the_rules(md in "[a-zé漢 $\\\\\n{}^_*`-]{0,300}") {
+            check(&md)?;
+        }
+
         /// Without a dollar there is no formula, and the text is the
         /// plain summary the rows showed before.
         #[test]

@@ -547,12 +547,18 @@ pub fn update_shared_tags<T: IsA<glib::Object>>(
     store: &gio::ListStore,
     tags: for<'a> fn(&'a T) -> std::cell::Ref<'a, [Tag]>,
 ) {
-    let items: Vec<T> = (0..store.n_items())
-        .filter_map(|p| store.item(p).and_downcast::<T>())
-        .collect();
-    let lists: Vec<std::cell::Ref<'_, [Tag]>> = items.iter().map(tags).collect();
-    let shared = text::shared_tags(lists.iter().map(|l| &**l));
-    drop(lists);
+    // One item at a time, its tags borrowed only while they are added,
+    // stopping once no tag is shared.
+    let mut acc = text::SharedTags::default();
+    for position in 0..store.n_items() {
+        let Some(item) = store.item(position).and_downcast::<T>() else {
+            continue;
+        };
+        if !acc.add(&tags(&item)) {
+            break;
+        }
+    }
+    let shared = acc.finish();
     let ids: Vec<String> = shared.iter().map(|t| t.id.clone()).collect();
     let names: Vec<String> = shared
         .iter()

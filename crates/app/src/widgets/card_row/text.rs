@@ -4,6 +4,7 @@
 //! its others (ADR 0077). Pure, so it is unit-tested (ADR 0042).
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use rappel_core::domain::Tag;
 
@@ -44,30 +45,57 @@ pub fn row_label(front: &str, back: &str, tags: &[String], suspended: bool) -> S
 /// 0077): the tags of `cards` (each card's tags) that are on every one, in
 /// the first card's order, each once. None for a list of fewer than two
 /// cards, where "on every card" would say nothing. Stops reading as soon
-/// as no tag is left, so a large list without shared tags costs little.
+/// as no tag is left, so a large list without shared tags costs little
+/// ([`SharedTags`], which the pages use one item at a time).
+#[cfg(test)]
 pub fn shared_tags<'a>(cards: impl IntoIterator<Item = &'a [Tag]>) -> Vec<Tag> {
-    let mut cards = cards.into_iter();
-    let Some(first) = cards.next() else {
-        return Vec::new();
-    };
-    let mut shared: Vec<Tag> = Vec::new();
-    for tag in first {
-        if !shared.iter().any(|t| t.id == tag.id) {
-            shared.push(tag.clone());
-        }
-    }
-    let mut count = 1;
+    let mut shared = SharedTags::default();
     for tags in cards {
-        if shared.is_empty() {
+        if !shared.add(tags) {
             break;
         }
-        count += 1;
-        shared.retain(|kept| tags.iter().any(|t| t.id == kept.id));
     }
-    if count < 2 {
-        shared.clear();
+    shared.finish()
+}
+
+/// [`shared_tags`] one card at a time, so a caller can read each card's
+/// tags only while it adds them, and stop when [`Self::add`] says no tag
+/// is left. Each card costs time in its number of tags (sets of ids), so a
+/// list costs time in its total number of tags.
+#[derive(Debug, Default)]
+pub struct SharedTags {
+    /// The first card's tags still on every card, in its order.
+    kept: Vec<Tag>,
+    cards: usize,
+}
+
+impl SharedTags {
+    /// Adds a card with `tags`; false once no tag is shared any more (the
+    /// cards after it change nothing).
+    pub fn add(&mut self, tags: &[Tag]) -> bool {
+        if self.cards == 0 {
+            let mut seen = HashSet::with_capacity(tags.len());
+            self.kept = tags
+                .iter()
+                .filter(|t| seen.insert(t.id.as_str()))
+                .cloned()
+                .collect();
+        } else {
+            let ids: HashSet<&str> = tags.iter().map(|t| t.id.as_str()).collect();
+            self.kept.retain(|kept| ids.contains(kept.id.as_str()));
+        }
+        self.cards += 1;
+        !self.kept.is_empty()
     }
-    shared
+
+    /// The shared tags: none for fewer than two cards.
+    pub fn finish(self) -> Vec<Tag> {
+        if self.cards < 2 {
+            Vec::new()
+        } else {
+            self.kept
+        }
+    }
 }
 
 /// The pill names a row shows for a card with `names` (its tag names,
@@ -78,11 +106,12 @@ pub fn other_tags<'a>(names: &'a [String], tags: &[Tag], shared: &[String]) -> C
     if shared.is_empty() {
         return Cow::Borrowed(names);
     }
+    let shared: HashSet<&str> = shared.iter().map(String::as_str).collect();
     Cow::Owned(
         names
             .iter()
             .zip(tags)
-            .filter(|(_, tag)| !shared.contains(&tag.id))
+            .filter(|(_, tag)| !shared.contains(tag.id.as_str()))
             .map(|(name, _)| name.clone())
             .collect(),
     )
@@ -399,6 +428,35 @@ mod tests {
         assert_eq!(
             shared_tags(same_name.iter().map(Vec::as_slice)),
             Vec::<Tag>::new()
+        );
+    }
+
+    /// 200 cards with the same 5,000 tags (an import can make that): the
+    /// shared tags and a row's pills take time in the number of tags, not
+    /// its square (CPU time, ADR 0049).
+    #[test]
+    fn thousands_of_tags_on_every_card_cost_little() {
+        let tags: Vec<Tag> = (0..5_000)
+            .map(|i| tag(&format!("id-{i}"), &format!("t{i}")))
+            .collect();
+        let names: Vec<String> = tags.iter().map(|t| t.name.clone()).collect();
+        let cards = vec![tags.clone(); 200];
+        let (cpu, (shared, others)) = crate::testing::cpu_time_of(|| {
+            let shared = shared_tags(cards.iter().map(Vec::as_slice));
+            let ids = ids(&shared);
+            let others: usize = (0..200)
+                .map(|_| other_tags(&names, &tags, &ids).len())
+                .sum();
+            (shared.len(), others)
+        });
+        assert_eq!((shared, others), (5_000, 0));
+        crate::testing::print_timing("shared tags: 200 cards × 5,000 tags (CPU)", cpu);
+        // About 0.7 s in a debug build; quadratic in the tags, it would be
+        // billions of comparisons.
+        crate::testing::assert_cpu_within(
+            cpu,
+            std::time::Duration::from_secs(5),
+            "200 cards × 5,000 tags",
         );
     }
 

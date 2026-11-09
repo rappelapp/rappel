@@ -158,6 +158,9 @@ struct Fingerprint {
 /// One formula as laid out at one width.
 #[derive(Debug, Clone)]
 struct Placed {
+    /// Its place in the line's content (`LineContent::formulas`), which
+    /// is also its slot in the display-list memo.
+    slot: usize,
     index: usize,
     source: String,
     /// The font size it is drawn at, in pixels.
@@ -287,11 +290,11 @@ mod imp {
             snapshot.append_layout(&laid.layout, &color);
             snapshot.restore();
             let draw_color = Color::new(color.red(), color.green(), color.blue(), color.alpha());
-            for (i, placed) in laid.formulas.iter().enumerate() {
+            for placed in &laid.formulas {
                 if !placed.shown {
                     continue;
                 }
-                let Some(list) = self.list(i, &placed.source, draw_color) else {
+                let Some(list) = self.list(placed.slot, &placed.source, draw_color) else {
                     continue;
                 };
                 let pos = laid
@@ -451,6 +454,7 @@ mod imp {
                 shape.set_end_index(start.saturating_add(PLACEHOLDER_BYTES));
                 attrs.insert(shape);
                 formulas.push(Placed {
+                    slot: i,
                     index: *index,
                     source: source.clone(),
                     font_size,

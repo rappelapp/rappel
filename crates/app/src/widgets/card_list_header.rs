@@ -12,9 +12,10 @@
 //! whose tooltip names the others: a deck whose cards share dozens of tags
 //! (an import) still leaves the list room at 360 × 640.
 
+use gtk::glib;
+
 /// The most tags the header shows as pills before its "+N" pill.
 pub const HEADER_TAGS: u32 = 6;
-use gtk::glib;
 
 mod imp {
     use std::cell::RefCell;
@@ -42,14 +43,20 @@ mod imp {
 
     impl CardListHeader {
         fn set_tags(&self, tags: Vec<String>) {
-            use crate::widgets::tag_pills::text::{overflow_text, overflow_tooltip, split};
+            use crate::widgets::tag_pills::text::{overflow_text, overflow_tooltip, split, spoken};
             let (shown, hidden) = split(tags.len(), Some(super::HEADER_TAGS));
             self.shared_pills.set_tags(&tags[..shown]);
             self.overflow.set_visible(hidden > 0);
             if hidden > 0 {
+                let rest = &tags[shown..];
                 self.overflow.set_label(&overflow_text(hidden));
                 self.overflow
-                    .set_tooltip_text(Some(&overflow_tooltip(&tags[shown..])));
+                    .set_tooltip_text(Some(&overflow_tooltip(rest)));
+                // A screen reader gets the names, not "+34": the label
+                // says the tags in words (at most 20, then how many more).
+                let spoken = spoken(rest).unwrap_or_default();
+                self.overflow
+                    .update_property(&[gtk::accessible::Property::Label(&spoken)]);
             }
             self.obj().set_visible(!tags.is_empty());
             self.tags.replace(tags);
@@ -133,6 +140,10 @@ mod tests {
                     .is_some_and(|t| t.starts_with("\u{2068}tag 6\u{2069}"))
             );
             assert_eq!(header.tags().len(), 40);
+            assert!(gtk::test_accessible_has_property(
+                &imp.overflow,
+                gtk::AccessibleProperty::Label
+            ));
             header.set_tags(Vec::new());
             assert!(!header.is_visible());
         });

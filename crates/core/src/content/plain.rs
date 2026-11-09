@@ -30,7 +30,7 @@ pub fn search_text(md: &str) -> String {
 /// How much of a side [`plain_summary`] parses, in bytes. 200 characters
 /// of text never need more source than this in practice, and a deck of
 /// large cards still opens quickly.
-const SUMMARY_SOURCE_BYTES: usize = 16 * 1024;
+pub(super) const SUMMARY_SOURCE_BYTES: usize = 16 * 1024;
 
 /// `md` on one line, for a preview: its [`plain_text`] with every run of
 /// whitespace (newlines included) as one space, the ends trimmed, and cut
