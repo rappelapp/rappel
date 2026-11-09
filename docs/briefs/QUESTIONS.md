@@ -31,26 +31,33 @@ None of these was a stop condition: the brief pre-approved the migration (0012),
    - Why: before, every moved card was a conflict, and any conflict refuses the whole import. So an export made before any Move to Deck or merge could never be imported again, and exports are the backups.
    - The cost: a reorganisation on machine A is not carried to machine B by import. A new deck that A made for the moved cards arrives empty on B, and after a merge an older backup brings the merged deck back empty.
    - Question: keep this rule?
+*Answered (3 Nov): as recommended — keep the rule: a card that differs only in its deck is already present and the database keeps its deck.*
 2. **0.3.0-beta.1 refuses every export from this version** (slice 4, #115, ADR 0068).
    - Decided: every deck record now has `archived_at` (`null` when not archived), written always, as the brief pre-approved. 0.3.0-beta.1's reader refuses unknown fields, so it refuses the whole file. The CHANGELOG warns testers.
    - Why: "written always" keeps exports deterministic and the same as for `suspended` (ADR 0035); nothing is stable before 1.0.
    - Question: acceptable for a beta, given that testers moving files between the two betas will hit it? (The alternative is to leave the field out when it is `null`, which changes the export format's rule.)
+*Answered (3 Nov): as recommended — acceptable for a beta: `archived_at` is written always, and 0.3.0-beta.1 refuses these exports.*
 3. **Suspend, Move to Deck and Delete stay available during practice** (slice 6, #118, ADR 0070).
    - Decided: they work as in a session, with their own Undo toasts, and take the card out of the practice. Edit and Card Information stay too.
    - Why: they are explicit card commands, not practice answers, and they do not reschedule anything, so "Practice: nothing was rescheduled" stays true. The reviewer recommended keeping them.
    - Question: keep them, or hide them during practice?
+*Answered (3 Nov): as recommended — keep Suspend, Move to Deck and Delete available during practice.*
 4. **How slice 7 was "redone" on Opus** (#121).
    - Background: the brief's model line says Opus for everything. At the start of the run you overrode it in chat (Sonnet for slices 0, 1, 7 and 9, Opus for 2–6 and 8, the reviewer always on Opus, and a Sonnet slice needing more than two review rounds redone on Opus); after slice 7 you withdrew that ("no more Sonnet, everything on Opus"), so 7b, 8 and 9 ran on Opus.
    - Decided: the Sonnet implementation of slice 7 needed a third review round (its round-2 fix, a far too high size estimate, stopped users with 1.5–2 GiB of media from making a full export). Under your rule, an Opus implementer took over the same branch, re-examined every commit, kept the work it verified and fixed the rest in new commits; a fresh Opus reviewer then reviewed the whole slice. Nothing was reset or rewritten from scratch.
    - Why: most of the slice was sound and tested, and history is never discarded.
    - Question: is that how a "redo" should work next time, or do you want a rewrite from the integration branch?
+*Answered (3 Nov): as recommended — a "redo" is an Opus takeover on the same branch, keeping the verified work and fixing the rest in new commits, not a rewrite from the integration branch.*
 5. **`docs/briefs/phase-3a.md` does not list slice 7b (#119, done in #122) or #117 (done in slice 7, #121)**, which you added during the run. SPEC §4 lists 7b as Phase 3a item 9 and the report covers both.
    - Question: should the brief be amended for the record? It is your file, so I left it.
+*Answered (3 Nov): as recommended — amend the brief for the record (done in Phase 3b slice 0).*
 6. **Under 400 px, selection mode's title is just the count** (slice 7, #121, ADR 0071).
    - Decided: "30" instead of "30 Selected", with the full text as the tooltip and as the screen reader's label. "Select Cards" stays when nothing is chosen.
    - Why: with minimise and maximise shown at 360 px, "30 sélectionnées" was cut.
    - Question: keep the bare number, or find a shorter French wording and keep words?
+*Answered (3 Nov): as recommended — keep the bare number under 400 px ("30"), with the full text as tooltip and screen-reader label.*
 7. **Two points of CLAUDE.md's CI budget, left for you in #112** (CLAUDE.md is yours, so I did not edit it):
    - "nor add docs to a code PR after CI has passed" can clash with fixing reviewer findings, which are often docs. Suggested wording: "batch such fixes into one push".
    - The docs-only check classes `.claude/` (the guard hook and the agents) as docs, so a change to the guard skips the gate. Should `.claude/hooks/` run it?
    - Still unchecked: whether `gh pr checks` (and so batch mode's wait) counts a skipped `check` as passing. No docs-only PR was opened after #111 and #112: #109 came before them and ran the gate, and every later PR changed code. The first docs-only PR will show it.
+*Answered (3 Nov): as recommended — take the suggested CLAUDE.md wording ("batch such fixes into one push") and run the gate on `.claude/hooks/` changes. The skipped-`check` question stays open until the first docs-only PR shows it.*
