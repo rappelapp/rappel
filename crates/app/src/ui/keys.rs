@@ -2,7 +2,8 @@
 //! presses says so in its tooltip, "Pass (2)", "Save (Ctrl+Enter)", instead
 //! of a caption under it. The key's text is how GTK labels the trigger the
 //! page binds (`gtk_accelerator_get_label`), in the user's language, so a
-//! tooltip cannot name a key nothing binds.
+//! tooltip cannot name a key nothing binds. Also the key that starts
+//! studying (S, `starts_studying` and `StartHold`; ADR 0081).
 
 use gtk::prelude::*;
 
@@ -36,45 +37,66 @@ pub fn label(trigger: &str) -> Option<String> {
     Some(label)
 }
 
-/// What a study key asks for (ADR 0081).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StudyKey {
-    /// S on a deck's page or on a row of the deck list: start studying.
-    Start,
-    /// 1: Fail.
-    Fail,
-    /// 2, 3 or 4: Pass (Anki's Good and Easy also mean Pass here).
-    Pass,
-}
-
 /// The trigger the deck pages bind to start studying, for the tooltip.
 pub const START_STUDY_TRIGGER: &str = "s";
 
-/// The study key that `key` with `modifiers` is, given whether a text field
-/// has the keyboard focus (`text_focus`: a typed letter or digit belongs to
-/// it). Keypad digits count as the main row's. Ctrl, Alt, Shift and Super
-/// make a key something else (Ctrl+S, Shift+2 = "@"), so they give `None`;
-/// Caps Lock and Num Lock are not modifiers in this sense, and Caps Lock's
-/// capital S is still S.
-pub fn study_key(
+/// Whether `key` with `modifiers` is the plain S that starts studying,
+/// given whether a text field has the keyboard focus (`text_focus`: a typed
+/// letter belongs to it). Ctrl, Alt, Shift, Super, Meta and Hyper make it
+/// another shortcut (Ctrl+S, Shift+S, which the review page binds to
+/// Suspend), so they give `false`. Caps Lock and Num Lock are not
+/// modifiers in this sense, and Caps Lock's capital S is still S. The
+/// grades 1 to 4 are not decided here: the review page binds them as
+/// shortcut triggers (`pages::review_page::KEYS`).
+pub fn starts_studying(
     key: gtk::gdk::Key,
     modifiers: gtk::gdk::ModifierType,
     text_focus: bool,
-) -> Option<StudyKey> {
+) -> bool {
     use gtk::gdk::{Key, ModifierType};
     let others = ModifierType::CONTROL_MASK
         | ModifierType::ALT_MASK
         | ModifierType::SHIFT_MASK
         | ModifierType::SUPER_MASK
-        | ModifierType::META_MASK;
-    if text_focus || modifiers.intersects(others) {
-        return None;
+        | ModifierType::META_MASK
+        | ModifierType::HYPER_MASK;
+    !text_focus && !modifiers.intersects(others) && matches!(key, Key::s | Key::S)
+}
+
+/// S starts studying when it is *released*, not when it is pressed. A held
+/// key repeats: GDK delivers each repeat as another key press with no
+/// release between (`key-pressed` of `GtkEventControllerKey`,
+/// gtkeventcontrollerkey.c; `key-released` comes once, when the key goes
+/// up). Started on the press, the session's page would appear under the
+/// repeats and its own S (Suspend) would suspend cards one after another.
+/// So the press, and every repeat, is swallowed on the page that stays, and
+/// the release starts the session once.
+#[derive(Debug, Default)]
+pub struct StartHold {
+    held: std::cell::Cell<bool>,
+}
+
+impl StartHold {
+    /// A key press or repeat: `true` when the page swallows it (it is the
+    /// S that starts studying, now held).
+    pub fn pressed(
+        &self,
+        key: gtk::gdk::Key,
+        modifiers: gtk::gdk::ModifierType,
+        text_focus: bool,
+    ) -> bool {
+        let start = starts_studying(key, modifiers, text_focus);
+        if start {
+            self.held.set(true);
+        }
+        start
     }
-    match key {
-        Key::s | Key::S => Some(StudyKey::Start),
-        Key::_1 | Key::KP_1 => Some(StudyKey::Fail),
-        Key::_2 | Key::_3 | Key::_4 | Key::KP_2 | Key::KP_3 | Key::KP_4 => Some(StudyKey::Pass),
-        _ => None,
+
+    /// A key release: `true` when it ends a held S and no text field has
+    /// the focus now, so the session starts. Only the first release counts.
+    pub fn released(&self, key: gtk::gdk::Key, text_focus: bool) -> bool {
+        let is_s = matches!(key, gtk::gdk::Key::s | gtk::gdk::Key::S);
+        is_s && self.held.take() && !text_focus
     }
 }
 
@@ -130,54 +152,68 @@ mod tests {
     }
 
     #[test]
-    fn study_keys_are_plain_keys_outside_text_fields() {
+    fn s_starts_studying_only_as_a_plain_key_outside_text_fields() {
         use gtk::gdk::{Key, ModifierType as M};
         let none = M::empty();
-        let key = |k, m, t| study_key(k, m, t);
-        assert_eq!(key(Key::s, none, false), Some(StudyKey::Start));
-        assert_eq!(key(Key::S, M::LOCK_MASK, false), Some(StudyKey::Start));
-        assert_eq!(key(Key::_1, none, false), Some(StudyKey::Fail));
-        assert_eq!(key(Key::KP_1, M::LOCK_MASK, false), Some(StudyKey::Fail));
-        for k in [Key::_2, Key::_3, Key::_4, Key::KP_2, Key::KP_3, Key::KP_4] {
-            assert_eq!(key(k, none, false), Some(StudyKey::Pass), "{k:?}");
-            // Num Lock (Mod2) does not change a keypad digit.
-            assert_eq!(key(k, M::LOCK_MASK, false), Some(StudyKey::Pass));
-            assert_eq!(key(k, none, true), None, "text field: {k:?}");
-        }
-        assert_eq!(key(Key::s, none, true), None);
+        assert!(starts_studying(Key::s, none, false));
+        // Caps Lock (and Num Lock) are not modifiers here.
+        assert!(starts_studying(Key::S, M::LOCK_MASK, false));
+        assert!(starts_studying(Key::s, M::LOCK_MASK, false));
+        assert!(!starts_studying(Key::s, none, true));
         for m in [
             M::CONTROL_MASK,
             M::ALT_MASK,
             M::SHIFT_MASK,
             M::SUPER_MASK,
             M::META_MASK,
+            M::HYPER_MASK,
             M::CONTROL_MASK | M::SHIFT_MASK,
         ] {
-            for k in [
-                Key::s,
-                Key::S,
-                Key::_1,
-                Key::_2,
-                Key::_3,
-                Key::_4,
-                Key::KP_3,
-            ] {
-                assert_eq!(key(k, m, false), None, "{k:?} with {m:?}");
-            }
+            assert!(!starts_studying(Key::s, m, false), "{m:?}");
+            assert!(!starts_studying(Key::S, m, false), "{m:?}");
         }
-        // Unrelated keys, including the digits next to the grades.
+        // Unrelated keys, the grades among them.
         for k in [
+            Key::_1,
+            Key::_2,
+            Key::_3,
+            Key::KP_4,
             Key::_0,
-            Key::_5,
-            Key::KP_5,
             Key::a,
             Key::e,
             Key::space,
             Key::Return,
             Key::Escape,
         ] {
-            assert_eq!(key(k, none, false), None, "{k:?}");
+            assert!(!starts_studying(k, none, false), "{k:?}");
         }
+    }
+
+    #[test]
+    fn a_held_s_starts_once_on_its_release() {
+        use gtk::gdk::{Key, ModifierType as M};
+        let none = M::empty();
+        let hold = StartHold::default();
+        // A release with no press seen starts nothing.
+        assert!(!hold.released(Key::s, false));
+        // The press and every repeat are swallowed; none starts.
+        for _ in 0..5 {
+            assert!(hold.pressed(Key::s, none, false));
+        }
+        // Another key's release does not start; the first S release does,
+        // once.
+        assert!(!hold.released(Key::a, false));
+        assert!(hold.released(Key::s, false));
+        assert!(!hold.released(Key::s, false));
+        // Other keys, modifiers and text fields are not swallowed.
+        assert!(!hold.pressed(Key::a, none, false));
+        assert!(!hold.pressed(Key::s, M::CONTROL_MASK, false));
+        assert!(!hold.pressed(Key::s, none, true));
+        assert!(!hold.released(Key::s, false));
+        // A text field that took the focus meanwhile cancels the start.
+        assert!(hold.pressed(Key::S, none, false));
+        assert!(!hold.released(Key::S, true));
+        assert!(!hold.released(Key::S, false));
     }
 
     #[test]

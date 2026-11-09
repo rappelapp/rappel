@@ -793,7 +793,7 @@ msgstr "Commencer à étudier"
 
 #: crates/app/data/shortcuts-dialog.blp
 msgid "On a deck or the deck list"
-msgstr "Dans un paquet ou la liste des paquets"
+msgstr "Sur un paquet ou dans la liste des paquets"
 
 #: crates/app/data/shortcuts-dialog.blp
 #: crates/app/src/pages/review_page.rs

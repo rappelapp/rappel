@@ -66,6 +66,8 @@ mod imp {
         pub deck_list: TemplateChild<gtk::ListBox>,
         #[template_child]
         pub empty_new_button: TemplateChild<gtk::Button>,
+        /// S pressed and not yet released (`add_study_key`).
+        pub start_hold: crate::ui::keys::StartHold,
         #[template_child]
         pub archived_list: TemplateChild<gtk::ListBox>,
         #[template_child]
@@ -313,11 +315,16 @@ impl DecksPage {
     }
 
     /// S on a focused deck row studies that deck (ADR 0081), as the Study
-    /// button on its page does, without opening the page. Bubble phase (the
-    /// default of a `GtkEventControllerKey`, gtkeventcontrollerkey.c): a
-    /// focused menu button or text field has had the key first. The focus is on
-    /// "a row" when it is the row or its menu button (`gtk_widget_get_ancestor`
-    /// counts the widget itself).
+    /// button on its page does, without opening the page. S acts on its
+    /// *release* (`keys::StartHold`: a held S repeats, and the session's own
+    /// S would suspend cards). Bubble phase (the default of a
+    /// `GtkEventControllerKey`, gtkeventcontrollerkey.c): a focused text
+    /// field has had the key first. The focus is on "a row" when it is the
+    /// row or its menu button (`gtk_widget_get_ancestor` counts the widget
+    /// itself); the Archived Decks row and the empty state's button are not
+    /// deck rows. A popover or a dialog cannot leak its S here: a popover's
+    /// native surface stops key events at its own root, and an `AdwDialog`
+    /// is not a descendant of the page.
     fn add_study_key(&self) {
         let keys = gtk::EventControllerKey::new();
         keys.connect_key_pressed(glib::clone!(
@@ -325,26 +332,49 @@ impl DecksPage {
             self,
             #[upgrade_or]
             glib::Propagation::Proceed,
-            move |_, key, _, modifiers| {
-                let typing = keys::text_has_focus(&page);
-                let row = page
-                    .root()
-                    .and_then(|root| gtk::prelude::RootExt::focus(&root))
-                    .and_then(|focus| focus.ancestor(DeckRow::static_type()))
-                    .and_downcast::<DeckRow>();
-                match row {
-                    Some(row)
-                        if keys::study_key(key, modifiers, typing)
-                            == Some(keys::StudyKey::Start) =>
-                    {
-                        page.study(&row.deck_id());
-                        glib::Propagation::Stop
-                    }
-                    _ => glib::Propagation::Proceed,
-                }
-            }
+            move |_, key, _, modifiers| page.study_key_pressed(key, modifiers)
+        ));
+        keys.connect_key_released(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_, key, _, _| page.study_key_released(key)
         ));
         self.add_controller(keys);
+    }
+
+    /// The deck row that has the keyboard focus, or holds the widget that
+    /// has it.
+    fn focused_row(&self) -> Option<DeckRow> {
+        self.root()
+            .and_then(|root| gtk::prelude::RootExt::focus(&root))
+            .and_then(|focus| focus.ancestor(DeckRow::static_type()))
+            .and_downcast::<DeckRow>()
+    }
+
+    /// A key press or repeat: S on a deck row is swallowed (its release
+    /// starts the session).
+    fn study_key_pressed(
+        &self,
+        key: gtk::gdk::Key,
+        modifiers: gtk::gdk::ModifierType,
+    ) -> glib::Propagation {
+        let typing = keys::text_has_focus(self);
+        if self.focused_row().is_some() && self.imp().start_hold.pressed(key, modifiers, typing) {
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    }
+
+    /// The release of S: studies the deck of the row focused now, if the
+    /// press was seen here.
+    fn study_key_released(&self, key: gtk::gdk::Key) {
+        let typing = keys::text_has_focus(self);
+        if self.imp().start_hold.released(key, typing)
+            && let Some(row) = self.focused_row()
+        {
+            self.study(&row.deck_id());
+        }
     }
 
     /// Starts a session on deck `id` when it has something to study, else
@@ -357,10 +387,17 @@ impl DecksPage {
             return;
         };
         let pushed = nav::push_unless_on_top(&view, || {
-            let deck = state.deck(id)?;
+            let deck = match state.deck(id) {
+                // As `open`: deleted meanwhile, or archived (no page).
+                Err(rappel_core::Error::DeckNotFound(_)) => return Err(None),
+                Ok(deck) if deck.is_archived() => return Err(None),
+                Ok(deck) => deck,
+                Err(err) => return Err(Some(err)),
+            };
             let scope = StudyScope::deck(&deck.id);
             if state
-                .study_input(&scope, rappel_core::time::now_ms())?
+                .study_input(&scope, rappel_core::time::now_ms())
+                .map_err(Some)?
                 .is_empty()
             {
                 return Err(None);
@@ -958,4 +995,138 @@ fn log_first_frame(view: &adw::NavigationView, started: Instant, built_ms: u128)
         }
     ));
     handler.replace(Some(id));
+}
+
+#[cfg(test)]
+mod key_tests {
+    use gtk::gdk::{Key, ModifierType as M};
+
+    use super::*;
+
+    /// A deck list with deck "A" holding cards to study, an empty deck "B"
+    /// and an archived deck, in a presented navigation view.
+    fn list() -> (
+        tempfile::TempDir,
+        DecksPage,
+        gtk::Window,
+        adw::NavigationView,
+    ) {
+        let (tmp, state) = crate::testing::temporary_state();
+        let a = state.create_deck("A").unwrap();
+        state.create_deck("B").unwrap();
+        let old = state.create_deck("Old").unwrap();
+        state
+            .add_card_with_tags(&a.id, "front", "back", &[])
+            .unwrap();
+        state.archive_deck(&old.id).unwrap();
+        let page: DecksPage = glib::Object::new();
+        page.set_state(state).unwrap();
+        let view = adw::NavigationView::new();
+        let window = gtk::Window::builder()
+            .default_width(600)
+            .default_height(500)
+            .child(&view)
+            .build();
+        window.present();
+        view.push(&page);
+        crate::testing::settle();
+        (tmp, page, window, view)
+    }
+
+    fn reviewing(view: &adw::NavigationView) -> bool {
+        view.visible_page().is_some_and(|p| p.is::<ReviewPage>())
+    }
+
+    fn row(page: &DecksPage, name: &str) -> DeckRow {
+        page.deck_rows()
+            .into_iter()
+            .find(|row| row.name() == name)
+            .unwrap_or_else(|| panic!("no row {name}"))
+    }
+
+    /// S on a focused deck row, or on its menu button, starts that deck's
+    /// session on the release, once, however many repeats came first
+    /// (ADR 0081).
+    #[test]
+    fn s_on_a_deck_row_starts_its_session_on_release() {
+        crate::testing::with_widgets(|| {
+            for on_menu_button in [false, true] {
+                let (_tmp, page, window, view) = list();
+                let a = row(&page, "A");
+                if on_menu_button {
+                    a.focus_menu_button();
+                } else {
+                    a.grab_focus();
+                }
+                for _ in 0..6 {
+                    assert_eq!(
+                        page.study_key_pressed(Key::s, M::empty()),
+                        glib::Propagation::Stop
+                    );
+                }
+                assert!(!reviewing(&view));
+                page.study_key_released(Key::s);
+                assert!(reviewing(&view));
+                page.study_key_released(Key::s);
+                assert_eq!(view.navigation_stack().n_items(), 2);
+                window.destroy();
+            }
+        });
+    }
+
+    #[test]
+    fn s_does_nothing_elsewhere_with_modifiers_or_for_an_empty_deck() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, page, window, view) = list();
+            // Shift+S, Ctrl+S: not swallowed.
+            row(&page, "A").grab_focus();
+            for modifiers in [M::SHIFT_MASK, M::CONTROL_MASK, M::ALT_MASK] {
+                assert_eq!(
+                    page.study_key_pressed(Key::s, modifiers),
+                    glib::Propagation::Proceed
+                );
+            }
+            page.study_key_released(Key::s);
+            assert!(!reviewing(&view));
+            // The Archived Decks row is not a deck row.
+            assert!(page.archived_row_shown());
+            let archived = page.imp().archived_list.row_at_index(0).unwrap();
+            archived.grab_focus();
+            assert_eq!(
+                page.study_key_pressed(Key::s, M::empty()),
+                glib::Propagation::Proceed
+            );
+            page.study_key_released(Key::s);
+            assert!(!reviewing(&view));
+            // A deck with nothing to study starts nothing.
+            row(&page, "B").grab_focus();
+            let _ = page.study_key_pressed(Key::s, M::empty());
+            page.study_key_released(Key::s);
+            assert!(!reviewing(&view));
+            window.destroy();
+        });
+    }
+
+    /// The empty state's button is not a deck row either.
+    #[test]
+    fn s_on_the_empty_states_button_does_nothing() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state) = crate::testing::temporary_state();
+            let page: DecksPage = glib::Object::new();
+            page.set_state(state).unwrap();
+            let view = adw::NavigationView::new();
+            let window = gtk::Window::builder().child(&view).build();
+            window.present();
+            view.push(&page);
+            crate::testing::settle();
+            page.imp().empty_new_button.grab_focus();
+            assert_eq!(
+                page.study_key_pressed(Key::s, M::empty()),
+                glib::Propagation::Proceed
+            );
+            page.study_key_released(Key::s);
+            assert!(!reviewing(&view));
+            window.destroy();
+        });
+    }
 }
