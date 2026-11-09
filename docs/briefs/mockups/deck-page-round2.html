@@ -1,0 +1,301 @@
+<title>Rappel deck page, round 2</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Literata:opsz,wght@7..72,500;7..72,650&display=swap">
+<style>
+/* Layout: a review sheet. Prose column on the left edge, then each proposition
+   as a desktop window and a 360 px phone side by side (scrolls sideways when narrow). */
+:root {
+  --bg: #f3f3f1; --fg: #26262a; --muted: #67676f; --line: #dcdcd8; --panel: #ffffff; --mark: #1c71d8;
+  --f-display: "Literata", Georgia, serif;
+  --f-body: "Inter", "Adwaita Sans", "Cantarell", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #19191c; --fg: #ececee; --muted: #a2a2aa; --line: #34343a; --panel: #232327; --mark: #78aeed; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #19191c; --fg: #ececee; --muted: #a2a2aa; --line: #34343a; --panel: #232327; --mark: #78aeed; color-scheme: dark }
+
+/* Adwaita stand-in tokens for the mockups only (libadwaita 1.6+ defaults). */
+.mocks { --w-bg:#fafafb; --view:#ffffff; --hb:#ffffff; --card:#ffffff; --t:rgba(0,0,6,.8); --dim:rgba(0,0,6,.55);
+  --bd:rgba(0,0,6,.08); --pill:rgba(0,0,6,.07); --acc:#3584e4; --acc-t:#0461be; --ok:#1b8553; --warn:#9c6e03;
+  --shadow:0 0 0 1px rgba(0,0,6,.03),0 1px 3px 1px rgba(0,0,6,.07),0 2px 6px 2px rgba(0,0,6,.03); --frame:rgba(0,0,6,.18); }
+.mocks.dark { --w-bg:#222226; --view:#1d1d20; --hb:#2e2e32; --card:#303034; --t:#ffffff; --dim:rgba(255,255,255,.55);
+  --bd:rgba(0,0,6,.36); --pill:rgba(255,255,255,.1); --acc:#3584e4; --acc-t:#81d0ff; --ok:#78e9ab; --warn:#ffc252;
+  --shadow:0 0 0 1px rgba(0,0,6,.25),0 1px 3px 1px rgba(0,0,6,.1); --frame:rgba(0,0,0,.6); }
+
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--f-body); }
+.wrap { max-width: 1340px; margin: 0 auto; padding-block: 40px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2 { font-family: var(--f-display); font-weight: 650; text-wrap: balance; letter-spacing: -.01em; }
+h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.15; margin: 0 0 14px; }
+h2 { font-size: 26px; margin: 0; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 17px; max-width: 64ch; }
+.lede + .lede { margin-top: 10px; }
+.eyebrow { color: var(--mark); font-weight: 600; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 8px; }
+.problems { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 26px 0 0; padding: 0; list-style: none; }
+.problems li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.problems b { display: block; margin-bottom: 2px; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 34px 0 6px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--panel); }
+.seg button { font: inherit; font-size: 14px; border: 0; background: none; color: var(--fg); padding: 6px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.seg button:focus-visible { outline: 2px solid var(--mark); outline-offset: -2px; }
+.note { color: var(--muted); font-size: 13px; }
+
+section.prop { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 28px; }
+.prop-head { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; }
+.badge { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--mark); color: var(--mark); }
+.prop > p { margin-top: 10px; }
+.stage { overflow-x: auto; margin: 22px 0 0; padding: 4px 2px 18px; }
+.stage-row { display: flex; gap: 28px; align-items: flex-start; width: max-content; }
+.cap { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 28px; margin-top: 10px; }
+.facts ul { margin: 0; padding-left: 18px; }
+.facts li { margin: 3px 0; }
+
+.rec { margin-top: 56px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; }
+.rec h2 { font-size: 22px; margin-bottom: 8px; }
+.rec p + p { margin-top: 8px; }
+
+/* ---------- Mockup chrome: libadwaita look-alike ---------- */
+.win { font-family: "Inter", "Adwaita Sans", system-ui, sans-serif; font-size: 14.5px; line-height: 1.35; color: var(--t);
+  background: var(--w-bg); border-radius: 12px; overflow: hidden; box-shadow: 0 0 0 1px var(--frame), 0 8px 28px rgba(0,0,0,.18);
+  display: flex; flex-direction: column; }
+.win.desk { width: 900px; height: 640px; }
+.win.phone { width: 360px; height: 700px; border-radius: 22px; }
+.hb { background: var(--hb); min-height: 47px; display: flex; align-items: center; gap: 6px; padding: 0 6px; box-shadow: inset 0 -1px var(--bd); flex: none; }
+.hb .ttl { flex: 1; text-align: center; min-width: 0; }
+.hb .ttl b { display: block; font-weight: 700; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb .ttl span { display: block; font-size: 12px; color: var(--dim); }
+.ib { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: var(--t); flex: none; }
+.ib svg { width: 16px; height: 16px; fill: currentColor; }
+.ib.hov { background: var(--pill); }
+.btn-s { background: var(--acc); color: #fff; font-weight: 700; padding: 7px 16px; border-radius: 8px; font-size: 14px; flex: none; }
+.wbtn { width: 24px; height: 24px; border-radius: 50%; background: var(--pill); display: grid; place-items: center; margin-left: 4px; }
+.wbtn svg { width: 10px; height: 10px; fill: var(--t); }
+.body { flex: 1; overflow: auto; background: var(--w-bg); }
+.clamp { margin: 0 auto; padding: 18px 12px 28px; }
+.ab { flex: none; background: var(--hb); box-shadow: inset 0 1px var(--bd); padding: 8px 8px 10px; display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; }
+.ab .mid { text-align: center; }
+.ab .pill-s { display: inline-block; background: var(--acc); color: #fff; font-weight: 700; padding: 9px 30px; border-radius: 999px; }
+.ab small { display: block; font-size: 12px; color: var(--dim); margin-top: 4px; }
+
+/* boxed list, rows */
+.grp-h { display: flex; align-items: baseline; justify-content: space-between; margin: 22px 2px 8px; }
+.grp-h:first-child { margin-top: 0; }
+.grp-h b { font-weight: 700; font-size: 14.5px; }
+.grp-h span { font-size: 13px; color: var(--dim); }
+.boxed { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.row { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 7px 6px 7px 14px; }
+.row + .row { box-shadow: inset 0 1px var(--bd); }
+.row .tx { flex: 1; min-width: 0; }
+.row .f { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .b { font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.row .end { display: flex; align-items: center; gap: 6px; flex: none; }
+.row .when { font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.row .when.due { color: var(--acc-t); font-weight: 600; }
+.row.susp .tx { opacity: .55; }
+.tp { font-size: 12px; padding: 2px 7px; border-radius: 6px; background: var(--pill); white-space: nowrap; }
+.m { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "Times New Roman", serif; font-style: italic; font-size: 1.08em; }
+.mu { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "Times New Roman", serif; font-size: 1.06em; }
+.shared { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); margin: 0 2px 14px; }
+.chev { width: 16px; height: 16px; fill: var(--dim); flex: none; }
+.expander { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 14px; }
+.expander .tx { flex: 1; }
+.search { display: flex; align-items: center; gap: 8px; background: var(--pill); border-radius: 8px; padding: 7px 10px; color: var(--dim); font-size: 14px; margin-bottom: 16px; }
+.search svg { width: 15px; height: 15px; fill: currentColor; }
+
+/* Round 2 */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--pill); box-shadow: inset 0 0 0 1.5px var(--dim); }
+.dot.due { background: var(--acc); box-shadow: none; }
+.dot.learn { background: var(--warn); box-shadow: none; }
+.dot.new { background: none; box-shadow: inset 0 0 0 1.5px var(--ok); }
+.row .b.st { font-size: 13px; }
+.row .b.st.due { color: var(--acc-t); font-weight: 600; }
+.flat { border-radius: 0; box-shadow: none; background: transparent; }
+.flat .row { padding-left: 6px; min-height: 46px; }
+.flat .row + .row { box-shadow: inset 0 1px var(--bd); }
+.ghead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 26px 6px 4px; font-size: 13px; font-weight: 700; color: var(--dim); }
+.ghead .n { margin-left: auto; font-weight: 400; }
+.tiles2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.phone .tiles2 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.t2 { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); min-height: 92px; padding: 10px 10px 8px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.t2 .f { flex: 1; font-weight: 600; font-size: 14.5px; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.t2 .ft { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); min-width: 0; }
+.t2 .ft .sp { flex: 1; }
+.t2 .ft > :not(.sp) { white-space: nowrap; }
+.t2 .ft .due { color: var(--acc-t); font-weight: 600; }
+.t2 .tp { font-size: 11px; padding: 1px 6px; }
+.legend2 { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--dim); margin: 0 2px 14px; align-items: center; }
+.legend2 span { display: inline-flex; align-items: center; gap: 6px; }
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Rappel · UI designer · round 2 · mockups, no code</div>
+  <h1>The deck page, second try</h1>
+  <p class="lede">Max, you were right: with fronts only, A turns into a tall stack of identical grey bars, and on a wide window it sits in a thin column. These three propositions keep the one thing you liked, the shared tags said once at the top, and fix the rest in different ways. They use your real SIC&nbsp;3101 fronts, with no backs. The due dates are invented.</p>
+
+  <ul class="problems">
+    <li><b>Every row looks the same</b>One line of text per row, 21 times, with nothing to rest the eye on.</li>
+    <li><b>Heavy grey slab</b>The boxed list fills a 600 px column with card colour, top to bottom.</li>
+    <li><b>Nothing to say about a card</b>Without a back, the row has no second line, so it holds no information beyond the name.</li>
+  </ul>
+
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="Mockup theme">
+      <button type="button" id="th-light" aria-pressed="true">Light</button>
+      <button type="button" id="th-dark" aria-pressed="false">Dark</button>
+    </div>
+    <span class="note">Windows scroll inside, like the app. On a phone, swipe sideways to see the second window.</span>
+  </div>
+
+  <section class="prop" id="d">
+    <div class="prop-head"><h2>D · Rows that say when</h2><span class="badge">Closest to what is built</span></div>
+    <p>Each row gets a second line in every case: the back when the card has one, otherwise when the card comes up next (“Due today”, “In 3 days”, “New”). A small dot at the start shows the state at a glance: filled blue for due, amber for learning, a green ring for new, grey for later. The extra tags stay on the right. The rows look like real list items again rather than bars.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="D" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="D" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Good</h3><ul><li>Every row tells you something useful.</li><li>A small change from the page you have, so it is quick to build.</li></ul></div>
+      <div><h3>Less good</h3><ul><li>Still a long column on a wide window.</li><li>A dot of colour needs its word too (the subtitle gives it), for colour-blind users.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="prop" id="e">
+    <div class="prop-head"><h2>E · Grouped by tag, no boxes</h2><span class="badge">The calmest</span></div>
+    <p>The shared tags at the top, and the extra tags go one step further: cards that carry the same extra tags are listed together under those tags, so no row shows a pill at all. The list sits on the page itself with thin separators, as in Files or Contacts, with no grey box behind it. The due state is a short word on the right.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="E" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="E" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Good</h3><ul><li>No pills on rows at all: very quiet.</li><li>The groups break the long list into readable parts.</li></ul></div>
+      <div><h3>Less good</h3><ul><li>Cards are no longer in the order you added them; they follow their tags.</li><li>A deck where every card has different tags gets many small groups (past a few, it falls back to plain rows).</li></ul></div>
+    </div>
+  </section>
+
+  <section class="prop" id="f">
+    <div class="prop-head"><h2>F · Small cards</h2><span class="badge">Uses the whole window</span></div>
+    <p>Short fronts like yours suit small tiles: each card is a little card, the front in bold, its state and extra tags at the bottom. The grid fills a wide window, so you see the whole deck at once, and a phone gets two columns. This is the C idea from round 1, made compact for front-only cards.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="F" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="F" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Good</h3><ul><li>Feels like a pack of cards; the prettiest.</li><li>No empty sides: about 25 cards fit on a laptop screen instead of 15.</li></ul></div>
+      <div><h3>Less good</h3><ul><li>Long fronts are cut after three lines.</li><li>The most work: a grid with keyboard focus, selection mode and fast scrolling for big decks.</li></ul></div>
+    </div>
+  </section>
+
+  <div class="rec">
+    <h2>My recommendation: E, or D if you want the smallest step</h2>
+    <p>E is the calmest: no boxes, no pills on rows, and groups that give the list a shape. It fits a deck like yours, where a few cards share extra tags. D is the safe choice: it keeps the built page and simply gives every row a useful second line. F is the prettiest but also the most work.</p>
+    <p>Parts can be mixed, for example E's flat list with D's “when” line.</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  const I = {
+    back: '<path d="M10.5 2.5 5 8l5.5 5.5 1-1L7 8l4.5-4.5z"/>',
+    plus: '<path d="M7.25 2h1.5v5.25H14v1.5H8.75V14h-1.5V8.75H2v-1.5h5.25z"/>',
+    more: '<circle cx="8" cy="3" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="8" cy="13" r="1.4"/>',
+    sel: '<path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zm2.7 2.9L7.2 8.9 5.3 7 4.2 8.1l3 3 4.6-4.6z"/>',
+    min: '<rect x="2" y="6" width="8" height="1.6"/>',
+    max: '<path d="M2 2h8v8H2zm1.5 1.5v5h5v-5z"/>',
+    close: '<path d="M2.6 1.5 6 4.9l3.4-3.4 1.1 1.1L7.1 6l3.4 3.4-1.1 1.1L6 7.1 2.6 10.5 1.5 9.4 4.9 6 1.5 2.6z"/>'
+  };
+  const svg = n => '<svg viewBox="0 0 16 16" aria-hidden="true">' + I[n] + '</svg>';
+  const wsvg = n => '<svg viewBox="0 0 12 12" aria-hidden="true">' + I[n] + '</svg>';
+  const m = s => '<span class="m">' + s + '</span>';
+  const X = ['Analyse', 'MAT3101'];
+  // [front, extra tags, state, when]
+  const cards = [
+    ['Expérience aléatoire', [], 'later', 'In 4 days'],
+    ["Espace d'état", [], 'later', 'In 6 days'],
+    ['Événement aléatoire', [], 'due', 'Due today'],
+    ['Équiprobabilité', [], 'later', 'Tomorrow'],
+    ['Probabilité', [], 'later', 'In 3 days'],
+    ['Modèle probabiliste', [], 'learn', 'In 10 min'],
+    ['Algèbre de Boole', [], 'due', 'Due today'],
+    ['Tribu', X, 'later', 'In 5 days'],
+    ['Tribu engendrée', X, 'due', 'Due today'],
+    ['Tribu borélienne', [], 'later', 'In 2 days'],
+    ['Espace mesurable', X, 'later', 'In 8 days'],
+    ['Espace mesuré', X, 'later', 'Tomorrow'],
+    ['Mesure', X, 'due', 'Due today'],
+    ['Mesure ' + m('σ') + '-finie', [], 'later', 'In 3 days'],
+    ['Mesure finie', [], 'later', 'In 4 days'],
+    ['Événement négligeable', [], 'later', 'In 2 days'],
+    ['Événement presque sûr', [], 'learn', 'In 1 h'],
+    ['Mesure de comptage', X, 'new', 'New'],
+    ['Mesure de Lebesgue', X, 'new', 'New'],
+    ['Mesure absolument continue', [], 'new', 'New'],
+    ['Théorème de Radon–Nikodym', [], 'new', 'New']
+  ];
+  const SHARED = ['Mathématiques', 'Probabilités', 'SIC3101'];
+  const pills = t => t.map(x => '<span class="tp">' + x + '</span>').join('');
+  const shared = '<div class="shared">On every card:' + pills(SHARED) + '</div>';
+  const nDue = cards.filter(c => c[2] === 'due').length, nNew = cards.filter(c => c[2] === 'new').length;
+
+  function header(w) {
+    const sub = w === 'phone' ? nDue + ' due' : nDue + ' due · ' + nNew + ' new';
+    const t = '<div class="ttl"><b>SIC 3101 – Probabilités</b><span>' + sub + '</span></div>';
+    if (w === 'phone') return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib">' + svg('plus') + '</span>' + t + '<span class="ib">' + svg('more') + '</span></div>';
+    return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib">' + svg('plus') + '</span>' + t +
+      '<span class="btn-s">Study</span><span class="ib">' + svg('sel') + '</span><span class="ib">' + svg('more') + '</span>' +
+      '<span class="wbtn">' + wsvg('min') + '</span><span class="wbtn">' + wsvg('max') + '</span><span class="wbtn">' + wsvg('close') + '</span></div>';
+  }
+  const bar = w => w === 'phone' ? '<div class="ab"><span class="ib">' + svg('sel') + '</span><div class="mid"><span class="pill-s">Study</span><small>' + nDue + ' due · ' + nNew + ' new</small></div><span></span></div>' : '';
+  const page = (w, inner, max) => header(w) + '<div class="body"><div class="clamp" style="max-width:' + max + '">' + inner + '</div></div>' + bar(w);
+
+  function D(w) {
+    const ph = w === 'phone';
+    const rows = cards.map(c => {
+      const ex = ph && c[1].length ? '<span class="tp">' + c[1][0] + '</span><span class="tp">+' + (c[1].length - 1) + '</span>' : pills(c[1]);
+      return '<div class="row"><span class="dot ' + c[2] + '"></span><div class="tx"><div class="f">' + c[0] + '</div><div class="b st ' + c[2] + '">' + c[3] + '</div></div>' +
+        '<div class="end">' + ex + '<span class="ib">' + svg('more') + '</span></div></div>';
+    }).join('');
+    return page(w, shared + '<div class="boxed">' + rows + '</div>', '640px');
+  }
+
+  function E(w) {
+    const groups = [[[], 'Only the shared tags'], [X, null]];
+    let h = shared;
+    for (const [tags, label] of groups) {
+      const cs = cards.filter(c => c[1].join() === tags.join());
+      h += '<div class="ghead">' + (label ? label : 'Also ' + pills(tags)) + '<span class="n">' + cs.length + ' cards</span></div>';
+      h += '<div class="boxed flat">' + cs.map(c => '<div class="row"><div class="tx"><div class="f">' + c[0] + '</div></div><div class="end"><span class="when' + (c[2] === 'due' ? ' due' : '') + '">' + (c[2] === 'new' ? 'New' : c[3].replace('Due today', 'Today')) + '</span><span class="ib">' + svg('more') + '</span></div></div>').join('') + '</div>';
+    }
+    return page(w, h, '640px');
+  }
+
+  function F(w) {
+    const ph = w === 'phone';
+    const lg = '<div class="legend2"><span><i class="dot due"></i>Due</span><span><i class="dot learn"></i>Learning</span><span><i class="dot new"></i>New</span><span><i class="dot"></i>Later</span></div>';
+    const tiles = cards.map(c => {
+      const ex = c[1].length ? '<span class="tp">' + c[1][0] + ' +' + (c[1].length - 1) + '</span>' : '';
+      const st = c[2] === 'due' ? '<span class="due">Today</span>' : c[2] === 'new' ? 'New' : c[3];
+      return '<div class="t2"><div class="f">' + c[0] + '</div><div class="ft"><span class="dot ' + c[2] + '"></span>' + st + '<span class="sp"></span>' + ex + '</div></div>';
+    }).join('');
+    return page(w, shared + lg + '<div class="tiles2">' + tiles + '</div>', 'none;padding:18px 18px 28px');
+  }
+
+  const R = { D, E, F };
+  document.querySelectorAll('.mocks').forEach(el => { el.innerHTML = R[el.dataset.m](el.dataset.w); });
+  const setTheme = dark => {
+    document.querySelectorAll('.mocks').forEach(el => el.classList.toggle('dark', dark));
+    document.getElementById('th-dark').setAttribute('aria-pressed', String(dark));
+    document.getElementById('th-light').setAttribute('aria-pressed', String(!dark));
+    try { localStorage.setItem('mockTheme', dark ? 'dark' : 'light'); } catch (e) {}
+  };
+  let start = false;
+  try { const s = localStorage.getItem('mockTheme'); start = s ? s === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {}
+  setTheme(start);
+  document.getElementById('th-light').onclick = () => setTheme(false);
+  document.getElementById('th-dark').onclick = () => setTheme(true);
+})();
+</script>

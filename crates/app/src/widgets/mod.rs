@@ -4,6 +4,8 @@
 mod backup_row;
 pub mod bar_chart;
 mod browse_item;
+pub mod card_group_header;
+pub mod card_groups;
 pub mod card_list_header;
 mod card_object;
 pub mod card_row;
@@ -17,6 +19,8 @@ mod tag_suggestions;
 
 pub use backup_row::BackupRow;
 pub use browse_item::BrowseItem;
+pub use card_group_header::CardGroupHeader;
+pub use card_groups::CardGroups;
 pub use card_list_header::CardListHeader;
 pub use card_object::CardObject;
 pub use card_row::CardRow;
@@ -40,6 +44,8 @@ pub fn register_types() {
     BackupRow::ensure_type();
     bar_chart::BarChart::ensure_type();
     BrowseItem::ensure_type();
+    CardGroupHeader::ensure_type();
+    CardGroups::ensure_type();
     CardListHeader::ensure_type();
     CardObject::ensure_type();
     CardRow::ensure_type();

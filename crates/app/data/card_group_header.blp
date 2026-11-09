@@ -1,0 +1,40 @@
+using Gtk 4.0;
+
+// The header of a group of cards on the deck page (ADR 0079): "Also" and
+// the tags the group's cards have besides the shared ones, or "Only the
+// shared tags", and "14 cards" at the end. A `GtkListView` section header
+// (`listview > header`, which libadwaita pads and sets as a heading); the
+// texts are set in widgets/card_group_header.rs. Tag names are untrusted,
+// so nothing parses markup. Not focusable: its accessible label says it
+// whole, and every row's label says its own tags.
+template $RappelCardGroupHeader: Gtk.Box {
+  spacing: 6;
+
+  Gtk.Label title_label {
+    valign: start;
+    xalign: 0;
+
+    styles [
+      "caption-heading",
+      "dimmed",
+    ]
+  }
+
+  // Wrapping; at most six pills, then "+N" (widgets/card_list_header.rs,
+  // `show_capped`).
+  $RappelTagPills group_pills {
+    hexpand: true;
+    valign: start;
+  }
+
+  Gtk.Label count_label {
+    valign: start;
+    xalign: 1;
+
+    styles [
+      "caption",
+      "dimmed",
+      "numeric",
+    ]
+  }
+}

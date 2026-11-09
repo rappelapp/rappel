@@ -84,7 +84,7 @@ template $RappelBrowserPage: Adw.NavigationPage {
       // while there is no card at all (pages/browser_page.rs).
       [top]
       Adw.Clamp filter_bar {
-        maximum-size: 600;
+        maximum-size: 640;
 
         child: Gtk.Box {
           spacing: 12;
@@ -200,18 +200,19 @@ template $RappelBrowserPage: Adw.NavigationPage {
 
           // A GtkListView with a model: it only creates rows for what is
           // on screen, so thousands of cards stay smooth (ADR 0013). As on
-          // the deck page: clamped to 600 px, the rows drawn as one boxed
-          // list (`listview.card-list`, ADR 0077), and no `rich-list`,
-          // because the rows lay themselves out like action rows
-          // (data/card_row.blp). The tags every listed card shares are
-          // said once above it.
+          // the deck page: clamped to 640 px, the rows on the window's
+          // background with thin lines between them (`separators`,
+          // `listview.card-list`, ADR 0079) but not grouped (the filters
+          // do that here), and no `rich-list`, because the rows lay
+          // themselves out like action rows (data/card_row.blp). The tags
+          // every listed card shares are said once above it.
           child: Gtk.Box {
             orientation: vertical;
 
             // The tags every listed card has (pages/browser_page.rs
             // follows them), clamped with the list.
             Adw.Clamp {
-              maximum-size: 600;
+              maximum-size: 640;
 
               child: $RappelCardListHeader list_header {};
             }
@@ -221,7 +222,7 @@ template $RappelBrowserPage: Adw.NavigationPage {
               vexpand: true;
 
               child: Adw.ClampScrollable {
-                maximum-size: 600;
+                maximum-size: 640;
 
                 child: Gtk.ListView card_list {
                   single-click-activate: true;
@@ -232,6 +233,7 @@ template $RappelBrowserPage: Adw.NavigationPage {
 
                   styles [
                     "card-list",
+                    "separators",
                   ]
                 };
               };

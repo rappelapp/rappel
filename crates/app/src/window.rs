@@ -456,7 +456,7 @@ impl RappelWindow {
         for page in self.pages() {
             if let Some(deck) = page.downcast_ref::<DeckPage>() {
                 deck.update_study();
-                deck.refresh_new_flags();
+                deck.refresh_standings();
             } else if let Some(browser) = page.downcast_ref::<BrowserPage>() {
                 // A deck page's Undo (suspend, reset) changed cards it lists.
                 browser.requery();

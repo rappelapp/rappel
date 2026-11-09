@@ -1,7 +1,7 @@
 /* The app's only stylesheet, loaded by AdwApplication from `style.css` in
  * the resource base path (AdwApplication docs, "Stylesheet"). It styles the
  * grid of a Markdown table and the sideways-scroll hint of wide formulas (render/),
- * the focus ring of a chart, the deck and card rows, the boxed lists of
+ * the focus ring of a chart, the deck and card rows, the lists of
  * cards, the tag pills, and the
  * review page's card text size and answer buttons.
  * No literal colours: lines and shading are the text colour at a low
@@ -73,72 +73,29 @@ row > box.header.card-row label.subtitle {
   min-height: 18px;
 }
 
-/* A list of cards as one boxed list (ADR 0077). libadwaita's `.boxed-list`
- * styles only a GtkListBox (`list.boxed-list`, `> row:first-child`), and
- * the card lists are GtkListViews, which make rows only for what is on
- * screen. So each row draws its part of the box: the card colours of
- * libadwaita's boxed list and its `--card-shade-color` line under each
- * row, with the box's rounded corners and the space around it on the first
- * and last rows.
- *
- * Rows are recycled, so `:first-child` and `:last-child` are the first and
- * last rows that exist, not the list's: but a GtkListView keeps rows alive
- * past both ends of what is shown (`GTK_LIST_VIEW_EXTRA_ITEMS`, two, in
- * gtk/gtklistview.c, passed to `gtk_list_base_set_anchor_max_widgets`) and
- * keeps its rows in the list's order (gtk/gtklistitemmanager.c), so the
- * first and last existing rows are on screen only when they are the list's
- * first and last. A row that becomes the first or last existing one is
- * off screen, and the list keeps the rows on screen where they are when an
- * off-screen row changes height (it scrolls by an anchor row). */
+/* A list of cards (ADR 0079): the rows sit on the page's own background,
+ * with libadwaita's thin lines between them (the `separators` style class
+ * of a list view), as Files and Contacts list theirs; no box, no card
+ * colour. A group's header (`listview > header`, which libadwaita sets as
+ * a heading, 18 px above and 6 px under) starts where the rows' text
+ * starts: their 2 px padding and their `box.header`'s 12 px margin. */
 listview.card-list {
   background: none;
   color: inherit;
 }
 
-listview.card-list > row {
-  padding: 0;
-  margin: 0 12px;
-  color: var(--card-fg-color);
-  background-color: var(--card-bg-color);
-  border-bottom: 1px solid var(--card-shade-color);
-  box-shadow: inset 1px 0 var(--card-shade-color), inset -1px 0 var(--card-shade-color);
+listview.card-list > header {
+  padding-left: 14px;
+  padding-right: 14px;
 }
 
-listview.card-list > row.activatable:hover,
-listview.card-list > row.activatable.has-open-popup {
-  background-color: var(--card-bg-color);
-  background-image: image(color-mix(in srgb, currentColor 3%, transparent));
-}
-
-listview.card-list > row.activatable:active {
-  background-color: var(--card-bg-color);
-  background-image: image(color-mix(in srgb, currentColor 8%, transparent));
-}
-
-listview.card-list > row:first-child {
-  margin-top: 12px;
-  border-top-left-radius: 12px;
-  border-top-right-radius: 12px;
-  box-shadow: inset 1px 0 var(--card-shade-color), inset -1px 0 var(--card-shade-color),
-              inset 0 1px var(--card-shade-color);
-}
-
-listview.card-list > row:last-child {
-  margin-bottom: 24px;
-  border-bottom-left-radius: 12px;
-  border-bottom-right-radius: 12px;
-}
-
-@media (prefers-contrast: more) {
-  listview.card-list > row {
-    border-bottom-color: var(--border-color);
-    box-shadow: inset 1px 0 var(--border-color), inset -1px 0 var(--border-color);
-  }
-
-  listview.card-list > row:first-child {
-    box-shadow: inset 1px 0 var(--border-color), inset -1px 0 var(--border-color),
-                inset 0 1px var(--border-color);
-  }
+/* The due word at a card row's end is dimmed and small like the second
+ * line (`row label.subtitle`), except "Today": in the accent colour
+ * (`.accent`) at full strength and bold, as the deck rows' due count, so
+ * the cards to study now stand out. */
+row label.card-due.accent {
+  opacity: 1;
+  font-weight: bold;
 }
 
 /* A tag pill (widgets/tag_pills.rs): a small rounded label on a faint fill

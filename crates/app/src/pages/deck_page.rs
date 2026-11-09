@@ -7,13 +7,16 @@
 //! one-shot timer re-checks it when the next card becomes due or the next
 //! study day begins, so they change while the page is open.
 //!
-//! The list model is a `gio::ListStore` of [`CardObject`] in creation
-//! order. Changes update it item by item instead of rebuilding it, so a
-//! deck of thousands of cards keeps its scroll position and stays fast.
+//! The cards are a `gio::ListStore` of [`CardObject`] in creation order.
+//! Changes update it item by item instead of rebuilding it, so a deck of
+//! thousands of cards keeps its scroll position and stays fast. The list
+//! shows them through [`CardGroups`], grouped by the tags they have besides
+//! the shared ones, each group under a header (ADR 0079): positions in the
+//! store (to change it) and in the list (to focus a row) differ.
 
 use std::cell::Cell;
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -21,8 +24,9 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gio, glib};
 use rappel_core::Error;
-use rappel_core::domain::{Card, CardState, Deck, TaggedCard};
+use rappel_core::domain::{Card, Deck, TaggedCard};
 use rappel_core::scheduling::{StudyInput, StudyScope};
+use rappel_core::storage::{CardStanding, CardStatus};
 
 use crate::dialogs::card_editor::{CardEditor, Saved};
 use crate::dialogs::{card_info, merge_deck, move_card};
@@ -36,7 +40,7 @@ use crate::ui::text::with_error;
 use crate::ui::toast::{info_toast, log_failure, show_error, show_toast_from, undo_toast};
 use crate::ui::undo::{self, UndoFailure};
 use crate::ui::{init_once, nav};
-use crate::widgets::{CardObject, CardRow, card_row};
+use crate::widgets::{CardGroupHeader, CardGroups, CardObject, CardRow, card_row};
 use crate::window::RappelWindow;
 
 /// The empty state's icon, as in its layout, given back after a short
@@ -111,6 +115,11 @@ mod imp {
         pub deck: OnceCell<Deck>,
         /// The cards, oldest first.
         pub cards: OnceCell<gio::ListStore>,
+        /// The cards as the list shows them, grouped (ADR 0079).
+        pub groups: OnceCell<crate::widgets::CardGroups>,
+        /// The list view's group headers, given to it while the cards are
+        /// grouped.
+        pub header_factory: OnceCell<gtk::SignalListItemFactory>,
         /// An editor is open; a second one (Ctrl+N, a click) is not opened.
         pub editing: Rc<Cell<bool>>,
         /// The card to focus when the editor closes: the one last saved.
@@ -136,8 +145,17 @@ mod imp {
         /// Their names, which the list's header says once.
         #[property(get, set)]
         pub shared_tag_names: RefCell<Vec<String>>,
-        /// Reads them again after the list changed.
-        pub shared_queue: crate::widgets::card_row::SharedTagsQueue,
+        /// The cards are shown in groups by their tags (`CardGroups`): the
+        /// rows show no pills.
+        #[property(get, set)]
+        pub grouped: Cell<bool>,
+        /// The page's clock for the rows' due words (UTC milliseconds), set
+        /// when the page opens or is shown and when the study timer runs.
+        #[property(get, set)]
+        pub now: Cell<i64>,
+        /// When the next study day begins, for the due words.
+        #[property(get, set)]
+        pub next_day: Cell<i64>,
         /// The window is under 500 sp (`selection_narrow` applies): with
         /// `compact`, Select All and the action bar keep only their icons.
         pub selection_narrow_on: Cell<bool>,
@@ -234,8 +252,9 @@ mod imp {
             // may which cards are new. The rows are refreshed before the
             // focus is set, so it lands on a row that stays.
             page.connect_shown(|page| {
+                page.update_clock();
                 page.update_study();
-                page.refresh_new_flags();
+                page.refresh_standings();
                 page.focus_when_shown();
             });
             page.connect_compact_notify(|page| {
@@ -284,14 +303,18 @@ impl DeckPage {
     pub fn new(state: AppState, deck: Deck) -> rappel_core::Result<Self> {
         let page: Self = glib::Object::new();
         let imp = page.imp();
+        let now = rappel_core::time::now_ms();
         let cards = state.list_tagged_cards(&deck.id)?;
-        let new = state.new_card_ids(&deck.id)?;
+        let standings = state.deck_standings(&deck.id, now)?;
         // Deck names are untrusted; NavigationPage:title is plain text.
         page.set_title(&deck.name);
         imp.window_title.set_title(&deck.name);
 
         let store = gio::ListStore::new::<CardObject>();
-        store.extend_from_slice(&items_of(cards, &new));
+        store.extend_from_slice(&items_of(cards, &standings));
+        // Before anything else follows the store, so the groups are up to
+        // date in every handler below (`CardGroups::new`).
+        let groups = CardGroups::new(&store);
         init_once(
             &imp.selection,
             CardSelection::new(
@@ -304,7 +327,7 @@ impl DeckPage {
                     header: imp.selection_header.get(),
                     bar: imp.selection_bar.get(),
                     list: imp.card_list.get(),
-                    items: store.clone(),
+                    items: groups.clone().upcast(),
                     own_deck: Some(deck.id.clone()),
                 },
             ),
@@ -318,15 +341,22 @@ impl DeckPage {
                 // Read the tags when the Deck Menu opens: a change here
                 // can be one of thousands of cards (ADR 0069).
                 page.imp().tag_menu_stale.set(true);
-                page.queue_shared_tags();
+                page.update_shared_tags();
                 // Select follows whether there is a card; an emptied list
                 // ends selection mode.
                 page.selection().list_changed();
             }
         ));
         imp.card_list
-            .set_model(Some(&gtk::NoSelection::new(Some(store.clone()))));
+            .set_model(Some(&gtk::NoSelection::new(Some(groups.clone()))));
         imp.card_list.set_factory(Some(&row_factory(&page)));
+        init_once(&imp.header_factory, header_factory(&groups));
+        groups
+            .bind_property("grouped", &page, "grouped")
+            .sync_create()
+            .build();
+        page.connect_grouped_notify(DeckPage::update_headers);
+        page.update_headers();
         page.bind_property("shared-tag-names", &*imp.list_header, "tags")
             .sync_create()
             .build();
@@ -338,7 +368,7 @@ impl DeckPage {
                 if page.selection().activate(position) {
                     return;
                 }
-                if let Some(item) = page.item(position) {
+                if let Some(item) = page.shown_item(position) {
                     page.open_editor(Some(&item.card()));
                 }
             }
@@ -350,6 +380,8 @@ impl DeckPage {
         init_once(&imp.state, state);
         init_once(&imp.deck, deck);
         init_once(&imp.cards, store);
+        init_once(&imp.groups, groups);
+        page.update_clock();
         page.update_shared_tags();
         page.update_empty_state();
         page.update_study();
@@ -459,20 +491,39 @@ impl DeckPage {
     }
 
     /// Says which tags every card of the deck has: once above the list,
-    /// and left out of the rows' pills (ADR 0077).
+    /// and left out of the rows' pills (ADR 0077). `CardGroups` read them
+    /// with the groups, once per change of the list.
     fn update_shared_tags(&self) {
-        if let Some(store) = self.imp().cards.get() {
-            card_row::update_shared_tags::<CardObject>(self, store, card_tags);
+        if let Some(groups) = self.imp().groups.get() {
+            card_row::set_shared_tags(self, &groups.shared_tags());
         }
     }
 
-    /// [`Self::update_shared_tags`] once the main loop is idle, however
-    /// many cards change before then.
-    fn queue_shared_tags(&self) {
+    /// Gives the list its group headers while the cards are grouped, and
+    /// takes them away otherwise (`gtk_list_view_set_header_factory`: a
+    /// list view without a header factory shows no headers, `GtkListView`
+    /// docs).
+    fn update_headers(&self) {
         let imp = self.imp();
-        if let Some(store) = imp.cards.get() {
-            imp.shared_queue.queue::<CardObject>(self, store, card_tags);
+        let factory = imp.header_factory.get().filter(|_| self.grouped());
+        if imp.card_list.header_factory().as_ref() != factory.map(Cast::upcast_ref) {
+            imp.card_list.set_header_factory(factory);
         }
+    }
+
+    /// Sets the rows' clock and the start of the next study day, from
+    /// which their due words are said.
+    fn update_clock(&self) {
+        let imp = self.imp();
+        let now = rappel_core::time::now_ms();
+        if let Some(state) = imp.state.get() {
+            match state.next_day_start(now) {
+                Ok(day) => self.set_next_day(day),
+                // The words count days from a day after now instead.
+                Err(err) => tracing::warn!("cannot read when the study day begins: {err}"),
+            }
+        }
+        self.set_now(now);
     }
 
     /// Enables the rows' Move to Deck… while another deck exists, and the
@@ -492,53 +543,56 @@ impl DeckPage {
         }
     }
 
-    /// Makes each row's Reset Progress follow the cards' state: a card
-    /// whose newness changed gets a new item in the same place, which
-    /// rebinds its row. One query for the deck, and a splice only for the
-    /// cards that changed.
-    pub fn refresh_new_flags(&self) {
+    /// Makes each row follow where its card stands (its due word and its
+    /// Reset Progress): a card whose standing changed gets a new item in
+    /// the same place, which rebinds its row. One query for the deck, and
+    /// a splice only for the cards that changed.
+    pub fn refresh_standings(&self) {
         let imp = self.imp();
         let (Some(state), Some(deck), Some(store)) =
             (imp.state.get(), imp.deck.get(), imp.cards.get())
         else {
             return;
         };
-        let new = match state.new_card_ids(&deck.id) {
-            Ok(new) => new,
+        let standings = match state.deck_standings(&deck.id, rappel_core::time::now_ms()) {
+            Ok(standings) => standings,
             Err(err) => {
                 // The rows keep their last state; the core refuses a reset
                 // of a new card either way.
-                tracing::warn!("cannot read which cards are new: {err}");
+                tracing::warn!("cannot read where the cards stand: {err}");
                 return;
             }
         };
-        // Every position must give its item, or the flags would no longer
-        // line up with the positions spliced below.
+        // Every position must give its item, or the standings would no
+        // longer line up with the positions spliced below.
         let Some(items) = (0..store.n_items())
             .map(|position| self.item(position))
             .collect::<Option<Vec<CardObject>>>()
         else {
             return;
         };
-        let flags: Vec<(bool, bool)> = items
+        let pairs: Vec<(CardStanding, CardStanding)> = items
             .iter()
-            .map(|item| (item.is_new(), new.contains(&item.card().id)))
+            .map(|item| {
+                let was = item.standing();
+                (was, standings.get(&item.card().id).copied().unwrap_or(was))
+            })
             .collect();
-        let Some(range) = changed_range(&flags) else {
+        let Some(range) = changed_range(&pairs) else {
             return;
         };
-        // One splice for every row whose flag changed, so the list's
-        // `items-changed` handlers (counts, selection) run once, not once
-        // per row (k rows cost k × O(n) before). A row whose flag did not
-        // change goes back as the same item.
+        // One splice for every row whose standing changed, so the list's
+        // `items-changed` handlers (counts, selection, groups) run once,
+        // not once per row (k rows cost k × O(n) before). A row whose
+        // standing did not change goes back as the same item.
         let replacements: Vec<CardObject> = items[range.clone()]
             .iter()
-            .zip(&flags[range.clone()])
+            .zip(&pairs[range.clone()])
             .map(|(item, &(was, is))| {
                 if was == is {
                     item.clone()
                 } else {
-                    item.copy_with_new(is)
+                    item.copy_with(is)
                 }
             })
             .collect();
@@ -548,24 +602,27 @@ impl DeckPage {
         store.splice(start, len, &replacements);
     }
 
-    /// A list item for `tagged`, new or not as the store says. For a card
+    /// A list item for `tagged`, standing as the store says. For a card
     /// that comes from an edit or an undo, where one query is cheap.
     fn item_for(&self, tagged: TaggedCard) -> CardObject {
-        let is_new = match self
+        let standing = match self
             .imp()
             .state
             .get()
-            .map(|s| s.card_state(&tagged.card.id))
+            .map(|s| s.browse_row(&tagged.card.id, rappel_core::time::now_ms()))
         {
-            Some(Ok(card_state)) => card_state == CardState::New,
+            Some(Ok(Some(row))) => CardStanding {
+                status: row.status,
+                is_new: row.is_new,
+            },
+            Some(Ok(None)) | None => unread_standing(&tagged.card),
             Some(Err(err)) => {
                 // Reset stays offered; the core refuses it for a new card.
                 tracing::warn!("cannot read the state of a card: {err}");
-                false
+                unread_standing(&tagged.card)
             }
-            None => false,
         };
-        CardObject::new(tagged).with_new(is_new)
+        CardObject::new(tagged).with_standing(standing)
     }
 
     /// The id of this page's deck.
@@ -634,6 +691,10 @@ impl DeckPage {
             .study_timer
             .restart(Duration::from_millis(delay_ms), move || {
                 if let Some(page) = page.upgrade() {
+                    // A card came due, or a new study day began: the rows'
+                    // due words too ("In 10 min" becomes "Today").
+                    page.update_clock();
+                    page.refresh_standings();
                     page.update_study();
                 }
             });
@@ -848,10 +909,8 @@ impl DeckPage {
                 #[weak(rename_to = page)]
                 self,
                 move || {
-                    if let Some(id) = page.imp().focus_after_edit.take()
-                        && let Some(position) = page.position(&id)
-                    {
-                        page.focus(position);
+                    if let Some(id) = page.imp().focus_after_edit.take() {
+                        page.focus_card(&id);
                     }
                 }
             ),
@@ -882,7 +941,14 @@ impl DeckPage {
         let tagged = match saved {
             Saved::Added(tagged) => {
                 // A card just added has no reviews.
-                insert_in_order(store, &CardObject::new(tagged.clone()).with_new(true));
+                let standing = CardStanding {
+                    status: CardStatus::New,
+                    is_new: true,
+                };
+                insert_in_order(
+                    store,
+                    &CardObject::new(tagged.clone()).with_standing(standing),
+                );
                 tagged
             }
             Saved::Edited(tagged) => {
@@ -917,8 +983,9 @@ impl DeckPage {
             ));
             return;
         }
+        let shown = self.shown_position(id);
         store.remove(position);
-        self.focus_or_empty_state(index_after_removal(position, store.n_items()));
+        self.focus_or_empty_state(self.after_removal(shown));
 
         // Undo must work after going back to the deck list too, when this
         // page may be gone: the closure keeps the state, not the page.
@@ -1016,8 +1083,9 @@ impl DeckPage {
             }
         };
         let focus = self.position(id).map(|position| {
+            let shown = self.shown_position(id);
             store.remove(position);
-            let next = MovedFocus::after_removal(index_after_removal(position, store.n_items()));
+            let next = MovedFocus::after_removal(self.after_removal(shown));
             self.focus_or_empty_state(next.position());
             next
         });
@@ -1047,10 +1115,8 @@ impl DeckPage {
                 match reset_notice(&err) {
                     Notice::Info(text) => {
                         // The row was stale: bring it up to date.
-                        self.refresh_new_flags();
-                        if let Some(position) = self.position(id) {
-                            self.focus(position);
-                        }
+                        self.refresh_standings();
+                        self.focus_card(id);
                         show_toast_from(self, info_toast(&text));
                     }
                     Notice::Error(text) => self.error_toast(&text),
@@ -1062,9 +1128,7 @@ impl DeckPage {
         counts_changed(self, window.as_ref());
         // The row was replaced (the card is new now): keep the focus in
         // the list, on the same card.
-        if let Some(position) = self.position(id) {
-            self.focus(position);
-        }
+        self.focus_card(id);
 
         // As for a delete: Undo must work from another page, so the closure
         // keeps the state and weak references, not the page.
@@ -1150,9 +1214,7 @@ impl DeckPage {
         if card.deck_id != deck.id {
             return;
         }
-        let position = if let Some(position) = self.position(&card.id) {
-            position
-        } else {
+        if self.position(&card.id).is_none() {
             // A deleted card keeps its tags (ADR 0029).
             let tags = imp
                 .state
@@ -1169,9 +1231,9 @@ impl DeckPage {
                 card: card.clone(),
                 tags,
             };
-            insert_in_order(store, &self.item_for(tagged))
-        };
-        self.focus(position);
+            insert_in_order(store, &self.item_for(tagged));
+        }
+        self.focus_card(&card.id);
     }
 
     /// Reads the deck's cards again, e.g. after an import added some. The
@@ -1184,14 +1246,14 @@ impl DeckPage {
             return;
         };
         self.update_can_move();
-        match state
-            .list_tagged_cards(&deck.id)
-            .and_then(|cards| Ok((cards, state.new_card_ids(&deck.id)?)))
-        {
-            Ok((cards, new)) => {
+        match state.list_tagged_cards(&deck.id).and_then(|cards| {
+            let now = rappel_core::time::now_ms();
+            Ok((cards, state.deck_standings(&deck.id, now)?))
+        }) {
+            Ok((cards, standings)) => {
                 // The cards chosen stay chosen if they are still here
                 // (`ui::selection` follows the list's changes).
-                store.splice(0, store.n_items(), &items_of(cards, &new));
+                store.splice(0, store.n_items(), &items_of(cards, &standings));
             }
             // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
             Err(err) => self.error_toast(&with_error(
@@ -1226,12 +1288,86 @@ impl DeckPage {
                 // item's row, making it if needed (`gtk_list_base_scroll_to`,
                 // `gtk_list_base_grab_focus`, gtk/gtklistbase.c, source read
                 // for GTK 4.20 and 4.22; observed with GTK 4.24.1).
-                let list = &self.imp().card_list;
-                list.scroll_to(0, gtk::ListScrollFlags::FOCUS, None);
-                list.grab_focus();
+                self.focus_first_row_when_laid_out();
             }
             ShownFocus::EmptyState => self.focus_or_empty_state(None),
         }
+    }
+
+    /// Focuses the first row, and keeps its group's header in sight above
+    /// it once the list is laid out. Focusing a row scrolls it into view
+    /// (`gtk_list_base_set_focus_child` → `gtk_list_base_scroll_to_item`,
+    /// gtk/gtklistbase.c, source read for GTK 4.24). Before the list is
+    /// laid out, its rows have no place yet and `gtk_list_view_get_allocation`
+    /// puts the row at 0, so the row is anchored at the top of the view and
+    /// the header above it is scrolled away (ADR 0077 saw it under Xvfb,
+    /// every time the page opened). The focus is given at once anyway: at
+    /// startup the page is pushed before the window is shown, and the
+    /// window keeps the focus widget it has then (`gtk_window_show`,
+    /// gtk/gtkwindow.c). The first layout is then the sign to put the view
+    /// back at its top, not a number of frames: the list view gives its
+    /// rows their places, then configures its scroll adjustment
+    /// (`gtk_list_view_size_allocate` → `gtk_list_base_allocate` →
+    /// `gtk_list_base_update_adjustments`, gtk/gtklistview.c), whose
+    /// `changed` signal with a page size says it is done. Once that
+    /// allocation is over (an idle callback: moving the anchor inside the
+    /// list's own allocation would queue another one), and only while the
+    /// first card still has the focus, `ui::focus::focus_row` sets the view
+    /// to its very top, where the row is in view and stays. A list already
+    /// laid out (a page shown again) needs no wait.
+    fn focus_first_row_when_laid_out(&self) {
+        let list = self.imp().card_list.get();
+        let Some(adjustment) = list.vadjustment() else {
+            return;
+        };
+        // `focus_row` sets the view at its very top first. That is needed
+        // even with the row in view: a list view's first anchor is its
+        // first item, not the header above it (`gtk_list_base_set_model`
+        // anchors position 0 at the top; headers are tiles of their own,
+        // gtk/gtklistitemmanager.c), so the first layout alone leaves the
+        // view scrolled by the header's height (seen under Xvfb: 40 px
+        // before any focus). The grab then focuses the row, making it if
+        // needed (`gtk_list_base_grab_focus`, gtk/gtklistbase.c, source
+        // read for GTK 4.20 to 4.24).
+        focus::focus_row(&list, 0);
+        list.grab_focus();
+        if adjustment.page_size() > 0.0 {
+            return;
+        }
+        let handler: Rc<std::cell::RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
+        let once = Rc::clone(&handler);
+        let page = self.downgrade();
+        let id = adjustment.connect_changed(move |adjustment| {
+            if adjustment.page_size() <= 0.0 {
+                return;
+            }
+            if let Some(id) = once.borrow_mut().take() {
+                adjustment.disconnect(id);
+            }
+            let page = page.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(page) = page.upgrade()
+                    && page.first_card_focused()
+                {
+                    focus::focus_row(&page.imp().card_list, 0);
+                }
+            });
+        });
+        handler.replace(Some(id));
+    }
+
+    /// Whether the keyboard focus is on the row of the first card shown.
+    fn first_card_focused(&self) -> bool {
+        let list = &self.imp().card_list;
+        let Some(item) = list.focus_child() else {
+            return false;
+        };
+        let focus = list.root().and_then(|root| root.focus());
+        let inside = focus.is_some_and(|w| w == item || w.is_ancestor(&item));
+        let row = item.first_child().and_downcast::<CardRow>();
+        let first = self.shown_item(0);
+        inside
+            && matches!((row, first), (Some(row), Some(first)) if row.card_id() == first.card().id)
     }
 
     /// Focuses the card at `position`, or with `None` the empty state's
@@ -1247,9 +1383,7 @@ impl DeckPage {
 
     /// Scrolls to the card at `position` and gives it the keyboard focus.
     fn focus(&self, position: u32) {
-        self.imp()
-            .card_list
-            .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+        focus::focus_row(&self.imp().card_list, position);
     }
 
     fn update_empty_state(&self) {
@@ -1270,13 +1404,39 @@ impl DeckPage {
             .set_revealed(study_bar_shown(self.compact(), empty) && !self.selecting());
     }
 
+    /// The card at `position` of the store (creation order).
     fn item(&self, position: u32) -> Option<CardObject> {
         self.imp().cards.get()?.item(position).and_downcast()
     }
 
-    /// Where card `id` is in the list (see [`position_in`]).
+    /// The card at `position` of the list shown (grouped).
+    fn shown_item(&self, position: u32) -> Option<CardObject> {
+        self.imp().groups.get()?.item(position).and_downcast()
+    }
+
+    /// Where card `id` is in the store (see [`position_in`]), to change it.
     fn position(&self, id: &str) -> Option<u32> {
         position_in(self.imp().cards.get()?, id)
+    }
+
+    /// Where card `id` is in the list shown, to focus its row.
+    fn shown_position(&self, id: &str) -> Option<u32> {
+        self.imp().groups.get()?.position(id)
+    }
+
+    /// Scrolls to card `id` and gives its row the keyboard focus.
+    fn focus_card(&self, id: &str) {
+        if let Some(position) = self.shown_position(id) {
+            self.focus(position);
+        }
+    }
+
+    /// The row to focus once the card shown at `shown` has left the list
+    /// (`index_after_removal`, in the list's positions), or `None` for the
+    /// empty state.
+    fn after_removal(&self, shown: Option<u32>) -> Option<u32> {
+        let n = self.imp().groups.get().map_or(0, ListModelExt::n_items);
+        index_after_removal(shown?, n)
     }
 
     fn error_toast(&self, message: &str) {
@@ -1304,7 +1464,7 @@ fn counts_changed(page: &DeckPage, window: Option<&RappelWindow>) {
         window.study_changed();
     } else {
         page.update_study();
-        page.refresh_new_flags();
+        page.refresh_standings();
     }
 }
 
@@ -1330,23 +1490,40 @@ fn reset_notice(err: &Error) -> Notice {
     }
 }
 
-/// The positions from the first to the last whose flag changed, of the
+/// The positions from the first to the last whose value changed, of the
 /// `(was, is)` pairs in list order; `None` when none changed. Pure.
-fn changed_range(flags: &[(bool, bool)]) -> Option<std::ops::Range<usize>> {
+fn changed_range<T: PartialEq>(flags: &[(T, T)]) -> Option<std::ops::Range<usize>> {
     let first = flags.iter().position(|(was, is)| was != is)?;
     let last = flags.iter().rposition(|(was, is)| was != is)?;
     Some(first..last + 1)
 }
 
-/// The list items for `cards`, `new` being the ids of the new ones.
-fn items_of(cards: Vec<TaggedCard>, new: &HashSet<String>) -> Vec<CardObject> {
+/// The list items for `cards`, `standings` saying where each stands.
+fn items_of(cards: Vec<TaggedCard>, standings: &HashMap<String, CardStanding>) -> Vec<CardObject> {
     cards
         .into_iter()
         .map(|tagged| {
-            let is_new = new.contains(&tagged.card.id);
-            CardObject::new(tagged).with_new(is_new)
+            let standing = standings
+                .get(&tagged.card.id)
+                .copied()
+                .unwrap_or_else(|| unread_standing(&tagged.card));
+            CardObject::new(tagged).with_standing(standing)
         })
         .collect()
+}
+
+/// Where a card stands when that could not be read: suspended or not as
+/// the card says, otherwise new, with Reset Progress offered (the core
+/// refuses it for a new card).
+fn unread_standing(card: &Card) -> CardStanding {
+    CardStanding {
+        status: if card.suspended {
+            CardStatus::Suspended
+        } else {
+            CardStatus::New
+        },
+        is_new: false,
+    }
 }
 
 /// The Undo of a reset: cancels reset entry `entry_id` of card `card_id`.
@@ -1587,21 +1764,59 @@ fn insert_in_order(store: &gio::ListStore, item: &CardObject) -> u32 {
     })
 }
 
-/// A card's tags, for the tags every card shares.
-fn card_tags(item: &CardObject) -> std::cell::Ref<'_, [rappel_core::domain::Tag]> {
-    std::cell::Ref::map(item.tag_list(), Vec::as_slice)
-}
-
 /// Builds a [`CardRow`] per visible row, following the page's `compact`,
-/// `can-move`, `selecting` and `shared-tags`, and points it at its card
-/// (whose accessible label it sets, `CardRow::bind_card`).
+/// `can-move`, `selecting`, `shared-tags`, `grouped`, `now` and
+/// `next-day`, and points it at its card (whose accessible label it sets,
+/// `CardRow::bind_card`).
 fn row_factory(page: &DeckPage) -> gtk::SignalListItemFactory {
     card_row::factory(
         page,
         CardRow::default,
-        &["compact", "can-move", "selecting", "shared-tags"],
+        &[
+            "compact",
+            "can-move",
+            "selecting",
+            "shared-tags",
+            "grouped",
+            "now",
+            "next-day",
+        ],
         CardRow::bind_card,
     )
+}
+
+/// The list view's group headers (ADR 0079): a [`CardGroupHeader`] per
+/// group on screen, showing the group that starts at the header's `start`
+/// in `groups`. The list view makes a header again when its group changed
+/// (`CardGroups` emits `sections-changed`), so a bind is all it needs.
+fn header_factory(groups: &CardGroups) -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, header| {
+        if let Some(header) = header.downcast_ref::<gtk::ListHeader>() {
+            header.set_child(Some(&CardGroupHeader::default()));
+        }
+    });
+    let groups = groups.downgrade();
+    factory.connect_bind(move |_, header| {
+        let Some(header) = header.downcast_ref::<gtk::ListHeader>() else {
+            return;
+        };
+        let (Some(groups), Some(widget)) = (
+            groups.upgrade(),
+            header.child().and_downcast::<CardGroupHeader>(),
+        ) else {
+            return;
+        };
+        if let Some(group) = groups.group_at(header.start()) {
+            let names: Vec<String> = group
+                .tags
+                .iter()
+                .map(|t| crate::ui::text::one_line(&t.name))
+                .collect();
+            widget.show(&names, groups.has_shared(), group.len);
+        }
+    });
+    factory
 }
 
 impl SelectionPage for DeckPage {
@@ -1653,7 +1868,7 @@ mod tests {
 
     #[test]
     fn the_new_flags_change_in_one_range() {
-        assert_eq!(changed_range(&[]), None);
+        assert_eq!(changed_range::<bool>(&[]), None);
         assert_eq!(changed_range(&[(true, true), (false, false)]), None);
         assert_eq!(changed_range(&[(true, false)]), Some(0..1));
         assert_eq!(
@@ -2049,13 +2264,38 @@ mod tests {
             let header = &page.imp().list_header;
             assert!(header.is_visible());
             assert_eq!(header.tags(), ["def", "maths"]);
-            let pills: Vec<Vec<String>> = rows(list)
-                .iter()
-                .map(|row| row.imp().tag_pills.tags())
+            // Two groups (ADR 0079): the cards with only the shared tags,
+            // then the one with "hard" too, under headers; no pills.
+            assert!(page.grouped());
+            assert!(page.imp().card_list.header_factory().is_some());
+            let shown: Vec<String> = (0..3)
+                .map(|p| page.shown_item(p).unwrap().card().front_md.clone())
                 .collect();
-            assert_eq!(pills, [vec![], vec!["hard".to_owned()], vec![]]);
-            // A card without the tags: nothing is shared any more, and each
-            // row shows all its tags again.
+            assert_eq!(shown, ["one", "three", "two"]);
+            assert!(
+                rows(list)
+                    .iter()
+                    .all(|row| !row.imp().tag_pills.is_visible())
+            );
+            let headers: Vec<CardGroupHeader> = crate::testing::descendants(list);
+            assert_eq!(headers.len(), 2);
+            let said: Vec<String> = headers
+                .iter()
+                .filter_map(|h| {
+                    crate::testing::label_texts(h.upcast_ref())
+                        .into_iter()
+                        .filter(|t| !t.is_empty())
+                        .reduce(|a, b| format!("{a} {b}"))
+                })
+                .collect();
+            assert!(
+                said.contains(&"Only the shared tags 2 cards".to_owned()),
+                "{said:?}"
+            );
+            assert!(said.contains(&"Also hard 1 card".to_owned()), "{said:?}");
+            // A card without the tags: nothing is shared any more, the
+            // groups would mostly hold one card, so plain rows show all
+            // their tags again.
             let added = state
                 .add_card_with_tags(&deck.id, "four", "a", &[])
                 .unwrap();
@@ -2064,11 +2304,178 @@ mod tests {
             assert_eq!(page.shared_tag_names(), Vec::<String>::new());
             assert_eq!(header.tags(), Vec::<String>::new());
             assert!(!header.is_visible());
+            assert!(!page.grouped());
+            assert!(page.imp().card_list.header_factory().is_none());
             let first = rows(list)
                 .into_iter()
                 .find(|row| row.card_id() == page.item(0).unwrap().card().id)
                 .unwrap();
             assert_eq!(first.imp().tag_pills.tags(), ["def", "maths"]);
+            window.destroy();
+        });
+    }
+
+    /// A deck of `n` cards sharing "def" and "maths", every third with
+    /// "hard" too: two groups, the second after the first.
+    fn grouped_page(n: usize) -> (tempfile::TempDir, AppState, DeckPage, Vec<String>) {
+        let (tmp, state) = crate::testing::temporary_state();
+        let deck = state.create_deck("Deck").unwrap();
+        let ids = (0..n)
+            .map(|i| {
+                let mut tags = vec!["def".to_owned(), "maths".to_owned()];
+                if i % 3 == 0 {
+                    tags.push("hard".to_owned());
+                }
+                state
+                    .add_card_with_tags(&deck.id, &format!("card {i}"), "", &tags)
+                    .unwrap()
+                    .card
+                    .id
+            })
+            .collect();
+        let page = DeckPage::new(state.clone(), deck).unwrap();
+        (tmp, state, page, ids)
+    }
+
+    /// Opening a grouped deck focuses its first row with the first group's
+    /// header still in sight above it (the list scrolled it away before,
+    /// ADR 0077), scrolls are never fought, and the page's own focus on
+    /// the first card from far down brings the header back (ADR 0079).
+    #[test]
+    fn the_first_groups_header_stays_in_sight() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, _ids) = grouped_page(60);
+            assert!(page.grouped());
+            let view = adw::NavigationView::new();
+            let window = gtk::Window::builder()
+                .default_width(600)
+                .default_height(500)
+                .child(&view)
+                .build();
+            window.present();
+            view.push(&page);
+            let list = page.imp().card_list.get();
+            let adjustment = list.vadjustment().unwrap();
+            let first = page.shown_item(0).unwrap().card().id.clone();
+            let settled = crate::testing::settle_until(
+                || focused_card(&window).as_ref() == Some(&first) && adjustment.upper() > 0.0,
+                Duration::from_secs(10),
+            );
+            assert!(settled, "the first row is focused");
+            // The row was focused once laid out, so the list is still at
+            // the very top with the header in view.
+            let header_shown = || {
+                list.first_child()
+                    .is_some_and(|h| h.css_name() == "header" && h.height() > 0)
+            };
+            let top = crate::testing::settle_until(
+                || adjustment.value() == 0.0 && header_shown(),
+                Duration::from_secs(10),
+            );
+            assert!(top, "scrolled to {}", adjustment.value());
+            // It stays there.
+            crate::testing::settle_until(|| false, Duration::from_millis(300));
+            assert_eq!(adjustment.value(), 0.0);
+
+            // A scroll from the top (the wheel, the scroll bar), even one
+            // that stops with the focused first row exactly at the top, is
+            // left alone: nothing watches the scroll.
+            let header_height = list
+                .first_child()
+                .and_then(|h| h.compute_bounds(&list))
+                .map_or(0.0, |b| f64::from(b.height()));
+            assert!(header_height > 0.0);
+            adjustment.set_value(header_height);
+            crate::testing::settle_until(|| false, Duration::from_millis(500));
+            assert_eq!(
+                adjustment.value(),
+                header_height,
+                "a scroll was snapped back"
+            );
+
+            // A scroll down from the top is left alone.
+            adjustment.set_value(10.0);
+            crate::testing::settle_until(|| false, Duration::from_millis(300));
+            assert_eq!(adjustment.value(), 10.0);
+
+            // Far down the list, the page gives the first card the focus
+            // (the Undo of its delete, the editor closing on it): the
+            // header comes into view with it, as on open.
+            adjustment.set_value(900.0);
+            let away = crate::testing::settle_until(
+                || adjustment.value() > 100.0,
+                Duration::from_secs(10),
+            );
+            assert!(away, "not scrolled away: {}", adjustment.value());
+            page.focus_card(&first);
+            let back = crate::testing::settle_until(
+                || {
+                    focused_card(&window).as_ref() == Some(&first)
+                        && adjustment.value() == 0.0
+                        && header_shown()
+                },
+                Duration::from_secs(10),
+            );
+            assert!(
+                back,
+                "focus on {:?}, scrolled to {}",
+                focused_card(&window),
+                adjustment.value()
+            );
+            // Not covered here: keys delivered by a real keyboard. Up, Page
+            // Up or Home onto the first row from further down scroll it
+            // just into view with its header above, as any sectioned GTK
+            // list does; Tab back into the list focuses the row it had,
+            // which GTK does not scroll to (`gtk_list_base_set_focus_child`
+            // scrolls only to a new focus position).
+            window.destroy();
+        });
+    }
+
+    /// In a grouped list, a click opens the card shown there, and after a
+    /// delete the focus goes to the row now at the deleted row's place in
+    /// the list shown (`index_after_removal`), not in creation order.
+    #[test]
+    fn a_grouped_list_acts_on_the_rows_shown() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, ids) = grouped_page(9);
+            // Shown: 1 2 4 5 7 8, then 0 3 6 (with "hard").
+            let shown: Vec<String> = (0..9)
+                .map(|p| page.shown_item(p).unwrap().card().id.clone())
+                .collect();
+            let order = [1, 2, 4, 5, 7, 8, 0, 3, 6].map(|i| ids[i].clone());
+            assert_eq!(shown, order);
+            let window = presented(&page);
+            crate::testing::settle();
+            // Card 0 is shown at 6: deleting it focuses card 3, now at 6.
+            page.delete(&ids[0]);
+            let focused = crate::testing::settle_until(
+                || focused_card(&window).as_ref() == Some(&ids[3]),
+                Duration::from_secs(5),
+            );
+            assert!(focused, "{:?}", focused_card(&window));
+            // The groups' headers follow: the "hard" group lost a card.
+            let counts = || -> Vec<String> {
+                crate::testing::descendants::<CardGroupHeader>(page.upcast_ref())
+                    .iter()
+                    .flat_map(|h| crate::testing::label_texts(h.upcast_ref()))
+                    .filter(|t| t.ends_with("cards") || t.ends_with("card"))
+                    .collect()
+            };
+            crate::testing::settle();
+            assert_eq!(counts(), ["6 cards", "2 cards"]);
+            // Choosing by a click on the row shown at 0 chooses card 1.
+            page.selection().set_active(true);
+            assert!(page.selection().activate(0));
+            assert_eq!(page.selection().chosen_ids(), [ids[1].clone()]);
+            // Section headers stay while choosing; the rows have checks.
+            assert!(page.imp().card_list.header_factory().is_some());
+            crate::testing::settle();
+            assert!(
+                rows(page.upcast_ref())
+                    .iter()
+                    .all(|r| r.imp().check.is_visible())
+            );
             window.destroy();
         });
     }
@@ -2422,12 +2829,17 @@ mod tests {
             // Every row stale at once, with cards chosen.
             let store = page.imp().cards.get().unwrap();
             let not_new: Vec<CardObject> = (0..store.n_items())
-                .map(|p| page.item(p).unwrap().copy_with_new(false))
+                .map(|p| {
+                    page.item(p).unwrap().copy_with(CardStanding {
+                        status: CardStatus::Due(0),
+                        is_new: false,
+                    })
+                })
                 .collect();
             store.splice(0, store.n_items(), &not_new);
             selection.set_active(true);
             selection.toggle(&ids[3]);
-            let (refresh, ()) = crate::testing::cpu_time_of(|| page.refresh_new_flags());
+            let (refresh, ()) = crate::testing::cpu_time_of(|| page.refresh_standings());
             assert!((0..N).all(|p| page.item(u32::try_from(p).unwrap()).unwrap().is_new()));
             assert_eq!(selection.chosen_ids(), [ids[3].clone()]);
             window.destroy();

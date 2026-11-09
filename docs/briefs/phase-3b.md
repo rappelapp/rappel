@@ -78,6 +78,20 @@ Token savings that do not cost quality:
 - #128: math in the front and back summaries is drawn ("σ", not "\sigma"), using the existing renderer at row size and kept on one line. Broken LaTeX falls back to its plain text.
 - The pure decisions get unit tests: which tags are shared, "+N", and the subtitle text.
 
+**3b. Deck page, design E "Grouped by tag, no boxes"** (Opus; added 9 Nov after the maintainer tested slice 3). Mockup: section `#e` of `docs/briefs/mockups/deck-page-round2.html` (drawn by the function `E()`). This replaces slice 3's row look; keep everything else slice 3 built.
+
+- Keep slice 3's "On every card:" shared-tags line as it is.
+- The list is no longer boxed. It sits on the page background with thin separators, as in Files and Contacts: a `GtkListView` with the `separators` style class and no card background, in the same clamp (about 640 px).
+- Group cards by their set of extra tags (tags that are not shared by every card). Use `GtkListView` section headers (a `GtkSectionModel` with `header-factory`, GTK ≥ 4.12); check the docs first.
+  - Cards with no extra tags come first, under the header "Only the shared tags" with "N cards" at the end.
+  - Each other set gets the header "Also" followed by its pills, with "N cards" at the end. These sets are sorted by name key, and cards keep their current order inside a group.
+  - When grouping would not help (more than 6 groups, or most groups holding one card), drop the groups and show plain rows with their extra pills and the "+N" rule. Make this rule a pure function with tests.
+- Rows carry no pills. The front sits on one line, and the back, if any, sits under it as a dimmed subtitle. Cards without a back are one line high, with no empty second line.
+- At the end of each row, a short dimmed due word and then the ⋮ menu. The words: "Today" (accent colour) when due; "In 10 min" or "In 1 h" while learning; "Tomorrow"; "In N days"; "New"; "Suspended" (the suspended icon stays). Make this a pure function with tests, with French plurals.
+- Rendered maths (#128), the header, selection mode, menus and the Study bar stay as built. In selection mode the section headers stay and check buttons replace the menu.
+- **All Cards** takes the flat, unboxed rows and the due word, but **no grouping**, since its filters do that job. It keeps its tag pills with "+N" and the deck name on the subtitle line.
+- Screenshots: deck with fronts only, deck with backs, a deck with many tag sets (no grouping), and All Cards. Light, dark, 360 px, French. Slice 8 must take its store screenshots after this slice.
+
 **4. Statistics page, design D "a month at a time"** (Opus). Mockup: section `#d-month` of `docs/briefs/mockups/stats-mockups.html` (drawn by the function `E()`).
 - One boxed card, about 600 px wide, at the top of the clamp, with an `AdwToggleGroup` switch (libadwaita ≥ 1.7): Reviews | Time | Forecast.
 - Headline numbers laid out like GNOME Wellbeing:
@@ -122,6 +136,7 @@ Token savings that do not cost quality:
 - The snap job must not slow the `check` job or run on docs-only PRs.
 
 **8. Store listing** (Sonnet).
+- Slice 8 takes its store screenshots after slice 3b.
 - Metainfo finished:
   - retake the screenshots with the new designs (deck page, All Cards, Statistics, review, phone size), still without the old key hints;
   - release notes for 0.4.0;

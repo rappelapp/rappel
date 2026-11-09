@@ -109,6 +109,13 @@ mod imp {
         pub shared_tag_names: RefCell<Vec<String>>,
         /// Reads them again after the list changed.
         pub shared_queue: crate::widgets::card_row::SharedTagsQueue,
+        /// When the rows were read (UTC milliseconds): the rows' due words
+        /// are said from it, as their status is (ADR 0079).
+        #[property(get, set)]
+        pub now: Cell<i64>,
+        /// When the next study day begins, for the due words.
+        #[property(get, set)]
+        pub next_day: Cell<i64>,
         pub state: OnceCell<AppState>,
         pub items: OnceCell<gio::ListStore>,
         /// Selection mode: the chosen cards, the header, the action bar and
@@ -260,7 +267,7 @@ impl BrowserPage {
                     header: imp.selection_header.get(),
                     bar: imp.selection_bar.get(),
                     list: imp.card_list.get(),
-                    items: store.clone(),
+                    items: store.clone().upcast(),
                     own_deck: None,
                 },
             ),
@@ -522,12 +529,20 @@ impl BrowserPage {
     }
 
     /// A row per visible card, following the page's `compact`,
-    /// `selecting`, `can-move` and `shared-tags` properties.
+    /// `selecting`, `can-move`, `shared-tags`, `now` and `next-day`
+    /// properties.
     fn row_factory(&self) -> gtk::SignalListItemFactory {
         card_row::factory(
             self,
             CardRow::for_browser,
-            &["compact", "selecting", "can-move", "shared-tags"],
+            &[
+                "compact",
+                "selecting",
+                "can-move",
+                "shared-tags",
+                "now",
+                "next-day",
+            ],
             CardRow::bind_browse,
         )
     }
@@ -646,8 +661,17 @@ impl BrowserPage {
             return Ok(());
         };
         let query = self.query();
-        let rows = state.browse(&query, rappel_core::time::now_ms())?;
+        let now = rappel_core::time::now_ms();
+        let rows = state.browse(&query, now)?;
         let items: Vec<BrowseItem> = rows.into_iter().map(BrowseItem::new).collect();
+        // The rows' due words are said at the time they were read, before
+        // the new rows are bound.
+        self.set_now(now);
+        match state.next_day_start(now) {
+            Ok(day) => self.set_next_day(day),
+            // The words count days from a day after now instead.
+            Err(err) => tracing::warn!("cannot read when the study day begins: {err}"),
+        }
         store.splice(0, store.n_items(), &items);
         let filtered = text::is_filtered(&query);
         // Whether there is any card at all, whatever the filters, archived
@@ -897,9 +921,7 @@ impl BrowserPage {
     }
 
     fn focus(&self, position: u32) {
-        self.imp()
-            .card_list
-            .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+        crate::ui::focus::focus_row(&self.imp().card_list, position);
     }
 
     // --- actions on cards ------------------------------------------------

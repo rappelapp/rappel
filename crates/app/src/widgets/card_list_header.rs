@@ -43,21 +43,7 @@ mod imp {
 
     impl CardListHeader {
         fn set_tags(&self, tags: Vec<String>) {
-            use crate::widgets::tag_pills::text::{overflow_text, overflow_tooltip, split, spoken};
-            let (shown, hidden) = split(tags.len(), Some(super::HEADER_TAGS));
-            self.shared_pills.set_tags(&tags[..shown]);
-            self.overflow.set_visible(hidden > 0);
-            if hidden > 0 {
-                let rest = &tags[shown..];
-                self.overflow.set_label(&overflow_text(hidden));
-                self.overflow
-                    .set_tooltip_text(Some(&overflow_tooltip(rest)));
-                // A screen reader gets the names, not "+34": the label
-                // says the tags in words (at most 20, then how many more).
-                let spoken = spoken(rest).unwrap_or_default();
-                self.overflow
-                    .update_property(&[gtk::accessible::Property::Label(&spoken)]);
-            }
+            super::show_capped(&self.shared_pills, &self.overflow, &tags);
             self.obj().set_visible(!tags.is_empty());
             self.tags.replace(tags);
         }
@@ -83,13 +69,7 @@ mod imp {
     impl ObjectImpl for CardListHeader {
         fn constructed(&self) {
             self.parent_constructed();
-            // In the pills' wrap box, after them, styled as a pill.
-            self.overflow.set_use_markup(false);
-            self.overflow
-                .set_css_classes(&["tag-pill", "caption", "numeric"]);
-            self.overflow.set_valign(gtk::Align::Center);
-            self.shared_pills
-                .set_end_child(Some(self.overflow.upcast_ref::<gtk::Widget>()));
+            super::add_overflow(&self.shared_pills, &self.overflow);
             self.set_tags(Vec::new());
         }
     }
@@ -101,6 +81,38 @@ glib::wrapper! {
     pub struct CardListHeader(ObjectSubclass<imp::CardListHeader>)
         @extends gtk::Box, gtk::Widget,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Orientable;
+}
+
+/// Puts `overflow`, the "+N" pill of wrapping `pills` that show at most
+/// [`HEADER_TAGS`] tags, in the pills' wrap box after them, styled as a
+/// pill ([`show_capped`] fills it). Also for the deck page's group headers.
+pub fn add_overflow(pills: &crate::widgets::TagPills, overflow: &gtk::Label) {
+    use gtk::prelude::*;
+    overflow.set_use_markup(false);
+    overflow.set_css_classes(&["tag-pill", "caption", "numeric"]);
+    overflow.set_valign(gtk::Align::Center);
+    pills.set_end_child(Some(overflow.upcast_ref::<gtk::Widget>()));
+}
+
+/// Shows `tags` in wrapping `pills`: at most [`HEADER_TAGS`], then the
+/// `overflow` pill ("+34", [`add_overflow`]) whose tooltip names the rest
+/// and whose accessible label says them in words. A header never scrolls
+/// sideways and a card can have thousands of tags (ADR 0050).
+pub fn show_capped(pills: &crate::widgets::TagPills, overflow: &gtk::Label, tags: &[String]) {
+    use crate::widgets::tag_pills::text::{overflow_text, overflow_tooltip, split, spoken};
+    use gtk::prelude::*;
+    let (shown, hidden) = split(tags.len(), Some(HEADER_TAGS));
+    pills.set_tags(&tags[..shown]);
+    overflow.set_visible(hidden > 0);
+    if hidden > 0 {
+        let rest = &tags[shown..];
+        overflow.set_label(&overflow_text(hidden));
+        overflow.set_tooltip_text(Some(&overflow_tooltip(rest)));
+        // A screen reader gets the names, not "+34": the label says the
+        // tags in words (at most 20, then how many more).
+        let spoken = spoken(rest).unwrap_or_default();
+        overflow.update_property(&[gtk::accessible::Property::Label(&spoken)]);
+    }
 }
 
 impl Default for CardListHeader {

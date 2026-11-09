@@ -4,10 +4,12 @@ using Gtk 4.0;
 // every listed card has, said once instead of on every row. The pills wrap
 // onto more lines when the width runs out; tag names are untrusted, so
 // nothing parses markup (widgets/tag_pills.rs). Hidden while no tag is
-// shared. The first row's own margin is the space under it.
+// shared. On the deck page a group's header (18 px above it) follows;
+// otherwise the first row.
 template $RappelCardListHeader: Gtk.Box {
   spacing: 6;
   margin-top: 12;
+  margin-bottom: 6;
   margin-start: 14;
   margin-end: 14;
 

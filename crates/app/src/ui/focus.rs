@@ -12,6 +12,31 @@ use gtk::prelude::*;
 /// `remaining` rows: the row now at that position, or the last row if it
 /// was the last. `None` when the list is empty: focus the empty state's
 /// button instead.
+/// Scrolls `list` to the row at `position` and gives it the keyboard focus,
+/// as `gtk_list_view_scroll_to` with `FOCUS` does, except that the first
+/// row is shown with whatever is above it: the first section header of a
+/// list that has them (the deck page's groups, ADR 0079). GTK scrolls a row
+/// that is out of view so that its top is at the top of the view
+/// (`gtk_list_base_compute_scroll_align`, gtk/gtklistbase.c, source read
+/// for GTK 4.24), which would leave that header just above it. So for the
+/// first row the view is first set to its very top, where the row is in
+/// view and GTK leaves it (a row already in view keeps its place); the
+/// position re-anchors the list at once
+/// (`gtk_list_base_adjustment_value_changed_cb`), with no wait for a frame.
+/// Elsewhere, a plain `scroll_to`. The list must have been laid out; on a
+/// page just opened, the deck page waits for that first.
+pub fn focus_row(list: &gtk::ListView, position: u32) {
+    if position == 0
+        && let Some(adjustment) = list.vadjustment()
+    {
+        adjustment.set_value(0.0);
+    }
+    // `scroll_to` with FOCUS only moves the list's focus item while the
+    // focus is outside it; it grabs the row itself when the focus is
+    // inside (`gtk_list_base_scroll_to`, gtk/gtklistbase.c).
+    list.scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+}
+
 pub fn index_after_removal<T>(removed: T, remaining: T) -> Option<T>
 where
     T: Copy + Ord + Sub<Output = T> + From<u8>,

@@ -3,7 +3,7 @@
 //! try studying without waiting days (ADR 0014).
 //!
 //! ```text
-//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--anki PACKAGE] [--archived N] [--history DAYS]
+//! cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--groups] [--anki PACKAGE] [--archived N] [--history DAYS]
 //! RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 //! ```
 //!
@@ -37,6 +37,12 @@
 //! sides, all tagged with the same four tags and some with two more, and
 //! one suspended, to see the tags said once above the list and the rows'
 //! drawn math.
+//! With `--groups`, it adds two decks for the deck page's groups (ADR
+//! 0079): "SIC 3101 – Fronts", the round 2 mockup's 21 fronts without
+//! backs, all with three shared tags and 7 with two more (two groups),
+//! some due, one in a learning step, some due in a few days, some new,
+//! one suspended; and "Tag sets", 24 cards with a dozen sets of tags
+//! between them (too many groups: plain rows with pills).
 //! With `--anki PACKAGE`, it imports that Anki package (`.apkg` or
 //! `.colpkg`) as Import… does (ADR 0061), last; `fill_scratch_db -- <dir>
 //! 0 --anki crates/core/src/interchange/anki/fixtures/current.apkg` imports
@@ -68,6 +74,9 @@ use rappel_core::time::now_ms;
 
 const DEFAULT_COUNT: usize = 5_000;
 
+/// Adds a deck (or several) asked for by a flag; returns what to report.
+type Fill = fn(&mut Store) -> Result<String, String>;
+
 fn main() -> ExitCode {
     match run() {
         Ok(message) => {
@@ -83,7 +92,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<String, String> {
-    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--anki PACKAGE] [--archived N] [--history DAYS]";
+    let usage = "usage: fill_scratch_db <absolute scratch dir> [count] [--due N] [--markdown] [--math] [--tags] [--suspended N] [--media] [--unused-media] [--demo] [--probability] [--groups] [--anki PACKAGE] [--archived N] [--history DAYS]";
     let number = |arg: Option<std::ffi::OsString>| {
         arg.as_ref()
             .and_then(|n| n.to_str())
@@ -96,7 +105,7 @@ fn run() -> Result<String, String> {
     let (mut suspended, mut media, mut unused_media, mut demo) = (0, false, false, false);
     let (mut anki, mut archived, mut probability): (Option<PathBuf>, usize, bool) =
         (None, 0, false);
-    let mut history = 0;
+    let (mut history, mut groups) = (0, false);
     while let Some(arg) = args.next() {
         if arg == "--due" {
             due = number(args.next())?;
@@ -116,6 +125,8 @@ fn run() -> Result<String, String> {
             demo = true;
         } else if arg == "--probability" {
             probability = true;
+        } else if arg == "--groups" {
+            groups = true;
         } else if arg == "--archived" {
             archived = number(args.next())?;
         } else if arg == "--history" {
@@ -130,7 +141,8 @@ fn run() -> Result<String, String> {
         }
     }
     let count = count.unwrap_or(DEFAULT_COUNT);
-    let asked = markdown || math || media || unused_media || demo || probability || history > 0;
+    let asked =
+        markdown || math || media || unused_media || demo || probability || groups || history > 0;
     check_something(count, asked || anki.is_some())?;
     check_counts(count, due, suspended)?;
     check_dir(&dir)?;
@@ -142,34 +154,19 @@ fn run() -> Result<String, String> {
     if count > 0 {
         added.push(fill_main_deck(&mut store, count, due, suspended, tags)?);
     }
-    if markdown {
-        let cards: Vec<(String, String)> = MARKDOWN_CARDS
-            .iter()
-            .map(|&(front, back)| (front.to_owned(), back.to_owned()))
-            .collect();
-        added.push(fill_plain_deck(
-            &mut store,
-            "Markdown (one card per construct)",
-            &cards,
-        )?);
-    }
-    if math {
-        added.push(fill_plain_deck(&mut store, "Math", &math_cards())?);
-    }
-    if media {
-        added.push(fill_media_deck(&mut store)?);
-    }
-    if unused_media {
-        for bytes in [png(300, 300)?, png(900, 500)?, png(200, 700)?] {
-            store.add_media_bytes(&bytes).map_err(|e| e.to_string())?;
+    let decks: [(bool, Fill); 7] = [
+        (markdown, fill_markdown),
+        (math, |store| fill_plain_deck(store, "Math", &math_cards())),
+        (media, fill_media_deck),
+        (unused_media, fill_unused_media),
+        (demo, fill_demo),
+        (probability, fill_probability),
+        (groups, fill_groups),
+    ];
+    for (asked, fill) in decks {
+        if asked {
+            added.push(fill(&mut store)?);
         }
-        added.push("3 media files no card uses".to_owned());
-    }
-    if demo {
-        added.push(fill_demo(&mut store)?);
-    }
-    if probability {
-        added.push(fill_probability(&mut store)?);
     }
     if history > 0 {
         added.push(fill_history(&mut store, history)?);
@@ -187,12 +184,29 @@ fn run() -> Result<String, String> {
     ))
 }
 
+/// `--markdown`: one card per Markdown construct.
+fn fill_markdown(store: &mut Store) -> Result<String, String> {
+    let cards: Vec<(String, String)> = MARKDOWN_CARDS
+        .iter()
+        .map(|&(front, back)| (front.to_owned(), back.to_owned()))
+        .collect();
+    fill_plain_deck(store, "Markdown (one card per construct)", &cards)
+}
+
+/// `--unused-media`: three media files no card names.
+fn fill_unused_media(store: &mut Store) -> Result<String, String> {
+    for bytes in [png(300, 300)?, png(900, 500)?, png(200, 700)?] {
+        store.add_media_bytes(&bytes).map_err(|e| e.to_string())?;
+    }
+    Ok("3 media files no card uses".to_owned())
+}
+
 /// Refuses a run that would add nothing: no cards and no deck asked for.
 fn check_something(count: usize, decks_asked: bool) -> Result<(), String> {
     if count == 0 && !decks_asked {
         return Err(
             "nothing to add: count is 0 and no --markdown, --math, --media, --unused-media, --demo, \
-             --probability, --history or --anki"
+             --probability, --groups, --history or --anki"
                 .to_owned(),
         );
     }
@@ -328,6 +342,120 @@ fn fill_probability(store: &mut Store) -> Result<String, String> {
         "{} cards to “{}”",
         PROBABILITY_CARDS.len(),
         deck.name
+    ))
+}
+
+/// Where a card of `--groups` stands: due now, in a learning step, due
+/// in a few days (reviewed twice, `n` days ago), new, or suspended.
+#[derive(Clone, Copy)]
+enum Stand {
+    Due,
+    Step,
+    Later(i64),
+    New,
+    Held,
+}
+
+/// The fronts of `--groups`' first deck (the round 2 mockup's), whether
+/// each has the two extra tags, and where it stands.
+const GROUP_FRONTS: [(&str, bool, Stand); 21] = [
+    ("Expérience aléatoire", false, Stand::Later(0)),
+    ("Espace d'état", false, Stand::Later(1)),
+    ("Événement aléatoire", false, Stand::Due),
+    ("Équiprobabilité", false, Stand::Later(2)),
+    ("Probabilité", false, Stand::Later(0)),
+    ("Modèle probabiliste", false, Stand::Step),
+    ("Algèbre de Boole", false, Stand::Due),
+    ("Tribu", true, Stand::Later(1)),
+    ("Tribu engendrée", true, Stand::Due),
+    ("Tribu borélienne", false, Stand::Later(2)),
+    ("Espace mesurable", true, Stand::Later(0)),
+    ("Espace mesuré", true, Stand::Later(1)),
+    ("Mesure", true, Stand::Due),
+    ("Mesure $\\sigma$-finie", false, Stand::Later(0)),
+    ("Mesure finie", false, Stand::Held),
+    ("Événement négligeable", false, Stand::Later(2)),
+    ("Événement presque sûr", false, Stand::Step),
+    ("Mesure de comptage", true, Stand::New),
+    ("Mesure de Lebesgue", true, Stand::New),
+    ("Mesure absolument continue", false, Stand::New),
+    ("Théorème de Radon–Nikodym", false, Stand::New),
+];
+
+/// `--groups`: the decks of the deck page's groups. Returns what to
+/// report.
+fn fill_groups(store: &mut Store) -> Result<String, String> {
+    let now = now_ms();
+    let deck = store
+        .create_deck("SIC 3101 – Fronts")
+        .map_err(|e| e.to_string())?;
+    let shared = ["Mathématiques", "Probabilités", "SIC3101"];
+    let mut held = Vec::new();
+    for (i, &(front, extra, stand)) in GROUP_FRONTS.iter().enumerate() {
+        let mut tags: Vec<String> = shared.iter().map(|&t| t.to_owned()).collect();
+        if extra {
+            tags.extend(["Analyse".to_owned(), "MAT3101".to_owned()]);
+        }
+        let card = store
+            .add_card_with_tags(&deck.id, front, "", &tags)
+            .map_err(|e| e.to_string())?
+            .card;
+        let reviews = match stand {
+            Stand::Due => past_reviews(i, now),
+            Stand::Step => vec![(Grade::Pass, now - 60_000)],
+            Stand::Later(days) => {
+                let at = now - days * DAY_MS;
+                vec![(Grade::Pass, at - STEP_MS), (Grade::Pass, at)]
+            }
+            Stand::New => Vec::new(),
+            Stand::Held => {
+                held.push(card.id.clone());
+                Vec::new()
+            }
+        };
+        for (grade, at) in reviews {
+            store
+                .record_review(&card.id, grade, Duration::from_secs(8), at)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    store
+        .set_suspended(&held, true)
+        .map_err(|e| e.to_string())?;
+
+    let sets = store.create_deck("Tag sets").map_err(|e| e.to_string())?;
+    let names = [
+        "Verbes",
+        "Noms",
+        "Adjectifs",
+        "Leçon 1",
+        "Leçon 2",
+        "Leçon 3",
+        "Oral",
+    ];
+    for i in 0..24 {
+        // Every card has "Espagnol"; the others vary, a dozen sets in all.
+        let mut tags = vec!["Espagnol".to_owned()];
+        tags.push(names[i % 3].to_owned());
+        tags.push(names[3 + i % 4].to_owned());
+        if i % 5 == 0 {
+            tags.push(names[6].to_owned());
+        }
+        let n = i + 1;
+        store
+            .add_card_with_tags(
+                &sets.id,
+                &format!("Palabra {n}"),
+                &format!("Mot {n}"),
+                &tags,
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(format!(
+        "{} cards to “{}” and 24 to “{}”",
+        GROUP_FRONTS.len(),
+        deck.name,
+        sets.name
     ))
 }
 
