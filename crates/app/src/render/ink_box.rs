@@ -55,6 +55,31 @@ pub fn marker_color(n: u32) -> gdk::RGBA {
     gdk::RGBA::new(channel(16), channel(8), channel(0), 0.0)
 }
 
+thread_local! {
+    /// Shared by every box and row line, so a side that replaces another (a
+    /// new widget in the same place) never draws the same marker either.
+    static SNAPSHOTS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Appends to `snapshot` the invisible marker over `drawn` grown by
+/// [`INK_MARGIN`], in a colour new at each call: whatever is drawn after it
+/// in `drawn` is then repainted with a margin wide enough for hinted glyphs.
+/// `InkBox` does it for a card side; a card list's row lines
+/// (`render::MathLine`) do it for themselves.
+pub fn mark_damage(snapshot: &gtk::Snapshot, drawn: &graphene::Rect) {
+    use gtk::prelude::SnapshotExt;
+
+    let n = SNAPSHOTS.with(|count| {
+        let n = count.get().wrapping_add(1);
+        count.set(n);
+        n
+    });
+    // GTK asks not to append transparent colours "if you can avoid it"
+    // (gtk_snapshot_append_color docs), for the drawing cost; this one is
+    // drawn as nothing and is here for the damage.
+    snapshot.append_color(&marker_color(n), &damage_bounds(drawn, INK_MARGIN));
+}
+
 glib::wrapper! {
     pub struct InkBox(ObjectSubclass<imp::InkBox>)
         @extends gtk::Box, gtk::Widget,
@@ -72,19 +97,11 @@ impl InkBox {
 }
 
 mod imp {
-    use std::cell::Cell;
-
     use gtk::glib;
     use gtk::prelude::*;
     use gtk::subclass::prelude::*;
 
-    use super::{INK_MARGIN, damage_bounds, marker_color};
-
-    thread_local! {
-        /// Shared by every box, so a side that replaces another (a new box
-        /// in the same place) never draws the same marker either.
-        static SNAPSHOTS: Cell<u32> = const { Cell::new(0) };
-    }
+    use super::mark_damage;
 
     #[derive(Debug, Default)]
     pub struct InkBox;
@@ -108,15 +125,7 @@ mod imp {
             let Some(node) = children.to_node() else {
                 return;
             };
-            let n = SNAPSHOTS.with(|count| {
-                let n = count.get().wrapping_add(1);
-                count.set(n);
-                n
-            });
-            // GTK asks not to append transparent colours "if you can avoid
-            // it" (gtk_snapshot_append_color docs), for the drawing cost;
-            // this one is drawn as nothing and is here for the damage.
-            snapshot.append_color(&marker_color(n), &damage_bounds(&node.bounds(), INK_MARGIN));
+            mark_damage(snapshot, &node.bounds());
             snapshot.append_node(&node);
         }
     }

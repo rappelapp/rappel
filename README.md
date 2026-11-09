@@ -56,7 +56,7 @@ cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch 60 --d
 RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 ```
 
-Add `--markdown` for a deck with one card per Markdown construct, and `--math` for a deck with 15 formulas, one per card, plus a card with invalid LaTeX (`… fill_scratch_db -- /tmp/rappel-md 0 --markdown --math` adds only those two decks). `--demo` adds six decks that look like a real collection, with a month of history (the store screenshots use it).
+Add `--markdown` for a deck with one card per Markdown construct, and `--math` for a deck with 15 formulas, one per card, plus a card with invalid LaTeX (`… fill_scratch_db -- /tmp/rappel-md 0 --markdown --math` adds only those two decks). `--demo` adds six decks that look like a real collection, with a month of history (the store screenshots use it). `--probability` adds the deck of the card list mockups: 17 cards that share four tags, some with two more, with formulas on both sides.
 
 ## Translations
 

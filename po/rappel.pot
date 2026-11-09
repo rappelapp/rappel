@@ -248,6 +248,10 @@ msgstr ""
 msgid "History"
 msgstr ""
 
+#: crates/app/data/card_list_header.blp
+msgid "On every card:"
+msgstr ""
+
 #: crates/app/data/card_row.blp
 msgid "Card Actions"
 msgstr ""
@@ -1468,9 +1472,14 @@ msgstr ""
 msgid "Due {when}"
 msgstr ""
 
-#. Translators: under a card in All Cards: {deck} is its deck's name, {status} "Due in 3 days".
+#. Translators: under a card in All Cards: {status} is "Due in 3 days", {deck} its deck's name.
 #: crates/app/src/pages/browser_page/text.rs
-msgid "{deck} · {status}"
+msgid "{status} · {deck}"
+msgstr ""
+
+#. Translators: the start of the line under a card in All Cards, before the card's back: {subtitle} is "Due in 3 days · Maths".
+#: crates/app/src/pages/browser_page/text.rs
+msgid "{subtitle} ·"
 msgstr ""
 
 #. Translators: what a screen reader says for a card in All Cards: {card} is the card ("2 + 2, back: 4"), {deck} its deck's name, {status} "Due in 3 days".

@@ -86,6 +86,8 @@ mod imp {
         #[template_child]
         pub card_list: TemplateChild<gtk::ListView>,
         #[template_child]
+        pub list_header: TemplateChild<crate::widgets::CardListHeader>,
+        #[template_child]
         pub selection_bar: TemplateChild<SelectionBar>,
         /// A narrow window; the rows follow it.
         #[property(get, set)]
@@ -97,6 +99,16 @@ mod imp {
         /// to: the rows' Move to Deck… is enabled (`move_card::offered`).
         #[property(get, set)]
         pub can_move: Cell<bool>,
+        /// The ids of the tags every listed card has (after a filter by
+        /// deck or tag, often some): the rows leave them out of their
+        /// pills (ADR 0077).
+        #[property(get, set)]
+        pub shared_tags: RefCell<Vec<String>>,
+        /// Their names, which the list's header says once.
+        #[property(get, set)]
+        pub shared_tag_names: RefCell<Vec<String>>,
+        /// Reads them again after the list changed.
+        pub shared_queue: crate::widgets::card_row::SharedTagsQueue,
         pub state: OnceCell<AppState>,
         pub items: OnceCell<gio::ListStore>,
         /// Selection mode: the chosen cards, the header, the action bar and
@@ -199,6 +211,22 @@ impl BrowserPage {
         imp.card_list
             .set_model(Some(&gtk::NoSelection::new(Some(store.clone()))));
         imp.card_list.set_factory(Some(&page.row_factory()));
+        page.bind_property("shared-tag-names", &*imp.list_header, "tags")
+            .sync_create()
+            .build();
+        // Every change of the list (a search, a filter, an edited card)
+        // may change which tags all its cards have.
+        store.connect_items_changed(glib::clone!(
+            #[weak]
+            page,
+            move |store, _, _, _| {
+                page.imp()
+                    .shared_queue
+                    .queue::<BrowseItem>(&page, store, |item| {
+                        std::cell::Ref::map(item.row(), |row| row.tags.as_slice())
+                    });
+            }
+        ));
         // The empty state on a short window (ADR 0058); its icon changes
         // with the state, so only `compact`.
         crate::ui::breakpoint::compact_when(&imp.empty_short, &*imp.empty_page);
@@ -493,13 +521,13 @@ impl BrowserPage {
         }
     }
 
-    /// A row per visible card, following the page's `compact` and
-    /// `selecting` properties.
+    /// A row per visible card, following the page's `compact`,
+    /// `selecting`, `can-move` and `shared-tags` properties.
     fn row_factory(&self) -> gtk::SignalListItemFactory {
         card_row::factory(
             self,
             CardRow::for_browser,
-            &["compact", "selecting", "can-move"],
+            &["compact", "selecting", "can-move", "shared-tags"],
             CardRow::bind_browse,
         )
     }
@@ -1109,6 +1137,50 @@ mod tests {
             assert_eq!(shown(&page).len(), 4);
             assert_eq!(imp.search_entry.text(), "");
             assert_eq!(imp.deck_filter.selected(), 0);
+        });
+    }
+
+    /// The tags every listed card has are said once above the list only
+    /// while every card on screen has them (ADR 0077): after the deck
+    /// filter names Maths, whose cards are all tagged "algebra", not with
+    /// every deck listed.
+    #[test]
+    fn the_tags_every_listed_card_has_are_said_once_after_a_filter() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, _ids, maths) = state_with_cards();
+            let page = page_over(&state, None);
+            let window = gtk::Window::builder()
+                .default_width(800)
+                .default_height(600)
+                .child(&page)
+                .build();
+            window.present();
+            crate::testing::settle();
+            let imp = page.imp();
+            assert_eq!(page.shared_tag_names(), Vec::<String>::new());
+            let position = imp
+                .filter_decks
+                .borrow()
+                .iter()
+                .position(|d| d.id == maths)
+                .unwrap();
+            imp.deck_filter
+                .set_selected(u32::try_from(position + 1).unwrap());
+            crate::testing::settle();
+            assert_eq!(page.shared_tag_names(), ["algebra"]);
+            assert!(imp.list_header.is_visible());
+            assert_eq!(imp.list_header.tags(), ["algebra"]);
+            let rows = crate::testing::descendants::<CardRow>(imp.card_list.upcast_ref());
+            assert_ne!(rows.len(), 0);
+            assert!(
+                rows.iter()
+                    .all(|row| row.shared_tags() == page.shared_tags())
+            );
+            page.clear_filters();
+            crate::testing::settle();
+            assert_eq!(page.shared_tag_names(), Vec::<String>::new());
+            assert!(!imp.list_header.is_visible());
+            window.destroy();
         });
     }
 

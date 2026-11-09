@@ -250,6 +250,10 @@ msgstr "Prochaine révision"
 msgid "History"
 msgstr "Historique"
 
+#: crates/app/data/card_list_header.blp
+msgid "On every card:"
+msgstr "Sur toutes les cartes :"
+
 #: crates/app/data/card_row.blp
 msgid "Card Actions"
 msgstr "Actions sur la carte"
@@ -1470,10 +1474,15 @@ msgstr "Lecture des données impossible : {error}"
 msgid "Due {when}"
 msgstr "À revoir {when}"
 
-#. Translators: under a card in All Cards: {deck} is its deck's name, {status} "Due in 3 days".
+#. Translators: under a card in All Cards: {status} is "Due in 3 days", {deck} its deck's name.
 #: crates/app/src/pages/browser_page/text.rs
-msgid "{deck} · {status}"
-msgstr "{deck} · {status}"
+msgid "{status} · {deck}"
+msgstr "{status} · {deck}"
+
+#. Translators: the start of the line under a card in All Cards, before the card's back: {subtitle} is "Due in 3 days · Maths".
+#: crates/app/src/pages/browser_page/text.rs
+msgid "{subtitle} ·"
+msgstr "{subtitle} ·"
 
 #. Translators: what a screen reader says for a card in All Cards: {card} is the card ("2 + 2, back: 4"), {deck} its deck's name, {status} "Due in 3 days".
 #: crates/app/src/pages/browser_page/text.rs
@@ -3351,6 +3360,9 @@ msgstr "Voyez combien vous avez étudié et ce que vous retenez"
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr "Des images sur les cartes, sur un téléphone"
+
+#~ msgid "{deck} · {status}"
+#~ msgstr "{deck} · {status}"
 
 #~ msgid "The media files add up to {size}, more than the 2 GiB that Rappel reads from one file. An export with them could not be imported again by Rappel. Export without them instead? Decks, cards and their history are exported; the media files stay where they are, and cards keep their references to them."
 #~ msgstr "Les fichiers médias font {size} en tout, soit plus que les 2 Gio que Rappel lit dans un seul fichier. Un export qui les contiendrait ne pourrait pas être réimporté par Rappel. Exporter plutôt sans eux ? Les paquets, les cartes et leur historique sont exportés ; les fichiers médias restent où ils sont, et les cartes gardent leurs références à ces fichiers."

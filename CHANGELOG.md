@@ -7,6 +7,8 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **Tidier card lists** on a deck's page and on All Cards. The cards are one rounded list, as in GNOME's settings, two lines per card: the front, then the back (on All Cards the status and the deck first, "Due in 3 days · Maths ·", and on a phone only those). The tags that every listed card has are said once above the list ("On every card: …") and each card shows only its other tags, with "+N" past three (one on a phone); on All Cards that happens when every card listed shares them, usually after filtering by deck or tag. A suspended card's front is dimmed besides its pause icon (ADR 0077, #129).
+- **Formulas are drawn in the card lists**: "Mesure σ-finie", not "Mesure \sigma-finie", on one line at the size of the text; invalid LaTeX shows as its text (ADR 0077, #128).
 - **The app ID is now `io.github.rappelapp.Rappel`** (was `io.github.rsmirke.Rappel`), and every link points to `https://github.com/rappelapp/rappel`. The developer is shown as "The Rappel Project" in About and the metainfo. The data directory does **not** change: it stays `~/.local/share/rappel/` (ADR 0075, #130).
 - **Phase 3b is planned**: its brief and two mockups are in `docs/briefs/`, SPEC.md splits the old phase 3b into 3b (polish and the first Snap, ends in 0.4.0) and 3c (Flatpak bundle, translation workflow, hardening, ends in 1.0), and the maintainer's answers to the phase 3a questions are recorded.
 - **Rappel has its real icon**: a white index card and a red one on a ring, drawn by the maintainer in GNOME's style, and a matching symbolic icon. They replace the placeholders in `data/icons/` (ADR 0074).

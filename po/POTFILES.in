@@ -5,6 +5,7 @@ crates/app/data/browser_dialogs.blp
 crates/app/data/browser_page.blp
 crates/app/data/card_editor.blp
 crates/app/data/card_info_dialog.blp
+crates/app/data/card_list_header.blp
 crates/app/data/card_row.blp
 crates/app/data/chart_card.blp
 crates/app/data/clean_up_media_dialog.blp

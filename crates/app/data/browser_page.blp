@@ -200,31 +200,42 @@ template $RappelBrowserPage: Adw.NavigationPage {
 
           // A GtkListView with a model: it only creates rows for what is
           // on screen, so thousands of cards stay smooth (ADR 0013). As on
-          // the deck page: clamped to 600 px, and no `rich-list`, because
-          // the rows lay themselves out like action rows
-          // (data/card_row.blp).
-          child: Gtk.ScrolledWindow {
-            hscrollbar-policy: never;
+          // the deck page: clamped to 600 px, the rows drawn as one boxed
+          // list (`listview.card-list`, ADR 0077), and no `rich-list`,
+          // because the rows lay themselves out like action rows
+          // (data/card_row.blp). The tags every listed card shares are
+          // said once above it.
+          child: Gtk.Box {
+            orientation: vertical;
 
-            styles [
-              "view",
-            ]
-
-            child: Adw.ClampScrollable {
+            // The tags every listed card has (pages/browser_page.rs
+            // follows them), clamped with the list.
+            Adw.Clamp {
               maximum-size: 600;
 
-              child: Gtk.ListView card_list {
-                single-click-activate: true;
+              child: $RappelCardListHeader list_header {};
+            }
 
-                accessibility {
-                  label: _("Cards");
-                }
+            Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+              vexpand: true;
 
-                styles [
-                  "separators",
-                ]
+              child: Adw.ClampScrollable {
+                maximum-size: 600;
+
+                child: Gtk.ListView card_list {
+                  single-click-activate: true;
+
+                  accessibility {
+                    label: _("Cards");
+                  }
+
+                  styles [
+                    "card-list",
+                  ]
+                };
               };
-            };
+            }
           };
         }
       };
