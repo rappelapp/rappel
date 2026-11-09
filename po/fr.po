@@ -528,6 +528,38 @@ msgid "Open Backup Folder"
 msgstr "Ouvrir le dossier des sauvegardes"
 
 #: crates/app/data/preferences_dialog.blp
+msgid "Automatic Backups"
+msgstr "Sauvegardes automatiques"
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Each day Rappel closes after a change, it saves an export to this folder and keeps the 14 newest"
+msgstr "Chaque jour où Rappel se ferme après une modification, il enregistre un export dans ce dossier et garde les 14 plus récents"
+
+#. Translators: the folder automatic backups go to.
+#: crates/app/data/preferences_dialog.blp
+msgctxt "automatic backups"
+msgid "Folder"
+msgstr "Dossier"
+
+#: crates/app/data/preferences_dialog.blp
+#: crates/app/src/auto_backup.rs
+msgctxt "automatic backups"
+msgid "Off"
+msgstr "Aucun"
+
+#: crates/app/data/preferences_dialog.blp
+msgid "_Choose…"
+msgstr "_Choisir…"
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Choose the folder for automatic backups"
+msgstr "Choisir le dossier des sauvegardes automatiques"
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Turn Off Automatic Backups"
+msgstr "Désactiver les sauvegardes automatiques"
+
+#: crates/app/data/preferences_dialog.blp
 msgid "Storage"
 msgstr "Stockage"
 
@@ -972,6 +1004,59 @@ msgstr "Mettez Rappel à jour pour continuer"
 msgid "Rappel Could Not Start"
 msgstr "Rappel n’a pas pu démarrer"
 
+#: crates/app/src/auto_backup.rs
+msgid "Automatic backups off: their setting could not be read. Choose the folder again in Preferences."
+msgstr "Sauvegardes désactivées : leur réglage n’a pas pu être lu. Choisissez à nouveau le dossier dans les Préférences."
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder was not found; is its disk connected?"
+msgstr "le dossier de sauvegarde est introuvable ; son disque est-il branché ?"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is not a folder any more; choose it again in Preferences"
+msgstr "le dossier de sauvegarde n’est plus un dossier ; choisissez-le à nouveau dans les Préférences"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder was replaced by a link; choose it again in Preferences"
+msgstr "le dossier de sauvegarde a été remplacé par un lien ; choisissez-le à nouveau dans les Préférences"
+
+#: crates/app/src/auto_backup.rs
+msgid "the disk is full"
+msgstr "le disque est plein"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is read-only"
+msgstr "le dossier de sauvegarde est en lecture seule"
+
+#: crates/app/src/auto_backup.rs
+msgid "Rappel may not write to the backup folder"
+msgstr "Rappel n’a pas le droit d’écrire dans le dossier de sauvegarde"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup would be larger than an import reads; use Export… without media instead"
+msgstr "la sauvegarde dépasserait la taille qu’un import lit ; utilisez plutôt Exporter… sans les médias"
+
+#: crates/app/src/auto_backup.rs
+msgid "something that is not a backup has today’s backup’s name in the backup folder"
+msgstr "un élément qui n’est pas une sauvegarde porte le nom de la sauvegarde du jour dans le dossier de sauvegarde"
+
+#: crates/app/src/auto_backup.rs
+msgid "something unexpected happened"
+msgstr "un problème inattendu est survenu"
+
+#: crates/app/src/auto_backup.rs
+msgid "it took too long and was stopped"
+msgstr "elle a pris trop de temps et a été arrêtée"
+
+#: crates/app/src/auto_backup.rs
+msgid "Rappel was stopped before it finished"
+msgstr "Rappel a été arrêté avant la fin"
+
+#. Translators: a toast at the start: what is before ":" is its title, the rest is behind Details. {reason} is why.
+#: crates/app/src/auto_backup.rs
+msgid "Automatic backup failed: {reason}"
+msgstr "Échec de la sauvegarde : {reason}"
+
 #: crates/app/src/dialogs/about.rs
 msgid "KaTeX Fonts"
 msgstr "Polices KaTeX"
@@ -1391,6 +1476,23 @@ msgstr "Lecture des réglages impossible : {error}"
 #: crates/app/src/dialogs/preferences.rs
 msgid "The setting was not saved: {error}"
 msgstr "Réglage non enregistré : {error}"
+
+#: crates/app/src/dialogs/preferences.rs
+msgid "Choose Backup Folder"
+msgstr "Choisir le dossier de sauvegarde"
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/dialogs/preferences.rs
+msgid "The folder chooser failed: {error}"
+msgstr "Le sélecteur de dossier a échoué : {error}"
+
+#: crates/app/src/dialogs/preferences.rs
+msgid "Choose a folder on this computer"
+msgstr "Choisissez un dossier local"
+
+#: crates/app/src/dialogs/preferences.rs
+msgid "Choose a folder outside Rappel’s data folder"
+msgstr "Choisissez un dossier hors du dossier de données de Rappel"
 
 #: crates/app/src/dialogs/preferences.rs
 msgid "Recalculating…"

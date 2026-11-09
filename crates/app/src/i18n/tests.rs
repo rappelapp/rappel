@@ -186,11 +186,12 @@ const NOT_TRANSLATED: &[(&str, &str, &str)] = &[
         "only logged",
     ),
     (
-        "crates/app/src/window_state.rs",
+        "crates/app/src/key_file.rs",
         "not a regular file",
         "only logged",
     ),
-    ("crates/app/src/window_state.rs", "too large", "only logged"),
+    ("crates/app/src/key_file.rs", "too large", "only logged"),
+    ("crates/app/src/key_file.rs", "holds a NUL", "only logged"),
 ];
 
 /// The desktop integration drafts in `data/` (ADR 0060), which packaging
@@ -1250,6 +1251,12 @@ fn french_through_the_c_library() {
 /// other message as if it could, so a new message is checked unless it is
 /// listed here; one written inside a toast call cannot be listed.
 const NOT_TOASTS: &[&str] = &[
+    // The ends of "The automatic backup failed: {reason}" (ADR 0080),
+    // behind its Details, never a title.
+    "the backup folder is read-only",
+    "it took too long and was stopped",
+    // The Turn Off button of Automatic Backups in Preferences.
+    "Turn Off Automatic Backups",
     // The Anki import's report, behind the Details of "Import done".
     "{count} card whose note is damaged",
     "{count} card too long for Rappel",
