@@ -6,7 +6,7 @@
 - App name **Rappel**, app ID `io.github.rappelapp.Rappel`, licence GPL-3.0-or-later.
 - Crates: `rappel-core` in `crates/core` (no UI), `rappel` in `crates/app` (GTK binary).
 - Data dir `~/.local/share/rappel/`; debug builds use `~/.local/share/rappel-dev/`. `RAPPEL_DATA_DIR` overrides both. Never point development at the real data dir.
-- Status: v0 released as 0.1.0 (decks, plain-text cards, studying with FSRS); 0.2.0-beta.1 and 0.3.0-beta.1 are tagged, neither released as stable; Phase 3a is done; Phase 3b (polish and the first Snap) is done except the Snap, which stopped at the image sandbox (`docs/adr/0082-snap-feasibility.md`, `docs/briefs/QUESTIONS.md`); 0.4.0 is prepared, not tagged. What is done, the build order and the scope are in `SPEC.md` (its status line, then §4).
+- Status: v0 released as 0.1.0 (decks, plain-text cards, studying with FSRS); 0.2.0-beta.1, 0.3.0-beta.1 and 0.4.0-beta.1 are tagged, none released as stable; Phase 3a is done; Phase 3b (polish and the first Snap) is done except the Snap, which stopped at the image sandbox (`docs/adr/0082-snap-feasibility.md`, `docs/briefs/QUESTIONS.md`); 0.4.0 is prepared, not tagged. What is done, the build order and the scope are in `SPEC.md` (its status line, then §4).
 
 ## About me
 - Strong in maths and algorithms, not a Rust or GTK developer, and I do **not** read most diffs. You are responsible for quality. The automated gate and the reviewer agent are how quality is checked, so never weaken them to make a task pass.
