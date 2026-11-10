@@ -80,11 +80,14 @@ fn top_after_next_layout(list: &gtk::ListView) {
     let handler: std::rc::Rc<Cell<Option<glib::SignalHandlerId>>> = std::rc::Rc::default();
     let once = std::rc::Rc::clone(&handler);
     let list = list.downgrade();
+    // Weakly, like the list: a row gone by the next layout cannot have
+    // the focus, and the handler keeps nothing alive.
+    let focused = focused.downgrade();
     let id = surface.connect_layout(move |surface, _, _| {
         if let Some(id) = once.take() {
             surface.disconnect(id);
         }
-        let Some(list) = list.upgrade() else {
+        let (Some(list), Some(focused)) = (list.upgrade(), focused.upgrade()) else {
             return;
         };
         let still = list.focus_child().as_ref() == Some(&focused)

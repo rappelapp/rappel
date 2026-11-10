@@ -111,7 +111,7 @@ Both save at once; a failed write shows the dialog's error toast. Turn Off hidde
 
 - The export gains `Store::export_into` (an open file), used by `export_to_with` and the backup, and `collection_fingerprint`. The format is unchanged.
 - A backup is skipped on a day nothing changed, so a quiet week leaves fewer than 7 files. The 14 kept are the 14 most recent changes.
-- A backup cut off by the cap removes its own partial file. Only one cut off by a shutdown or a crash, or by a disk stuck past the grace period, leaves a hidden `.partial` file. (Amended by ADR 0084: such files could gather without bound, one per killed backup, each as large as a backup; the next backup now removes the job's own partial files, by their exact pattern, regular files only, once they are a day old.)
+- A backup cut off by the cap removes its own partial file. Only one cut off by a shutdown or a crash, or by a disk stuck past the grace period, leaves a hidden `.partial` file. (Amended by ADR 0084: such files could gather without bound, one per killed backup, each as large as a backup; the next backup that succeeds now removes the job's own partial files, by their exact pattern, regular files only, once they are a day old; this extension of the deletion rule awaits the maintainer's confirmation.)
 - On a disk too slow for the cap (a large media collection on a USB 2 stick), every close that day tries again and is cancelled again; each start says it took too long. Export… has no cap for such a case.
 - A day's later changes go into the next day's backup, not today's. That follows from "once a day".
 - The record is per data directory, so a debug build (`rappel-dev`) has its own setting and never writes into the release folder's record.

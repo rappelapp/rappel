@@ -1185,3 +1185,32 @@ fn a_fifo_or_socket_in_the_folders_place_is_not_a_folder() {
         assert_eq!(failure.kind, FailureKind::NotAFolder, "{failure}");
     }
 }
+
+/// A run that fails (here cut off by the cap) removes no partial file,
+/// however old: one left by a killed run may hold a whole backup, and only
+/// a run that has today's backup in the folder lets it go.
+#[test]
+fn a_failed_backup_removes_no_partial_file() {
+    let env = Env::new();
+    let folder = env.folder();
+    let old = now_seconds() - 2 * STALE_PARTIAL_SECONDS;
+    let name = partial_name(&file_name(date("2026-11-01"))).unwrap();
+    fs::write(folder.join(&name), b"maybe a whole backup").unwrap();
+    set_modified(&folder.join(&name), old);
+    let failure = run(
+        &env.data(),
+        &folder,
+        date("2026-11-09"),
+        None,
+        &AtomicBool::new(true),
+    )
+    .unwrap_err();
+    assert_eq!(failure.kind, FailureKind::Cancelled, "{failure}");
+    assert_eq!(env.names(), vec![name.clone()]);
+    // The next run that writes today's backup removes it.
+    assert!(matches!(
+        env.run("2026-11-09", None),
+        Ok(Outcome::Written { .. })
+    ));
+    assert_eq!(env.names(), vec!["Rappel backup 2026-11-09.rappel"]);
+}

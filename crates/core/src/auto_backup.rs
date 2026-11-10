@@ -407,9 +407,10 @@ pub(crate) fn kind_of(err: &io::Error) -> FailureKind {
 /// `folder` must be the folder as the app stored it, with its links
 /// resolved when it was chosen: a link in its place is refused. A folder
 /// that is the data directory or inside it is refused as well
-/// ([`FailureKind::InsideDataDir`]). Before writing, the job's own partial
-/// files left for a day by a killed backup are removed
-/// ([`stale_partials`]).
+/// ([`FailureKind::InsideDataDir`]). Once today's backup is in the folder
+/// (written, or found already there), the job's own partial files left
+/// for a day by a killed backup are removed ([`stale_partials`]); a run
+/// that fails removes none.
 ///
 /// A deletion that fails is logged and does not fail the backup.
 ///
@@ -443,7 +444,6 @@ pub fn run(
             "the backup folder is inside the data directory",
         ));
     }
-    remove_stale_partials(&dir, now_seconds());
     let name = file_name(today);
     match rustix::fs::statat(&dir, name.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
         // Whatever it is, it stays: a regular file of that name is today's
@@ -460,6 +460,9 @@ pub fn run(
     };
     drop(store);
     let removed = prune(&dir, &name);
+    // Only once today's backup is safely there: a run whose export fails
+    // never removes what may be a whole backup a killed run left.
+    remove_stale_partials(&dir, now_seconds());
     Ok(Outcome::Written {
         file_name: name,
         fingerprint,
@@ -472,6 +475,9 @@ pub fn run(
 /// something else, which is a failure to report.
 fn already_there(dir: &OwnedFd, name: &str) -> Result<Outcome, Failure> {
     if is_regular_file(dir, name) {
+        // Today's backup is there: as after a write, the job's own stale
+        // partial files may go.
+        remove_stale_partials(dir, now_seconds());
         Ok(Outcome::AlreadyThere)
     } else {
         Err(Failure::new(
@@ -718,7 +724,8 @@ fn is_regular_file(dir: &OwnedFd, name: &str) -> bool {
 
 /// Removes the job's own partial files in `dir` left by a killed backup
 /// ([`stale_partials`]): regular files only, each looked at again just
-/// before it goes. Failures are logged, and how many went.
+/// before it goes. A failure to list or remove one is logged as a warning;
+/// how many were removed is logged at debug level.
 fn remove_stale_partials(dir: &OwnedFd, now: i64) {
     let mut found = Vec::new();
     let listing = Dir::read_from(dir).and_then(|entries| {
