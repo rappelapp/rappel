@@ -6,6 +6,9 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **The snap is planned again.** The maintainer chose to run the image loader without bubblewrap inside Rappel's own snap only (the snap's strict confinement is the boundary), so packaging resumes in `docs/briefs/phase-3b-snap.md`, aiming at 0.4.1 on the Snap Store beta channel. The answers to the Phase 3b questions are recorded in `docs/briefs/QUESTIONS.md`.
+
 ## [0.4.0] — 2026-11-10
 
 The first stable release since 0.1.0. It gathers the betas (Markdown cards with formulas, images and sound, tags, search and All Cards, statistics, export and import also from Anki, Undo, a phone-sized layout and French) and phase 3b's polish: card lists grouped by tag, Statistics a month at a time, backups to a folder you choose, S to start studying, a newer SQLite, and the new app ID `io.github.rappelapp.Rappel`. Your data stays where it was. There is no Snap: the feasibility check found that glycin's image sandbox cannot run under strict confinement, and packaging waits on a decision (ADR 0082).
