@@ -1,6 +1,6 @@
 # 82. The snap: feasibility check, stopped at the image sandbox
 
-- Status: Accepted (findings); packaging blocked on a maintainer decision (`docs/briefs/QUESTIONS.md`, Phase 3b, question 1)
+- Status: Accepted (findings); packaging was blocked on a maintainer decision (`docs/briefs/QUESTIONS.md`, Phase 3b, question 1), answered on 2026-11-10 (amendment below)
 - Date: 2026-11-09
 - Refers to: Phase 3b brief, slice 7 and its stop conditions; ADR 0055 (glycin's sandbox), ADR 0056 and 0062 (GStreamer allow-list), ADR 0059 (`RAPPEL_LOCALEDIR`), ADR 0060 (`data/`), ADR 0004 (data directory), ADR 0080 (backup folder through the portal)
 
@@ -115,3 +115,15 @@ Not verified here, because no snap of Rappel could be installed: that the path s
 - snapd, branch `master` (2026-11-09): `interfaces/builtin/browser_support.go` (the only `userns` grant), `interfaces/builtin/desktop.go` (document portal rules and mount), `interfaces/builtin/desktop_legacy.go` (`dbus (bind)` rules).
 - xdg-desktop-portal, branch `main` (2026-11-09): `desktop-portal/xdp-documents.c`, `desktop-portal/file-chooser.c`, `data/org.freedesktop.portal.Documents.xml`.
 - `gst-inspect-1.0` on the development machine (GStreamer 1.28.7): ranks of `opusparse` (none), `faad` (secondary), `pulsesink` (primary).
+
+## Amendment (2026-11-10): option A, the snap's confinement is the image boundary
+
+The maintainer answered question 1 with **option A** (`docs/briefs/phase-3b-snap.md`): inside Rappel's own snap only, glycin's loader runs without bubblewrap, and the snap's strict confinement is the boundary. Built in slice 1 of that brief; the details are in ADR 0055's amendment of the same date.
+
+- Rappel selects `SandboxSelector::NotSandboxed` explicitly, as the consequence above said, so glycin never tries bubblewrap in the snap (with `Auto`, finding 2: every image would fail). It does so only when `$SNAP` is an absolute path, `$SNAP_NAME` is `rappel` and the running binary resolves to a path inside `$SNAP` (`render/loader_sandbox.rs`, `choose`). Anywhere else, including a build run from `target/` in a snap shell or a shell with `$SNAP` set by hand, the image code behaves as before. The rule checks the snap's environment, not its confinement: a snap installed with `--devmode` runs the loader without bubblewrap and with no real boundary (ADR 0085, point 5).
+- glycin is not patched. Unlike Canonical's patch of the C library (finding 2, item 1), the Rust crate 3.1 sets no seccomp filter of its own for `NotSandboxed`: the loader is a plain child process, with only the snap's AppArmor and seccomp profile around it, as around Rappel.
+- Size limits, the decode timeout, the SVG refusal and the four accepted formats are unchanged.
+- One `info` line at start-up says which mode is in use.
+- **Residual risk:** a decoder exploit in a hostile image could reach whatever Rappel can reach in the snap: Rappel's data folder (database, media, settings) and the backup folder granted through the portal, which it could read, change or delete; it still has no network and no home folder. Accepted by the maintainer.
+- **Option B, for later:** a snap mode in glycin with a seccomp filter and a memory limit for the loader, proposed in `docs/notes/glycin-snap-mode.md` (written, not filed upstream).
+- **Packaged** as planned above, with the changes recorded in ADR 0085: the snap workflow also runs on pull requests that change the packaging, and M4A is not supported in the snap (`faad`'s licence, GPL-2.0-or-later, is not in `deny.toml`).

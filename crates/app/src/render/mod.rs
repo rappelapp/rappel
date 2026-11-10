@@ -30,6 +30,7 @@ mod breaks;
 mod images;
 mod ink_box;
 mod layout_key;
+mod loader_sandbox;
 mod markup;
 mod math;
 mod math_line;
@@ -52,6 +53,7 @@ use rappel_core::content::{Align, Block, Cell, Document, Inline, plain_text};
 use audio::AudioBudget;
 pub use audio_player::{CardAudio, stop_all as stop_audio};
 use images::{Failure, ImageBudget, Piece, PixelBudget};
+pub use loader_sandbox::log_mode as log_image_loader_mode;
 use math::{Budget, Placement};
 #[cfg(test)]
 pub(crate) use math::{cached_formulas, layouts_done as math_layouts_done};

@@ -1,0 +1,49 @@
+# Builds Rappel's snap from snap/snapcraft.yaml and keeps the .snap as a
+# workflow artifact (ADR 0085). It never publishes: no store login, no token
+# and no secret are used here, and none may be added (the brief's stop
+# condition; the maintainer uploads to the store by hand). The tests check
+# this file for `secrets.` and store commands (crates/app/src/snap_install.rs).
+#
+# Runs on release tags, by hand, and on pull requests that change the
+# packaging itself, so such a pull request proves that the snap still
+# builds. Never on docs-only pull requests, and not on every code change:
+# the `check` job of ci.yml is the gate; this build takes much longer.
+name: Snap
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'snap/**'
+      - 'scripts/snap-install.sh'
+      - '.github/workflows/snap.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Cancel superseded runs of a pull request; tag and manual runs finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  snap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing in this job pushes; do not leave the token in .git/config.
+          persist-credentials: false
+
+      # snapcraft in an LXD container, from the stable channel.
+      - uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1.3.0
+        id: build
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.build.outputs.snap }}
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
