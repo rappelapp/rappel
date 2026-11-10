@@ -1,6 +1,6 @@
 # 55. Images: decoded by glycin in a sandbox, drawn in the card, added in the editor
 
-- Status: Accepted
+- Status: Accepted (amended 2026-11-10: the snap)
 - Date: 2026-10-18
 - Amends: ADR 0019 (a `media:` image at the top level of a paragraph is drawn as a picture; elsewhere it is its alt text), ADR 0054 (the `[image: …]` placeholders are gone; `Store::add_image`), ADR 0025 and ADR 0050 (rows 42 to 45 of the untrusted-input table), ADR 0021 (`deny.toml` ignores four more "unmaintained" advisories)
 - Refers to: SPEC §4.3, §4.4, principle 5; `docs/briefs/phase-2.md` (slice 3)
@@ -81,3 +81,17 @@ Every failure is a placeholder (`Failure::Missing` for no file or no media folde
 - An image changes size only when its side is rendered again: rotating a phone keeps the cap of the moment the card was shown until the next card.
 - A focused image takes Space and Enter for itself; Shift+Tab goes back to the card.
 - No new migration, no change to the export format.
+
+## Amendment (2026-11-10): in Rappel's own snap, the loader runs without bubblewrap
+
+Decided by the maintainer (option A, `docs/briefs/QUESTIONS.md`, Phase 3b, question 1; `docs/briefs/phase-3b-snap.md`, slice 1). Strict snap confinement refuses the user namespaces bubblewrap needs, so with `SandboxSelector::Auto` every image fails in the snap (ADR 0082, finding 2).
+
+- **Where.** `render/loader_sandbox.rs`, `choose` (pure, unit-tested; the environment and the paths are its arguments, so the tests set no variable). It returns "not sandboxed" **only** when all of these hold: `$SNAP` is set to an absolute path, `$SNAP_NAME` is exactly `rappel`, and the running binary (`std::env::current_exe`), with `$SNAP`, resolved by `canonicalize`, lies inside `$SNAP` (whole path components, so `/snap/rappel2` is not inside `/snap/rappel`). A failure to read or resolve either path gives the old behaviour. The choice is made once per run (`current`).
+- **How.** glycin's own selector, `Loader::sandbox_selector(SandboxSelector::NotSandboxed)` (glycin 3.1, `api_loader.rs`; `SandboxSelector::determine_sandbox_mechanism` then returns `NotSandboxed` without the bubblewrap test run, `api_common.rs`; the loader is started by `Sandbox::no_sandbox_command`: a cleared environment but for glycin's list, `PR_SET_PDEATHSIG`, no seccomp filter, no memory limit, `sandbox.rs`). glycin is not patched.
+- **Everywhere else, nothing changes.** `choose` gives `Auto`, which is glycin's default (`SandboxSelector::default()`): bubblewrap where it works, flatpak-spawn in a Flatpak, a plain process and the one warning where no namespaces can be made. The warning is not logged in the snap, where `NotSandboxed` is chosen, not fallen back to.
+- **Unchanged in both modes:** the media folder's regular files only (`O_NOFOLLOW | O_NONBLOCK`, checked on the handle), 10 MB, the four formats only (PNG, JPEG, WebP, GIF: the first-bytes check, which keeps SVG out, and glycin's type matching the kind), the header's size checked by Rappel before glycin sees the bytes (ADR 0063), the colour profile taken out, 16,384 px a side and 64 MP, 64 MP per side, and the 10 s timeout. `render::picture::tests::the_snap_s_mode_decodes_and_keeps_the_checks` decodes in the snap's mode.
+- **One line at start-up** (`loader_sandbox::log_mode`, `info`, after the GStreamer restart so it is said once): which mode is in use. Seen with `RUST_LOG=rappel=info`.
+- **Residual risk, accepted by the maintainer.** In the snap the loader process runs inside the snap's AppArmor and seccomp profile, as Rappel itself: no network (no `network` plug), no home folder (no `home` plug). But it is not separated from Rappel's data: **a decoder exploit in a hostile image could read, change or delete Rappel's data folder** (database, media, settings, `auto-backup.ini`) **and the backup folder granted through the portal**, and use the session bus as far as the desktop interfaces allow. A hostile image needs an imported collection or a pasted or dropped file. bubblewrap would have kept the loader from all of these. Out of the snap, the risk is as before.
+- **Later (option B):** a snap mode in glycin itself, with a seccomp filter and a memory limit in the loader, as Canonical's patch does for the C library; proposal written, not filed: `docs/notes/glycin-snap-mode.md`.
+
+Row 42 of the untrusted-input table now reads, in addition: in Rappel's own snap (`loader_sandbox::choose`), a plain child process by choice, bounded by the snap's strict confinement, logged once at start-up; the size, type and time checks as everywhere. Test: `render::loader_sandbox::tests::*`, `render::picture::tests::the_snap_s_mode_decodes_and_keeps_the_checks`.

@@ -7,6 +7,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **Images in the snap.** Inside Rappel's own snap only, glycin's image loader runs without bubblewrap, which strict confinement cannot run: the snap's confinement (no network, no home folder) is the boundary. Rappel picks this mode only when `$SNAP` is set, `$SNAP_NAME` is `rappel` and the program runs from inside `$SNAP`; everywhere else images load exactly as before. The size limits, the 10 s timeout, the SVG refusal and the four accepted formats stay. One line at start-up says which mode is in use (`RUST_LOG=rappel=info`). The accepted risk: in the snap, a decoder exploit in a hostile image could reach Rappel's data and the backup folder. A proposal for a safer snap mode in glycin itself is in `docs/notes/glycin-snap-mode.md` (ADR 0055 and ADR 0082, amendments).
 - **The snap is planned again.** The maintainer chose to run the image loader without bubblewrap inside Rappel's own snap only (the snap's strict confinement is the boundary), so packaging resumes in `docs/briefs/phase-3b-snap.md`, aiming at 0.4.1 on the Snap Store beta channel. The answers to the Phase 3b questions are recorded in `docs/briefs/QUESTIONS.md`.
 
 ## [0.4.0] — 2026-11-10
