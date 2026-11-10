@@ -9,7 +9,7 @@ Rappel can be built as a strictly confined snap, version **0.4.1** (not tagged).
 |---|---|---|---|---|---|
 | 0. Housekeeping | #145 | — | Sonnet | 1 | The brief committed, CLAUDE.md batch names, your answers in QUESTIONS.md, CHANGELOG. |
 | 1. Images in the snap | #146 | 0055, 0082 (amended) | Opus | 1 | Inside Rappel's own snap only, glycin's image loader runs without bubblewrap (`SandboxSelector::NotSandboxed`). Chosen by a pure, tested function (`render/loader_sandbox.rs`): `$SNAP` set and absolute, `$SNAP_NAME` is `rappel`, and the running binary is inside `$SNAP`; everything else keeps glycin's own choice, as before. Sizes, timeout and SVG refusal are untouched. One start-up log line says which mode is in use. `docs/notes/glycin-snap-mode.md` is the upstream proposal for option B (written, not filed). |
-| 2. Packaging | #147 | 0085 | Opus | 1 | `snap/snapcraft.yaml` (core26, `gnome` extension, strict, `grade: stable`, the desktop plugs, `audio-playback`, the `dbus` slot), `scripts/snap-install.sh` with a test in the gate, the `.mo` files and merged desktop/metainfo files made by `build.rs`, `.github/workflows/snap.yml`, a README section. |
+| 2. Packaging | #147 | 0085 | Opus (one review fix by the Sonnet orchestrator) | 1 | `snap/snapcraft.yaml` (core26, `gnome` extension, strict, `grade: stable`, the desktop plugs, `audio-playback`, the `dbus` slot), `scripts/snap-install.sh` with a test in the gate, the `.mo` files and merged desktop/metainfo files made by `build.rs`, `.github/workflows/snap.yml`, a README section. |
 | 3. Version 0.4.1 | this PR | — | Sonnet | — | Cargo files, CHANGELOG, metainfo, status lines in CLAUDE.md and SPEC.md, this report. |
 
 No stop condition was hit: no migration, no export-format change, no new Cargo dependency, no forbidden plug, no secret in the repo or CI. All reviews were by Opus with no blocking finding. The one reviewer point I acted on before merging #147 was the README's `cp -a` recipe, which could mix the snap's fresh collection with the copied database; it now moves the fresh folder aside first.
@@ -21,6 +21,8 @@ No stop condition was hit: no migration, no export-format change, no new Cargo d
 - **The start-up line saying the image-loader mode appears only with `RUST_LOG=rappel=info`** (the default level is warnings).
 - **The snap was built only in CI**, never on this machine (no LXD, and `--destructive-mode` refuses a 26.10 host for `core26`). CI built `rappel_0.4.0_amd64.snap` on #147. Nothing was installed or run: the `dbus` slot, the portal folder's persistence, images in the snap, French and audio are read from sources only.
 - **CI warnings, not fixed:** snapcraft's linter says the `contact` field is missing (adding `contact: https://github.com/rappelapp/rappel/issues` would silence it), and `snapcore/action-build` v1.3.0 runs on Node 20, which GitHub forces onto Node 24.
+- The metainfo's 0.4.1 note says the snap is on the beta channel: tag, upload, then announce, so the note is not out before the upload.
+- The slice 0 CHANGELOG entry "The snap is planned again" was dropped from the 0.4.1 section on purpose (a planning note, not a user-visible change).
 - The snap workflow runs on packaging PRs only, not on every code PR (this revises ADR 0082's "never on PRs", as the brief asks).
 - Store screenshot URLs in the metainfo are pinned to the `v0.4.1` tag, as the gate requires for a released version (ADR 0083). The tag does not exist until you make it, so the store images resolve only after that; they are the same files as in 0.4.0.
 
@@ -35,7 +37,7 @@ Then, once the checklist below is done: `snapcraft upload --release=beta ~/Downl
 
 ## The snap checklist (updated from the Phase 3b report)
 1. Rappel starts from the app grid with its icon and name.
-2. `snap connections rappel` lists only the desktop set, `audio-playback`, the content plugs the `gnome` extension adds, and the `dbus` slot. No `home`, `removable-media`, `network` or `browser-support`.
+2. `snap connections rappel` lists only the plugs the `gnome` extension adds (desktop, desktop-legacy, gsettings, opengl, wayland, x11 and its content plugs; the exact list is for you to see), `audio-playback` and the `dbus` slot. None of `home`, `removable-media`, `network` or `browser-support`.
 3. Images show in a card, and an SVG is still refused. `RUST_LOG=rappel=info snap run rappel` logs "image loader: not sandboxed by bubblewrap; inside the rappel snap, …".
 4. MP3, Ogg and WAV play. An M4A says "could not be played" (expected).
 5. A second `snap run rappel` raises the same window (the `dbus` slot).

@@ -55,7 +55,7 @@
   </branding>
 
   <!-- Pinned to the release tag (ADR 0083): the files exist at that URL once
-       the maintainer has tagged v0.4.0. -->
+       the maintainer has tagged the release named in the URLs. -->
   <screenshots>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.1/data/screenshots/review.png</image>
