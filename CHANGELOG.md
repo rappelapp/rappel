@@ -6,6 +6,16 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-11-10
+
+French wording, and a test that guards the icon names. The app is otherwise the same as 0.4.1.
+
+### Added
+- **A test for icon names.** It lists every `*-symbolic` icon name in the Blueprint files and the Rust sources and fails unless each one is bundled in the app's resources or is on `crates/app/data/gnome-core26-icons.txt`, the names the snap's Adwaita ships. All 30 names Rappel uses are on that list, so nothing needed bundling (ADR 0086).
+
+### Changed
+- **French wording** follows Anki's words more closely. "Due" is now "À réviser" everywhere (states, filters, counts, screen-reader texts, the store listing) and "À revoir" is free; "Time Studied" is "Temps passé" ("12 min passées"); "Recall Now" is "Probabilité de rappel"; "Expected retention" is "Rétention estimée"; the forecast is "Révisions à venir" and "À venir"; "Card Information" is "Infos sur la carte"; "Day Starts At" is "Le jour commence à"; the daily limit is "Révisions max. par jour". The Fail and Pass buttons stay "Raté" and "Réussi" (`docs/briefs/fr-glossary-0.4.2.md`).
+
 ## [0.4.1] — 2026-11-10
 
 The first snap. Rappel can now be built as a strictly confined snap for the Snap Store's beta channel; the app itself is the same as 0.4.0. In the snap, images are decoded without bubblewrap, which strict confinement cannot run (ADR 0055 and 0082, amendments, and 0085). M4A does not play in the snap.
@@ -383,7 +393,8 @@ The beta of phase 2, media and mobile. Cards can show images and play audio, and
 ### Removed
 - `Store::due_cards` and `Store::new_cards` in `cards-core`: unused since `Store::study_input`.
 
-[Unreleased]: https://github.com/rappelapp/rappel/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/rappelapp/rappel/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/rappelapp/rappel/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/rappelapp/rappel/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rappelapp/rappel/compare/v0.4.0-beta.1...v0.4.0
 [0.4.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.3.0-beta.1...v0.4.0-beta.1

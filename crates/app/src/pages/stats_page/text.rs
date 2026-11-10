@@ -1061,6 +1061,8 @@ mod tests {
             assert_eq!(period.key, "30 derniers jours");
             let [tomorrow, _] = figures(View::Forecast, &d, 0, 0, &names());
             assert_eq!(tomorrow.key, "Demain");
+            // The chart counts reviews done; only the setting is a limit.
+            assert_eq!(chart_title(View::Reviews), "Révisions par jour");
         });
     }
 }

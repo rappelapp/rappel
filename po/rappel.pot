@@ -486,8 +486,8 @@ msgid "The most new cards a deck introduces in a day"
 msgstr ""
 
 #: crates/app/data/preferences_dialog.blp
-#: crates/app/src/pages/stats_page/text.rs
 #: crates/app/src/startup.rs
+msgctxt "setting"
 msgid "Reviews per Day"
 msgstr ""
 
@@ -2021,6 +2021,10 @@ msgstr ""
 
 #: crates/app/src/pages/stats_page/text.rs
 msgid "Time studied, last 30 days"
+msgstr ""
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Reviews per Day"
 msgstr ""
 
 #: crates/app/src/pages/stats_page/text.rs
