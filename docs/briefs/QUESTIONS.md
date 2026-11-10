@@ -92,3 +92,10 @@ Recorded by slice 0 of `docs/briefs/phase-3b-snap.md`, from the brief's own text
 3. **Where the snap keeps the collection: per revision**, with a README note on reverts and disk use.
 4. **The snap's grade: `stable`.**
 5. **The backup's `.partial` clean-up stays.**
+
+## Phase 3b, part 2 (the snap): questions
+
+1. **M4A in the snap: allow GPL-2.0-or-later and stage `faad`?** (slice 2, ADR 0085, point 3; not blocking.) The snap's platform has no AAC decoder. The one to stage, GStreamer's `faad` with `libfaad2`, is GPL-2.0-or-later (`/usr/share/doc/libfaad2/copyright`), which is compatible with Rappel's GPL-3.0-or-later but is not in `deny.toml`'s allow-list, so by the brief's rule it was not staged: M4A does not play in the snap ("could not be played"), and the README says so. MP3, Ogg and WAV play.
+   - Option A (done): leave M4A unsupported in the snap.
+   - Option B: add `GPL-2.0-or-later` to `deny.toml`'s allow-list (it is on the FSF's list of GPL-3.0-compatible licences) and stage `gstreamer1.0-plugins-bad` with a `prime` filter keeping only `usr/lib/*/gstreamer-1.0/libgstfaad.so` and `usr/lib/*/libfaad.so*`, the snap's `license:` becoming `GPL-3.0-or-later AND GPL-2.0-or-later`. AAC decoding may also carry patent questions in some countries; Ubuntu ships `faad` in `universe`.
+   - Recommendation: A for 0.4.1 (beta), B later if users ask for M4A.

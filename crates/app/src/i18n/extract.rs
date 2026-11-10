@@ -947,16 +947,30 @@ pub fn merge_desktop(
     language: &str,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<String, String> {
+    merge_desktop_languages(src, &[language], |_, value| lookup(value))
+}
+
+/// [`merge_desktop`] for several languages at once, in the order given:
+/// `lookup(language, text)`. The packaged file is merged with every
+/// language of `po/LINGUAS` in one pass (`build.rs`, ADR 0085), because a
+/// file already merged is no longer a source (`Name[fr]=` is refused).
+pub fn merge_desktop_languages(
+    src: &str,
+    languages: &[&str],
+    lookup: impl Fn(&str, &str) -> Option<String>,
+) -> Result<String, String> {
     let entries = desktop_entries(src)?;
-    let mut out = String::with_capacity(src.len() * 2);
+    let mut out = String::with_capacity(src.len() * (1 + languages.len()));
     for (at, line) in src.lines().enumerate() {
         out.push_str(line);
         out.push('\n');
-        if let Some((_, key, value, _)) = entries.iter().find(|entry| entry.0 == at + 1)
-            && let Some(text) = lookup(value)
-        {
-            for part in [key, "[", language, "]=", &text, "\n"] {
-                out.push_str(part);
+        if let Some((_, key, value, _)) = entries.iter().find(|entry| entry.0 == at + 1) {
+            for language in languages {
+                if let Some(text) = lookup(language, value) {
+                    for part in [key, "[", language, "]=", &text, "\n"] {
+                        out.push_str(part);
+                    }
+                }
             }
         }
     }
@@ -1226,13 +1240,26 @@ pub fn merge_metainfo(
     language: &str,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<String, String> {
+    merge_metainfo_languages(src, &[language], |_, text| lookup(text))
+}
+
+/// [`merge_metainfo`] for several languages at once, in the order given:
+/// `lookup(language, text)`, as [`merge_desktop_languages`].
+pub fn merge_metainfo_languages(
+    src: &str,
+    languages: &[&str],
+    lookup: impl Fn(&str, &str) -> Option<String>,
+) -> Result<String, String> {
     let units = metainfo_units(src)?;
-    let mut out = String::with_capacity(src.len() * 2);
+    let mut out = String::with_capacity(src.len() * (1 + languages.len()));
     let mut from = 0;
     for unit in units {
         out.push_str(&src[from..unit.end]);
         from = unit.end;
-        if let Some(text) = lookup(&unit.text) {
+        for language in languages {
+            let Some(text) = lookup(language, &unit.text) else {
+                continue;
+            };
             let text = text
                 .replace('&', "&amp;")
                 .replace('<', "&lt;")

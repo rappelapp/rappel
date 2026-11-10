@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Copyright 2026 The Rappel Project -->
-<!-- A draft for packaging (ADR 0060): checked by the tests, not installed yet. -->
+<!-- Checked by the tests (ADR 0060); installed with its translations merged by scripts/snap-install.sh (ADR 0085). -->
 <component type="desktop-application">
   <id>io.github.rappelapp.Rappel</id>
   <metadata_license>CC0-1.0</metadata_license>

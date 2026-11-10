@@ -1,7 +1,8 @@
 //! Tests of the desktop integration drafts in `data/` (ADR 0060): the
 //! `.desktop` entry, the `AppStream` metainfo, the icons (ADR 0074) and the
-//! store screenshots. Packaging (Meson, Flatpak) is a later phase; until
-//! then these tests keep the drafts valid and in step with the code:
+//! store screenshots. The snap installs them with their translations merged
+//! by `build.rs` (ADR 0085, tested in `snap_install.rs`); these tests keep
+//! the sources valid and in step with the code:
 //!
 //! - both files pass `desktop-file-validate` and `appstreamcli validate
 //!   --no-net --pedantic`, in English and with the French catalog merged
@@ -27,16 +28,16 @@ use crate::i18n::extract::{self, DESKTOP_KEYS};
 use crate::i18n::po;
 
 /// The repository's root, from the app crate's manifest.
-fn repo() -> PathBuf {
+pub(crate) fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn read(path: &Path) -> String {
+pub(crate) fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
 }
 
 /// The installed program's name: the binary target's.
-const BINARY: &str = env!("CARGO_BIN_NAME");
+pub(crate) const BINARY: &str = env!("CARGO_BIN_NAME");
 
 /// Where the store finds the committed screenshots: the raw files of the
 /// repository at the `v0.4.0` tag (ADR 0083; the tag is made at release).
@@ -97,7 +98,7 @@ fn run(program: &str, args: &[&str], file: &Path) -> (bool, String) {
 }
 
 /// The value of `key` in the `[Desktop Entry]` group.
-fn desktop_value<'a>(src: &'a str, key: &str) -> Option<&'a str> {
+pub(crate) fn desktop_value<'a>(src: &'a str, key: &str) -> Option<&'a str> {
     src.lines()
         .find_map(|line| line.strip_prefix(key)?.strip_prefix('='))
 }
@@ -124,16 +125,22 @@ fn the_desktop_entry_is_valid_in_english_and_french() {
         // desktop-file-validate wants the installed name.
         let path = dir.path().join(format!("{APP_ID}.desktop"));
         std::fs::write(&path, text).expect("the temporary file is writable");
-        let (ok, output) = run("desktop-file-validate", &[], &path);
-        assert!(
-            ok && output.trim().is_empty(),
-            "the desktop entry in {language} is not valid:\n{output}\n{text}"
-        );
+        assert_desktop_entry_valid(&path, language);
     }
 }
 
+/// `desktop-file-validate` passes `path` with nothing to say.
+pub(crate) fn assert_desktop_entry_valid(path: &Path, language: &str) {
+    let (ok, output) = run("desktop-file-validate", &[], path);
+    assert!(
+        ok && output.trim().is_empty(),
+        "the desktop entry in {language} is not valid:\n{output}\n{}",
+        read(path)
+    );
+}
+
 /// What a metainfo text says between `open` and `close`, first found.
-fn between<'a>(src: &'a str, open: &str, close: &str) -> Option<&'a str> {
+pub(crate) fn between<'a>(src: &'a str, open: &str, close: &str) -> Option<&'a str> {
     let start = src.find(open)? + open.len();
     let end = src[start..].find(close)? + start;
     Some(src[start..end].trim())
@@ -225,30 +232,36 @@ fn the_metainfo_is_valid_in_english_and_french() {
     for (text, language) in [(&src, "English"), (&merged, "French")] {
         let path = dir.path().join(format!("{APP_ID}.metainfo.xml"));
         std::fs::write(&path, text).expect("the temporary file is writable");
-        // --no-net: nothing is fetched, not even the screenshots' URLs.
-        let (ok, output) = run(
-            "appstreamcli",
-            &["validate", "--no-net", "--pedantic", "--explain"],
-            &path,
-        );
-        let issues = appstream_issues(&output);
-        // The remark Rappel accepts is always there: seeing it proves the
-        // output is still read right, so no other issue can slip past.
-        assert!(
-            issues
-                .iter()
-                .any(|issue| issue == ACCEPTED_APPSTREAM_ISSUES[0]),
-            "appstreamcli's output no longer reads as expected:\n{output}"
-        );
-        let unexpected: Vec<String> = issues
-            .into_iter()
-            .filter(|issue| !ACCEPTED_APPSTREAM_ISSUES.contains(&issue.as_str()))
-            .collect();
-        assert!(
-            ok && unexpected.is_empty(),
-            "the metainfo in {language} is not valid ({unexpected:?}):\n{output}"
-        );
+        assert_metainfo_valid(&path, language);
     }
+}
+
+/// `appstreamcli validate --no-net --pedantic` passes `path` with no issue
+/// but the accepted one.
+pub(crate) fn assert_metainfo_valid(path: &Path, language: &str) {
+    // --no-net: nothing is fetched, not even the screenshots' URLs.
+    let (ok, output) = run(
+        "appstreamcli",
+        &["validate", "--no-net", "--pedantic", "--explain"],
+        path,
+    );
+    let issues = appstream_issues(&output);
+    // The remark Rappel accepts is always there: seeing it proves the
+    // output is still read right, so no other issue can slip past.
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue == ACCEPTED_APPSTREAM_ISSUES[0]),
+        "appstreamcli's output no longer reads as expected:\n{output}"
+    );
+    let unexpected: Vec<String> = issues
+        .into_iter()
+        .filter(|issue| !ACCEPTED_APPSTREAM_ISSUES.contains(&issue.as_str()))
+        .collect();
+    assert!(
+        ok && unexpected.is_empty(),
+        "the metainfo in {language} is not valid ({unexpected:?}):\n{output}"
+    );
 }
 
 /// The released versions of `CHANGELOG.md`, newest first: (version, date)
