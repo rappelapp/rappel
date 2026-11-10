@@ -87,24 +87,15 @@
     </screenshot>
   </screenshots>
 
-  <!-- Notes for 0.4.0 (ADR 0083). They become its release entry (version 0.4.0, no
-       type, translate="no") in the change that bumps the version and adds [0.4.0]
-       to CHANGELOG.md; the gate needs the changelog and this list to agree, so
-       the entry cannot be added before:
-       "Since 0.1.0, the betas added Markdown cards with formulas drawn as in LaTeX,
-       images and sound, tags, search and All Cards, statistics, export and import
-       (also from Anki), Undo, a phone-sized layout and French. This release adds:
-       card lists grouped by tag on a deck's page, with formulas drawn and a word
-       saying when each card is due; Statistics a month at a time; backups to a
-       folder you choose when Rappel closes; S to start studying, and 3 and 4 to
-       pass; no more stray dots around a card's text; and a newer SQLite that fixes
-       a security flaw when opening a crafted database file. The app ID is now
-       io.github.rappelapp.Rappel; your data stays where it was." -->
-
   <!-- Newest first, one per version of CHANGELOG.md (a test checks).
        A pre-release is written with "~" (0.2.0~beta.1), which AppStream
        sorts before 0.2.0; the notes are not translated (ADR 0060). -->
   <releases>
+    <release version="0.4.0" date="2026-11-10">
+      <description translate="no">
+        <p>Since 0.1.0, the betas added Markdown cards with formulas drawn as in LaTeX, images and sound, tags, search and All Cards, statistics, export and import (also from Anki), Undo, a phone-sized layout and French. This release adds: card lists grouped by tag on a deck's page, with formulas drawn and a word saying when each card is due; Statistics a month at a time; backups to a folder you choose when Rappel closes; S to start studying, and 3 and 4 to pass; no more stray dots around a card's text; and a newer SQLite that fixes a security flaw when opening a crafted database file. The app ID is now io.github.rappelapp.Rappel; your data stays where it was.</p>
+      </description>
+    </release>
     <release version="0.4.0~beta.1" date="2026-11-03" type="development">
       <description translate="no">
         <p>Select cards on a deck's page, move a card to another deck, merge decks and archive them, each with Undo. Study the cards of a tag across decks, or practise a deck or a tag without rescheduling anything. The card editor says when another card has the same front. Exports too large to import again say so first, and checking an import can be cancelled.</p>

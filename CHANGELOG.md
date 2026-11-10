@@ -6,6 +6,10 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-10
+
+The first stable release since 0.1.0. It gathers the betas (Markdown cards with formulas, images and sound, tags, search and All Cards, statistics, export and import also from Anki, Undo, a phone-sized layout and French) and phase 3b's polish: card lists grouped by tag, Statistics a month at a time, backups to a folder you choose, S to start studying, a newer SQLite, and the new app ID `io.github.rappelapp.Rappel`. Your data stays where it was. There is no Snap yet (ADR 0082).
+
 ### Added
 - **S starts studying, and 3 and 4 pass.** On a deck's page, S does what the Study button does; on the deck list, S on a focused deck starts studying that deck without opening it. The session starts when S is let go, so holding it never suspends cards; and while studying, holding S suspends one card, not one after another. While studying or practising, 3 and 4 (and the keypad's) pass like 2 does, as Anki's Good and Easy. None of them acts in a text field or with Ctrl, Alt or Shift. The Study button's tooltip says "Study (S)", and Keyboard Shortcuts lists Start Studying and Pass: 2, 3, 4 (ADR 0081).
 - **Automatic backups to a folder you choose.** In Preferences, under Automatic Backups, choose a folder (a synced folder or a USB disk, say). Each day Rappel closes after a change, it saves a normal export there, named `Rappel backup 2026-11-09.rappel`, and keeps the 14 newest; it never touches any other file in the folder. The window closes at once and the backup finishes in the background (at most five minutes). If it fails (the folder is gone, the disk is full), closing is not held up, nothing is lost, the next close tries again, and the next start says what went wrong. Off by default (ADR 0080, #127).
@@ -368,7 +372,8 @@ The beta of phase 2, media and mobile. Cards can show images and play audio, and
 ### Removed
 - `Store::due_cards` and `Store::new_cards` in `cards-core`: unused since `Store::study_input`.
 
-[Unreleased]: https://github.com/rappelapp/rappel/compare/v0.4.0-beta.1...HEAD
+[Unreleased]: https://github.com/rappelapp/rappel/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rappelapp/rappel/compare/v0.4.0-beta.1...v0.4.0
 [0.4.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.3.0-beta.1...v0.4.0-beta.1
 [0.3.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.2.0-beta.1...v0.3.0-beta.1
 [0.2.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.2.0-alpha.3...v0.2.0-beta.1
