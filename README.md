@@ -77,7 +77,7 @@ Rappel uses gettext, laid out as GNOME projects are (ADR 0059): `po/LINGUAS` lis
 
 ## Desktop integration
 
-Drafts of the files that make Rappel look like a GNOME app once installed are in [`data/`](data/) (ADR 0060): the desktop entry (`io.github.rappelapp.Rappel.desktop.in`), the AppStream metainfo for software stores (`io.github.rappelapp.Rappel.metainfo.xml.in`: description, releases, content rating, screenshots), the app icon and its symbolic icon in `data/icons/` (ADR 0074), and the store screenshots in `data/screenshots/`. Nothing installs them yet: packaging (a Meson build that merges their translations and installs them, a Snap (planned for 3b, but it stopped at the image sandbox, ADR 0082, and awaits a maintainer decision; 0.4.0 has no Snap), and a self-hosted Flatpak with a manifest written by hand) comes in phases 3b (the Snap, ending in 0.4.0) and 3c (the Flatpak, ending in 1.0).
+The files that make Rappel look like a GNOME app once installed are in [`data/`](data/) (ADR 0060): the desktop entry (`io.github.rappelapp.Rappel.desktop.in`), the AppStream metainfo for software stores (`io.github.rappelapp.Rappel.metainfo.xml.in`: description, releases, content rating, screenshots), the app icon and its symbolic icon in `data/icons/` (ADR 0074), and the store screenshots in `data/screenshots/`. `build.rs` merges their translations and writes them without `.in` into its output folder, and `scripts/snap-install.sh DESTDIR [PREFIX]` installs them with the binary and the translations (ADR 0085); the snap uses it (below). A self-hosted Flatpak, with a manifest written by hand, comes in phase 3c.
 
 - **Validate them**: the gate does (`cargo test -p rappel desktop_files`), with `desktop-file-validate` and `appstreamcli validate --no-net --pedantic`, in English and with the French translation merged in. Their texts are in `po/rappel.pot` like the app's.
 - **A new release** needs its `<release>` in the metainfo (newest first, a pre-release written `0.3.0~beta.1`); the gate fails while `CHANGELOG.md` has a version the metainfo lacks. The screenshot URLs name the release's tag (`…/rappel/v0.4.0/…`, ADR 0083): bump it in the metainfo and in `SCREENSHOT_URL` of `desktop_files.rs` (a test checks it once the crate has a release version). The 0.4.0 entry is in the metainfo (prepared, not tagged).
@@ -89,6 +89,33 @@ Drafts of the files that make Rappel look like a GNOME app once installed are in
   ```
   The other shots use the same flags with `--size`, `--deck` (an id from the `decks` table) and these steps (ADR 0083 has the details): `review`: Calculus, `--steps "wait:5 key:s wait:2 key:space wait:1 shot:review"`; `deck`: the "SIC 3101 – Probabilités" deck, `wait:5 shot:deck`; `all-cards`: `wait:5 key:ctrl+f wait:2 click:850,28 wait:1 shot:allcards` (the click moves the pointer off the list); `statistics`: `wait:5 click:932,28 wait:1 click:838,79 wait:2 shot:statistics`; `editor`: Calculus, `wait:5 key:ctrl+n wait:2 type:What%20is%20the%20derivative%20of%20$\sin(x^2)$? click:310,450 type:$2x\cos(x^2)$,%20by%20the%20**chain%20rule** click:310,630 type:derivatives, wait:1 shot:editor`; `phone`: `--size 360x640`, the Flags deck, `wait:5 key:s wait:2 key:space wait:1 shot:phone`.
   then copy the shots from `docs/briefs/screenshots/` to `data/screenshots/` (`convert … -strip` keeps them small). The harness has no compositor, so the windows have no shadow; for a Flathub submission, retake them on GNOME with Alt+Print.
+
+## The snap
+
+`snap/snapcraft.yaml` packages Rappel as a strictly confined snap (`core26`, the `gnome` extension; ADR 0082, ADR 0085). It may use the desktop, `audio-playback` and its own name on the session bus, nothing else: no home folder, no removable media, no network. Files outside its own folder are reached only through the file chooser (the portal). CI builds it (`.github/workflows/snap.yml`, on `v*` tags, by hand, and on pull requests that change the packaging) and keeps the `.snap` as a workflow artifact; nothing is published from CI.
+
+- **Install a `.snap` from CI** (a local file, not from the store, hence `--dangerous`):
+  ```sh
+  gh run list --workflow snap.yml                  # find the run
+  gh run download <run id> --name rappel_<version>_amd64.snap --dir /tmp/rappel-snap
+  sudo snap install --dangerous /tmp/rappel-snap/rappel_<version>_amd64.snap
+  snap connections rappel                           # the desktop set, audio-playback and the dbus slot
+  ```
+  To build it yourself: `snapcraft pack` (needs LXD; `--destructive-mode` only on Ubuntu 26.04).
+- **Where the data lives:** `~/snap/rappel/current/.local/share/rappel` (the snap cannot see `~/.local/share/rappel`), so the snap starts with an empty collection.
+- **Copy your data from the native build**, once, with both apps closed:
+  ```sh
+  # 1. Quit Rappel (native). 2. Start the snap once and close it, so the folder exists.
+  snap run rappel   # then close the window
+  # 3. With both closed:
+  mkdir -p ~/snap/rappel/current/.local/share
+  cp -a ~/.local/share/rappel ~/snap/rappel/current/.local/share/
+  ```
+  Or Export… in the native app and Import… in the snap.
+- **Reverts and disk use:** the collection is kept per snap revision. snapd copies `~/snap/rappel/<revision>/` at each refresh and keeps the copies of the revisions it retains (two by default on desktops), so `snap revert` brings back the collection as it was at that refresh, before any upgrade of the database. But reviews and edits made since then stay only in the newer revision's folder, which snapd deletes when it drops that revision: before reverting, Export… the collection, and Import… it after. The media folder is copied too, once per kept revision.
+- **Audio:** MP3, Ogg (Opus, Vorbis) and WAV play. **M4A does not play in the snap**: its AAC decoder (`faad`) is not included, because its licence (GPL-2.0-or-later) is not yet on the project's allowed list (ADR 0085).
+- **Images:** in its own snap only, Rappel runs glycin's image loader without bubblewrap, which strict confinement cannot run; the snap's confinement is the boundary (ADR 0055, amendment). The start-up line saying which image-loader mode is in use appears only with `RUST_LOG=rappel=info`: `RUST_LOG=rappel=info snap run rappel`.
+- **French:** `LANGUAGE=fr snap run rappel` (the catalogs are inside the snap, `RAPPEL_LOCALEDIR`).
 
 ## Recovering your data
 

@@ -10,6 +10,8 @@ mod i18n;
 mod key_file;
 mod pages;
 mod render;
+#[cfg(test)]
+mod snap_install;
 mod startup;
 mod state;
 #[cfg(test)]

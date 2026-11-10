@@ -115,11 +115,12 @@ pub fn translated(
 }
 
 /// Source files that only tests compile (`#[cfg(test)] mod …;`).
-const TEST_ONLY_FILES: [&str; 5] = [
+const TEST_ONLY_FILES: [&str; 6] = [
     "crates/app/src/testing.rs",
     "crates/app/src/gst_env/tests.rs",
     "crates/app/src/ui_files.rs",
     "crates/app/src/desktop_files.rs",
+    "crates/app/src/snap_install.rs",
     "crates/app/src/dialogs/shortcuts.rs",
 ];
 

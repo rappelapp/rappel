@@ -1,7 +1,10 @@
 //! Compiles Blueprint files to `GtkBuilder` XML, then bundles them into a
 //! gresource that `main.rs` embeds in the binary; and compiles each
 //! language of `po/LINGUAS` to `<OUT_DIR>/locale/<lang>/LC_MESSAGES/rappel.mo`,
-//! where a debug build finds its translations (ADR 0059).
+//! where a debug build finds its translations (ADR 0059); and merges those
+//! translations into the desktop entry and the metainfo of the top-level
+//! `data/` folder, written without `.in` to `<OUT_DIR>/data/`, which
+//! `scripts/snap-install.sh` installs (ADR 0085).
 //!
 //! Every input is a tracked build input (#62): each `data/*.blp`, the
 //! `data` directory itself (so a new or deleted file counts), and every file
@@ -35,6 +38,16 @@ use std::{
 )]
 mod po;
 
+// The merge of translations into the desktop files, shared with the tests,
+// which validate the same merge (ADR 0060, ADR 0085).
+#[path = "src/i18n/extract.rs"]
+#[expect(
+    dead_code,
+    reason = "the build only merges the desktop files; the scanners and the .pot and .po \
+              builders serve the tests"
+)]
+mod extract;
+
 const DATA_DIR: &str = "data";
 const MANIFEST: &str = "data/resources.gresource.xml";
 const TARGET: &str = "rappel.gresource";
@@ -42,6 +55,8 @@ const TARGET: &str = "rappel.gresource";
 const PO_DIR: &str = "../../po";
 /// The gettext domain (`i18n::DOMAIN`).
 const DOMAIN: &str = "rappel";
+/// The desktop integration files (ADR 0060), at the repository's root.
+const DESKTOP_DATA_DIR: &str = "../../data";
 
 fn main() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("cargo always sets OUT_DIR"));
@@ -85,18 +100,76 @@ fn main() {
         }
     }
 
-    compile_catalogs(&out_dir.join("locale"));
+    let catalogs = compile_catalogs(&out_dir.join("locale"));
+    merge_desktop_files(&catalogs, &out_dir.join("data"));
+}
+
+/// A language's translations: (language, its `.po` entries).
+type Catalog = (String, Vec<po::Entry>);
+
+/// Each `data/*.desktop.in` and `data/*.metainfo.xml.in` of the
+/// repository's root with every language of `catalogs` merged in, as
+/// `msgfmt --desktop` and `msgfmt --xml` would, written without `.in` to
+/// `target_dir`: what packaging installs (ADR 0085). Only translated,
+/// non-fuzzy messages without a context or a plural are used, as `msgfmt`.
+fn merge_desktop_files(catalogs: &[Catalog], target_dir: &Path) {
+    let source_dir = Path::new(DESKTOP_DATA_DIR);
+    println!("cargo:rerun-if-changed={DESKTOP_DATA_DIR}");
+    let languages: Vec<&str> = catalogs
+        .iter()
+        .map(|(language, _)| language.as_str())
+        .collect();
+    let lookup = |language: &str, text: &str| {
+        catalogs
+            .iter()
+            .find(|(name, _)| name == language)?
+            .1
+            .iter()
+            .find(|entry| entry.context.is_none() && entry.plural.is_none() && entry.id == text)
+            .filter(|entry| !entry.is_fuzzy() && entry.is_translated())
+            .map(|entry| entry.strs[0].clone())
+    };
+    let mut sources: Vec<PathBuf> = fs::read_dir(source_dir)
+        .expect("the repository's data/ folder is part of the source tree")
+        .map(|entry| entry.expect("entries of data/ are readable").path())
+        .collect();
+    sources.sort();
+    fs::create_dir_all(target_dir).expect("OUT_DIR is writable");
+    for source in sources {
+        let name = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let merge = if name.ends_with(".desktop.in") {
+            extract::merge_desktop_languages
+        } else if name.ends_with(".metainfo.xml.in") {
+            extract::merge_metainfo_languages
+        } else {
+            continue;
+        };
+        println!("cargo:rerun-if-changed={}", source.display());
+        let text =
+            fs::read_to_string(&source).unwrap_or_else(|err| panic!("{}: {err}", source.display()));
+        let merged = merge(&text, &languages, lookup)
+            .unwrap_or_else(|err| panic!("{}: {err}", source.display()));
+        let installed = name
+            .strip_suffix(".in")
+            .expect("the name ends with .in, checked above");
+        fs::write(target_dir.join(installed), merged).expect("OUT_DIR is writable");
+    }
 }
 
 /// Compiles `po/<lang>.po` for each language of `po/LINGUAS` into
 /// `<locale_dir>/<lang>/LC_MESSAGES/rappel.mo`, as `msgfmt` would (without
-/// GNU gettext's tools, which are not needed to build Rappel).
-fn compile_catalogs(locale_dir: &Path) {
+/// GNU gettext's tools, which are not needed to build Rappel). Returns the
+/// catalogs read, in `po/LINGUAS` order.
+fn compile_catalogs(locale_dir: &Path) -> Vec<Catalog> {
     let po_dir = Path::new(PO_DIR);
     println!("cargo:rerun-if-changed={PO_DIR}");
     let linguas = po_dir.join("LINGUAS");
     println!("cargo:rerun-if-changed={}", linguas.display());
     let languages = fs::read_to_string(&linguas).expect("po/LINGUAS is part of the source tree");
+    let mut catalogs = Vec::new();
     for language in languages
         .lines()
         .map(str::trim)
@@ -110,7 +183,9 @@ fn compile_catalogs(locale_dir: &Path) {
         let dir = locale_dir.join(language).join("LC_MESSAGES");
         fs::create_dir_all(&dir).expect("OUT_DIR is writable");
         fs::write(dir.join(format!("{DOMAIN}.mo")), po::mo(&entries)).expect("OUT_DIR is writable");
+        catalogs.push((language.to_owned(), entries));
     }
+    catalogs
 }
 
 /// `glib-compile-resources` with `source_dirs` searched in order.
