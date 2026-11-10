@@ -82,3 +82,13 @@ None of these was a stop condition: the brief pre-approved the migration (0012),
 4. **The snap's grade**, for when packaging resumes. The channel is already decided (brief, 9 Nov: 0.4.x goes to beta; stable waits for 1.0). Recommendation: `grade: stable`. The store refuses `devel` grade on candidate and stable, so `stable` keeps the later move to stable a channel change only, and the channel, not the grade, says "beta".
 
 5. **Confirm that the automatic backup may remove its own leftover partial files** (slice 9, #141, ADR 0084; outside the letter of the brief's pre-approved deletion rule, which allows deleting "regular files of its own exact pattern beyond the 14 newest"). *What it deletes:* only hidden files named exactly as the job names its partial files (`.Rappel backup YYYY-MM-DD.rappel.<16 lowercase hex digits>.partial`, with a real date), only regular files (checked without following links, and again just before deleting), only when not modified for at least 24 hours, and only after a backup succeeded or today's backup was found already there; a failed run deletes none. Links, folders, the user's own `.partial` files and every other name stay. *Why it is safe:* a running backup is cut off after five minutes and 30 seconds, so a day-old partial file is not being written; the name has 64 random bits, so it is never a user's file; nothing outside the folder can be reached (`unlinkat` on the folder's handle never follows a link). *Why it is needed:* a backup killed by a shutdown or a crash leaves its partial file, as large as a backup; on a computer often shut down while Rappel closes, one piles up per day without bound. *The alternative:* leave them, and document in the README and the Preferences group's description that `.Rappel backup ….partial` files may be deleted by hand. Recommendation: keep the rule (it is in #141, behind this question); if you prefer the alternative, the change is to remove `remove_stale_partials` and its two calls.
+
+## Phase 3b, part 2 (the snap): answers
+
+Recorded by slice 0 of `docs/briefs/phase-3b-snap.md`, from the brief's own text.
+
+1. **The image sandbox in the snap: A** (maintainer, 10 Nov). Inside Rappel's own snap only, the image loader runs without bubblewrap; the snap's strict confinement is the boundary. Sizes, timeout and the SVG refusal stay. Outside the snap nothing changes (ADR 0055). Option B (a snap mode in glycin with seccomp and a memory limit) is for later.
+2. **The `dbus` slot for `io.github.rappelapp.Rappel`: allowed.**
+3. **Where the snap keeps the collection: per revision**, with a README note on reverts and disk use.
+4. **The snap's grade: `stable`.**
+5. **The backup's `.partial` clean-up stays.**
