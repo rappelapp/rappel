@@ -90,7 +90,8 @@ impl Store {
     /// # Errors
     /// [`Error::DeckNotFound`](crate::Error::DeckNotFound) for a missing or
     /// deleted deck; SQLite errors.
-    pub fn first_activity_at(&self, scope: Scope<'_>) -> Result<Option<i64>> {
+    #[cfg(test)]
+    pub(crate) fn first_activity_at(&self, scope: Scope<'_>) -> Result<Option<i64>> {
         let tx = self.conn.unchecked_transaction()?;
         if let Scope::Deck(id) = scope {
             ensure_live_deck(&tx, id)?;

@@ -91,6 +91,7 @@ impl Reason {
             Self::Failed(FailureKind::NotAllowed) => "not-allowed",
             Self::Failed(FailureKind::TooLarge) => "too-large",
             Self::Failed(FailureKind::NameTaken) => "name-taken",
+            Self::Failed(FailureKind::InsideDataDir) => "inside-data-dir",
             Self::Failed(FailureKind::Other) => "other",
             // Cancelled by the time cap: the same as timed out.
             Self::TimedOut | Self::Failed(FailureKind::Cancelled) => "timed-out",
@@ -111,6 +112,7 @@ impl Reason {
             FailureKind::NotAllowed,
             FailureKind::TooLarge,
             FailureKind::NameTaken,
+            FailureKind::InsideDataDir,
         ]
         .map(Self::Failed)
         .into_iter()
@@ -226,19 +228,21 @@ fn load_or_why(data_dir: &Path) -> Result<Record, String> {
     read
 }
 
-/// Whether `folder` is inside `data_dir` (both with their links resolved):
-/// a backup there would be lost with the data it backs up, and could land
-/// in the media or backups folders Rappel manages itself.
-pub fn inside_data_dir(folder: &Path, data_dir: &Path) -> bool {
-    let data_dir = std::fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
-    folder.starts_with(data_dir)
-}
-
 /// The toast at the start when `auto-backup.ini` is there but cannot be
 /// read: backups are off until the folder is chosen again.
 pub fn unreadable_text() -> String {
+    // Translators: a toast at the start: what is before ":" is its title (at most 24 characters), the rest is behind Details.
     gettext(
         "Automatic backups off: their setting could not be read. Choose the folder again in Preferences.",
+    )
+}
+
+/// The toast when the folder chosen in Preferences is inside the data
+/// directory (`rappel_core::auto_backup::inside_data_dir`).
+pub fn inside_data_dir_text() -> String {
+    // Translators: a toast: what is before ":" is its title (at most 24 characters), the rest is behind Details.
+    gettext(
+        "Folder not allowed: a backup inside Rappel’s data folder would be lost with it. Choose a folder outside it.",
     )
 }
 
@@ -365,6 +369,9 @@ pub fn reason_text(reason: Reason) -> String {
         Reason::Failed(FailureKind::NameTaken) => {
             gettext("something that is not a backup has today’s backup’s name in the backup folder")
         }
+        Reason::Failed(FailureKind::InsideDataDir) => gettext(
+            "the backup folder is inside Rappel’s data folder, where a backup would be lost with the data; choose another one in Preferences",
+        ),
         Reason::Failed(FailureKind::Other) | Reason::Stopped => {
             gettext("something unexpected happened")
         }
@@ -749,23 +756,6 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_inside_the_data_directory_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let data = dir.path().join("data");
-        std::fs::create_dir_all(data.join("backups")).unwrap();
-        let data = std::fs::canonicalize(&data).unwrap();
-        assert!(inside_data_dir(&data, &data));
-        assert!(inside_data_dir(&data.join("backups"), &data));
-        assert!(inside_data_dir(&data.join("media"), &data));
-        assert!(!inside_data_dir(&dir.path().join("data-backups"), &data));
-        assert!(!inside_data_dir(dir.path(), &data));
-        // Through a link to the data directory: still inside.
-        let link = dir.path().join("link");
-        std::os::unix::fs::symlink(&data, &link).unwrap();
-        assert!(inside_data_dir(&data.join("backups"), &link));
-    }
-
-    #[test]
     fn an_unreadable_setting_is_said() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(load_or_why(dir.path()), Ok(Record::default()));
@@ -830,5 +820,26 @@ mod tests {
             failed_text(Reason::Unfinished, ""),
             "Automatic backup failed: Rappel was stopped before it finished"
         );
+        assert!(
+            failed_text(Reason::Failed(FailureKind::InsideDataDir), "")
+                .starts_with("Automatic backup failed: the backup folder is inside")
+        );
+        assert_eq!(
+            Reason::from_code(Reason::Failed(FailureKind::InsideDataDir).code()),
+            Reason::Failed(FailureKind::InsideDataDir)
+        );
+    }
+
+    /// The refusal of a folder inside the data directory has a title that
+    /// fits beside Details at 360 px (ADR 0058), in English and French.
+    #[test]
+    fn the_refused_folder_has_a_short_title() {
+        let title = |text: String| match crate::ui::toast::toast_text(&text) {
+            crate::ui::toast::ToastText::Detailed { title, .. } => title,
+            crate::ui::toast::ToastText::Whole(whole) => whole,
+        };
+        assert_eq!(title(inside_data_dir_text()), "Folder not allowed");
+        let french = crate::i18n::tests::in_french(|| title(inside_data_dir_text()));
+        assert_eq!(french, "Dossier refusé");
     }
 }

@@ -2425,6 +2425,64 @@ mod tests {
         });
     }
 
+    /// The keycode of a press is recorded before the Suspend shortcut acts
+    /// on it (carry-over G, ADR 0084): the controller that records it is
+    /// in the capture phase, which GTK runs from the window down to the
+    /// target before any bubble-phase controller runs back up
+    /// (`gtk_propagate_event_internal`, gtk/gtkmain.c), and the page's
+    /// shortcuts are in the bubble phase; recording returns Proceed, so the
+    /// shortcut still gets the press. GTK 4 has no public way to inject a
+    /// key event, so the controllers are found on the page and the
+    /// recorder's `key-pressed` is emitted as GTK emits it.
+    #[test]
+    fn the_keycode_is_recorded_before_the_shortcut_acts() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, _ids) = page_of(2);
+            let _window = in_window(&page);
+            let controllers: Vec<gtk::EventController> = page
+                .observe_controllers()
+                .iter::<glib::Object>()
+                .filter_map(|c| c.ok()?.downcast().ok())
+                .collect();
+            let shortcuts: Vec<&gtk::EventController> = controllers
+                .iter()
+                .filter(|c| c.is::<gtk::ShortcutController>())
+                .filter(|c| c.propagation_phase() == gtk::PropagationPhase::Bubble)
+                .collect();
+            assert!(
+                !shortcuts.is_empty(),
+                "the shortcuts are in the bubble phase"
+            );
+            assert!(
+                controllers
+                    .iter()
+                    .filter(|c| c.is::<gtk::ShortcutController>())
+                    .all(|c| c.propagation_phase() != gtk::PropagationPhase::Capture),
+                "no shortcut acts in the capture phase"
+            );
+            let recorders: Vec<&gtk::EventController> = controllers
+                .iter()
+                .filter(|c| c.is::<gtk::EventControllerKey>())
+                .filter(|c| c.propagation_phase() == gtk::PropagationPhase::Capture)
+                .collect();
+            page.imp().pressed_code.set(0);
+            let mut proceeds = true;
+            for recorder in &recorders {
+                let stop: bool = recorder.emit_by_name(
+                    "key-pressed",
+                    &[&gtk::gdk::Key::s, &S_CODE, &gtk::gdk::ModifierType::empty()],
+                );
+                proceeds &= !stop;
+            }
+            assert_eq!(
+                page.imp().pressed_code.get(),
+                S_CODE,
+                "recorded in the capture phase"
+            );
+            assert!(proceeds, "the press goes on to the shortcuts");
+        });
+    }
+
     /// A held S repeats long after the settle time: only a press that
     /// follows a release suspends (ADR 0081), one card per press.
     #[test]

@@ -723,3 +723,465 @@ fn a_cancelled_backup_leaves_nothing() {
     assert_eq!(failure.kind, FailureKind::Cancelled, "{failure}");
     assert_eq!(env.names(), Vec::<String>::new());
 }
+
+// Hardening round 5 (ADR 0084): the backup folder attacked.
+
+/// A leap day is a day like any other: one backup on it, one the day
+/// after, and "flown west" counts it as a day.
+#[test]
+fn a_leap_day_is_a_day_like_any_other() {
+    let folder = Path::new("/backups");
+    let on = |text: &str| LastBackup {
+        date: date(text),
+        folder: folder.to_path_buf(),
+        fingerprint: None,
+    };
+    assert!(due(Some(&on("2024-02-28")), folder, date("2024-02-29")));
+    assert!(!due(Some(&on("2024-02-29")), folder, date("2024-02-29")));
+    assert!(due(Some(&on("2024-02-29")), folder, date("2024-03-01")));
+    // Two days ahead across the leap day: flown west, not again.
+    assert!(!due(Some(&on("2024-03-01")), folder, date("2024-02-28")));
+    // Three days ahead across it: a clock set wrong.
+    assert!(due(Some(&on("2024-03-02")), folder, date("2024-02-28")));
+    // In a common year the same dates are a day closer.
+    assert!(!due(Some(&on("2023-03-02")), folder, date("2023-02-28")));
+    assert_eq!(
+        file_name(date("2024-02-29")),
+        "Rappel backup 2024-02-29.rappel"
+    );
+    assert_eq!(
+        LocalDate::from_utc_ms(utc(2024, 2, 28, 23, 30), 3600),
+        Some(date("2024-02-29"))
+    );
+    assert_eq!(
+        LocalDate::from_utc_ms(utc(2100, 2, 28, 23, 30), 3600),
+        Some(date("2100-03-01")),
+        "2100 is not a leap year"
+    );
+}
+
+/// The job's own partial files are known by their exact pattern: the
+/// names it makes, and nothing else.
+#[test]
+fn a_partial_file_is_known_by_its_exact_name() {
+    for _ in 0..50 {
+        let name = partial_name(&file_name(date("2024-02-29"))).unwrap();
+        assert!(is_partial_name(&name), "{name}");
+    }
+    assert!(is_partial_name(
+        ".Rappel backup 2026-11-09.rappel.0123456789abcdef.partial"
+    ));
+    for name in [
+        "",
+        ".partial",
+        "notes.partial",
+        "Rappel backup 2026-11-09.rappel",
+        "Rappel backup 2026-11-09.rappel.partial",
+        "Rappel backup 2026-11-09.rappel.0123456789abcdef.partial",
+        ".Rappel backup 2026-11-09.rappel.partial",
+        ".Rappel backup 2026-11-09.rappel..partial",
+        ".Rappel backup 2026-11-09.rappel.0123456789ABCDEF.partial",
+        ".Rappel backup 2026-11-09.rappel.0123456789abcde.partial",
+        ".Rappel backup 2026-11-09.rappel.0123456789abcdef0.partial",
+        ".Rappel backup 2026-11-09.rappel.0123456789abcdeg.partial",
+        ".Rappel backup 2026-11-09.rappel.0123456789abcdef.partial~",
+        ".Rappel backup 2026-11-09.rappel.0123456789abcdef.Partial",
+        ".Rappel backup 2026-02-30.rappel.0123456789abcdef.partial",
+        ".Rappel backup 2026-11-09.cards.0123456789abcdef.partial",
+        ".Rappel backup 2026-11-09.0123456789abcdef.partial",
+        ".rappel backup 2026-11-09.rappel.0123456789abcdef.partial",
+        "..Rappel backup 2026-11-09.rappel.0123456789abcdef.partial",
+        ".Rappel backup 2026-11-09.rappel.0123456789abcdef.partial/x",
+        ".Rappel backup 2026-11-09 (1).rappel.0123456789abcdef.partial",
+        ".Rappel backup ２０２６-11-09.rappel.0123456789abcdef.partial",
+    ] {
+        assert!(!is_partial_name(name), "{name:?}");
+    }
+}
+
+#[test]
+fn only_partial_files_left_for_a_day_are_stale() {
+    let own = ".Rappel backup 2026-11-09.rappel.0123456789abcdef.partial".to_owned();
+    let now = 2_000_000_000;
+    let at = |modified: i64| stale_partials(&[(own.clone(), modified)], now);
+    let none: Vec<String> = Vec::new();
+    assert_eq!(at(now - STALE_PARTIAL_SECONDS), vec![own.clone()]);
+    assert_eq!(at(now - STALE_PARTIAL_SECONDS - 1), vec![own.clone()]);
+    assert_eq!(at(0), vec![own.clone()]);
+    assert_eq!(at(i64::MIN), vec![own.clone()], "no overflow");
+    assert_eq!(at(now - STALE_PARTIAL_SECONDS + 1), none);
+    assert_eq!(at(now), none);
+    // A time ahead of the clock (set wrong) is never stale.
+    assert_eq!(at(now + 1), none);
+    assert_eq!(at(i64::MAX), none);
+    // Another name, however old, is never stale.
+    assert_eq!(
+        stale_partials(&[("notes.partial".to_owned(), 0)], now),
+        none
+    );
+}
+
+/// Sets the modification time of `path` (not following a link) to `secs`
+/// after 1970.
+fn set_modified(path: &Path, secs: i64) {
+    let time = rustix::fs::Timestamps {
+        last_access: rustix::fs::Timespec {
+            tv_sec: secs,
+            tv_nsec: 0,
+        },
+        last_modification: rustix::fs::Timespec {
+            tv_sec: secs,
+            tv_nsec: 0,
+        },
+    };
+    rustix::fs::utimensat(rustix::fs::CWD, path, &time, AtFlags::SYMLINK_NOFOLLOW).unwrap();
+}
+
+/// A backup killed by a shutdown or a crash leaves its partial file
+/// (nothing in the process is left to remove it). Before round 5 these
+/// were never removed, so a computer often shut down while a backup ran
+/// gathered one (as large as a backup) per day without bound. Now each
+/// backup first removes the job's own partial files left for a day:
+/// regular files of the exact pattern only, never a link, a folder, a
+/// user's file or a partial file of a backup that may still run.
+#[test]
+fn partial_files_left_by_killed_backups_are_removed_after_a_day() {
+    let env = Env::new();
+    let folder = env.folder();
+    let old = now_seconds() - 2 * STALE_PARTIAL_SECONDS;
+    // A thousand killed backups, one a day.
+    let mut killed = Vec::new();
+    for i in 0..1000 {
+        let name = partial_name(&file_name(date("2026-11-09"))).unwrap();
+        fs::write(folder.join(&name), format!("killed {i}")).unwrap();
+        set_modified(&folder.join(&name), old - i);
+        killed.push(name);
+    }
+    let recent = partial_name(&file_name(date("2026-11-09"))).unwrap();
+    fs::write(folder.join(&recent), b"maybe still running").unwrap();
+    let mine = "my notes.partial";
+    fs::write(folder.join(mine), b"the user's").unwrap();
+    set_modified(&folder.join(mine), old);
+    let outside = env.tmp.path().join("precious");
+    fs::write(&outside, b"precious").unwrap();
+    set_modified(&outside, old);
+    let link = ".Rappel backup 2026-11-01.rappel.00000000000000aa.partial";
+    symlink(&outside, folder.join(link)).unwrap();
+    set_modified(&folder.join(link), old);
+    let subfolder = ".Rappel backup 2026-11-01.rappel.00000000000000bb.partial";
+    fs::create_dir(folder.join(subfolder)).unwrap();
+    set_modified(&folder.join(subfolder), old);
+
+    let Ok(Outcome::Written {
+        file_name: name, ..
+    }) = env.run("2026-11-10", None)
+    else {
+        panic!("written");
+    };
+    let mut expected = vec![
+        name,
+        recent,
+        mine.to_owned(),
+        link.to_owned(),
+        subfolder.to_owned(),
+    ];
+    expected.sort();
+    assert_eq!(env.names(), expected);
+    assert_eq!(fs::read(&outside).unwrap(), b"precious");
+    // A day later the recent one is old too, and goes at the next backup,
+    // even one that finds today's backup already there.
+    let recent = expected
+        .iter()
+        .find(|n| {
+            is_partial_name(n) && fs::symlink_metadata(folder.join(n)).is_ok_and(|m| m.is_file())
+        })
+        .unwrap()
+        .clone();
+    set_modified(&folder.join(&recent), old);
+    assert_eq!(env.run("2026-11-10", None), Ok(Outcome::AlreadyThere));
+    assert!(!env.names().contains(&recent));
+}
+
+/// The folder inside the data directory, however it is named: refused by
+/// the app when chosen, and by the backup itself for a setting saved
+/// before that check, a data directory moved since, or a path through
+/// links, `.` or `..`. Nothing is written in it.
+#[test]
+fn a_folder_inside_the_data_directory_is_refused() {
+    let env = Env::new();
+    let data = fs::canonicalize(env.data()).unwrap();
+    let inside = data.join("my backups");
+    fs::create_dir(&inside).unwrap();
+    let data_link = env.tmp.path().join("data link");
+    symlink(&data, &data_link).unwrap();
+    let dotted = env.tmp.path().join("backups/../data/./my backups");
+    let today = date("2026-11-09");
+    let never = AtomicBool::new(false);
+    for folder in [
+        data.clone(),
+        data.join("backups"),
+        data.join("media"),
+        inside.clone(),
+        data_link.join("my backups"),
+        dotted.clone(),
+    ] {
+        assert!(inside_data_dir(&folder, &data), "{}", folder.display());
+        assert!(inside_data_dir(&folder, &data_link), "{}", folder.display());
+        if folder.is_dir() {
+            let failure = run(&data_link, &folder, today, None, &never).unwrap_err();
+            assert_eq!(failure.kind, FailureKind::InsideDataDir, "{failure}");
+        }
+    }
+    assert_eq!(fs::read_dir(&inside).unwrap().count(), 0, "nothing written");
+    // Beside it, or above it: not inside.
+    assert!(!inside_data_dir(&env.folder(), &data));
+    assert!(!inside_data_dir(env.tmp.path(), &data));
+    assert!(!inside_data_dir(
+        &env.tmp.path().join("data-backups"),
+        &data
+    ));
+    // A data directory moved to be above the folder (`RAPPEL_DATA_DIR`
+    // pointed at a parent of it since): refused at the next backup.
+    assert!(inside_data_dir(&env.folder(), env.tmp.path()));
+    let failure = run(&env.data(), &env.folder(), today, None, &never);
+    assert!(failure.is_ok(), "the real data directory is beside it");
+    // A data directory that holds the folder (as `RAPPEL_DATA_DIR`
+    // pointed at a parent of it since): `run` gets to the folder and
+    // refuses it.
+    let parent = tempfile::tempdir().unwrap();
+    let held = parent.path().join("Backups");
+    fs::create_dir(&held).unwrap();
+    let mut other = Store::open(parent.path()).unwrap();
+    let deck = other.create_deck("Other").unwrap();
+    other.add_card(&deck.id, "a", "b").unwrap();
+    drop(other);
+    let failure = run(parent.path(), &held, today, None, &never).unwrap_err();
+    assert_eq!(failure.kind, FailureKind::InsideDataDir, "{failure}");
+    assert_eq!(fs::read_dir(&held).unwrap().count(), 0, "nothing written");
+    let dir = open_folder(&env.folder()).unwrap();
+    assert!(dir_inside(&dir, env.tmp.path()));
+    assert!(!dir_inside(&dir, &data));
+}
+
+/// A real "disk full" (`ENOSPC` from the kernel, written to `/dev/full`)
+/// in the middle of the export: the error names the file in the backup
+/// folder, so it reads as "the disk is full", not as something else.
+#[test]
+fn a_full_disk_says_so() {
+    let env = Env::new();
+    // Enough media that the export writes past its first buffer.
+    for seed in 0..4 {
+        env.store
+            .add_media_bytes(&crate::test_support::png_bytes(200 + seed))
+            .unwrap();
+    }
+    let Ok(mut full) = fs::OpenOptions::new().write(true).open("/dev/full") else {
+        // No /dev/full in this sandbox: nothing to check.
+        return;
+    };
+    let partial = env
+        .folder()
+        .join(".Rappel backup 2026-11-09.rappel.0.partial");
+    let err = env
+        .store
+        .export_into(
+            &mut full,
+            &partial,
+            ExportOptions::default(),
+            crate::interchange::MAX_ARCHIVE_BYTES,
+            T0,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    // Before round 5 the archive writer's error was "cannot write the
+    // export" (something unexpected), and a failed write while copying a
+    // media file named that media file.
+    assert!(
+        matches!(&err, Error::Io { path, .. } if *path == partial),
+        "{err:?}"
+    );
+    let failure = Failure::core(&err, &env.folder());
+    assert_eq!(failure.kind, FailureKind::NoSpace, "{failure}");
+}
+
+/// The folder removed while the backup runs (after the export is written,
+/// before it is named): the backup fails as "not found", and nothing is
+/// written anywhere else, not even in a new folder of the same name.
+#[test]
+fn a_folder_removed_while_the_backup_runs_fails_safely() {
+    let env = Env::new();
+    let folder = env.folder();
+    let _hook = crate::test_support::set_hook(&AFTER_EXPORT, {
+        let folder = folder.clone();
+        move || {
+            fs::remove_dir_all(&folder).unwrap();
+            fs::create_dir(&folder).unwrap();
+        }
+    });
+    let failure = env.run("2026-11-09", None).unwrap_err();
+    assert_eq!(failure.kind, FailureKind::FolderMissing, "{failure}");
+    assert_eq!(env.names(), Vec::<String>::new());
+}
+
+/// The folder swapped for a link while the backup runs: the backup goes
+/// on in the folder it opened (now under another name), and the link's
+/// target gets nothing.
+#[test]
+fn a_folder_swapped_for_a_link_while_the_backup_runs_writes_nothing_elsewhere() {
+    let env = Env::new();
+    let folder = env.folder();
+    let moved = env.tmp.path().join("moved");
+    let target = env.tmp.path().join("target");
+    fs::create_dir(&target).unwrap();
+    let _hook = crate::test_support::set_hook(&AFTER_EXPORT, {
+        let (folder, moved, target) = (folder.clone(), moved.clone(), target.clone());
+        move || {
+            fs::rename(&folder, &moved).unwrap();
+            symlink(&target, &folder).unwrap();
+        }
+    });
+    assert!(matches!(
+        env.run("2026-11-09", None),
+        Ok(Outcome::Written { .. })
+    ));
+    assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+    let names: Vec<String> = fs::read_dir(&moved)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names, vec!["Rappel backup 2026-11-09.rappel"]);
+}
+
+/// A folder of 20,000 entries: 3,000 old backups (eight years of days),
+/// 16,000 look-alikes and 1,000 stale partial files. One backup keeps the
+/// 14 newest backups, removes the other 2,987 and the partial files, and
+/// leaves every look-alike, quickly.
+#[test]
+fn a_folder_of_twenty_thousand_files_is_pruned_quickly() {
+    let env = Env::new();
+    let folder = env.folder();
+    let first = date("2018-01-01").days();
+    let day = |n: i64| {
+        let ms = (first + n) * DAY_MS;
+        LocalDate::from_utc_ms(ms, 0).unwrap()
+    };
+    for n in 0..3000 {
+        fs::write(folder.join(file_name(day(n))), b"").unwrap();
+    }
+    for n in 0..16_000 {
+        fs::write(
+            folder.join(format!("Rappel backup {}.rappel~{n}", day(n % 3000))),
+            b"",
+        )
+        .unwrap();
+    }
+    let old = now_seconds() - 2 * STALE_PARTIAL_SECONDS;
+    for _ in 0..1000 {
+        let name = partial_name(&file_name(day(0))).unwrap();
+        fs::write(folder.join(&name), b"").unwrap();
+        set_modified(&folder.join(&name), old);
+    }
+    let (used, outcome) = crate::test_support::cpu_time_of(|| env.run("2026-11-09", None));
+    let Ok(Outcome::Written { removed, .. }) = outcome else {
+        panic!("written: {outcome:?}");
+    };
+    assert_eq!(removed, 3000 - (KEEP - 1));
+    let names = env.names();
+    assert_eq!(names.len(), 16_000 + KEEP);
+    assert_eq!(
+        names
+            .iter()
+            .filter(|n| parse_file_name(n).is_some())
+            .count(),
+        KEEP
+    );
+    assert!(!names.iter().any(|n| is_partial_name(n)));
+    if std::env::var_os("RAPPEL_TIMINGS").is_some() {
+        eprintln!("a backup in a folder of 20,000 files: {used:?}");
+    }
+    crate::test_support::assert_cpu_within(
+        used,
+        // 41 ms measured in a debug build (ADR 0084).
+        std::time::Duration::from_millis(500),
+        "a backup in a folder of 20,000 files",
+    );
+}
+
+/// Odd names in the folder (not UTF-8, a newline, 255 bytes, a backup's
+/// name with something after it) are left alone; a folder with an odd
+/// name of its own gets its backup.
+#[test]
+fn odd_names_are_left_alone() {
+    use std::os::unix::ffi::OsStrExt;
+    let env = Env::new();
+    let folder = env.folder();
+    let odd: Vec<std::ffi::OsString> = vec![
+        std::ffi::OsStr::from_bytes(b"Rappel backup 2020-01-01.rappel\xff").to_owned(),
+        std::ffi::OsStr::from_bytes(b"\xffRappel backup 2020-01-01.rappel").to_owned(),
+        "Rappel backup 2020-01-01.rappel\n".into(),
+        "Rappel backup\n2020-01-01.rappel".into(),
+        format!("Rappel backup 2020-01-01.rappel{}", "x".repeat(255 - 31)).into(),
+        "x".repeat(255).into(),
+        "Rappel backup 2020-01-01.rappel.bak".into(),
+    ];
+    for name in &odd {
+        fs::write(folder.join(name), b"not a backup").unwrap();
+    }
+    for day in 1..=20 {
+        fs::write(
+            folder.join(file_name(LocalDate::new(2020, 1, day).unwrap())),
+            b"old",
+        )
+        .unwrap();
+    }
+    let Ok(Outcome::Written { removed, .. }) = env.run("2026-11-09", None) else {
+        panic!("written");
+    };
+    assert_eq!(removed, 7);
+    for name in &odd {
+        assert!(folder.join(name).exists(), "{name:?}");
+    }
+    // A folder whose own name is odd.
+    let strange = env.tmp.path().join("Back\nups ü 💾 \u{202e}evil");
+    fs::create_dir(&strange).unwrap();
+    assert!(matches!(
+        run(
+            &env.data(),
+            &strange,
+            date("2026-11-09"),
+            None,
+            &AtomicBool::new(false)
+        ),
+        Ok(Outcome::Written { .. })
+    ));
+    assert!(strange.join("Rappel backup 2026-11-09.rappel").is_file());
+}
+
+/// Something that is not a folder in the folder's place: a FIFO (opening
+/// it must never block) and a socket.
+#[test]
+fn a_fifo_or_socket_in_the_folders_place_is_not_a_folder() {
+    let env = Env::new();
+    let fifo = env.tmp.path().join("fifo");
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        &fifo,
+        FileType::Fifo,
+        Mode::from_raw_mode(0o600),
+        0,
+    )
+    .unwrap();
+    let socket = env.tmp.path().join("socket");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    for folder in [fifo, socket] {
+        let failure = run(
+            &env.data(),
+            &folder,
+            date("2026-11-09"),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::NotAFolder, "{failure}");
+    }
+}

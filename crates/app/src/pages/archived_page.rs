@@ -147,7 +147,7 @@ impl ArchivedPage {
             // Deck names are untrusted: plain text, never markup.
             let row = adw::ActionRow::builder()
                 .title(&deck.name)
-                .subtitle(text::card_count(cards))
+                .subtitle(crate::ui::text::card_count(cards))
                 .use_markup(false)
                 .title_lines(2)
                 .build();

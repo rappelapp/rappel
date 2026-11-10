@@ -32,6 +32,7 @@ use gtk::glib;
 use gtk::subclass::prelude::*;
 use rappel_core::content::{Summary, SummaryPiece};
 
+use super::layout_key::{LAYOUT_CACHE_ENTRIES, LayoutKey as Fingerprint, PLACEHOLDER_BYTES};
 use super::markup::PLACEHOLDER;
 use super::math::MATH_SCALE;
 
@@ -146,15 +147,6 @@ impl MathLine {
     }
 }
 
-/// What a layout depends on besides the content: see `math_paragraph`.
-#[derive(Debug, Clone, PartialEq)]
-struct Fingerprint {
-    width: i32,
-    font: String,
-    dpi: i32,
-    direction: gtk::TextDirection,
-}
-
 /// One formula as laid out at one width.
 #[derive(Debug, Clone)]
 struct Placed {
@@ -188,10 +180,6 @@ struct Laid {
     ellipsis: f64,
 }
 
-/// How many layouts a line keeps: the unlimited one (measuring) and the
-/// allocated one (drawing).
-const LAYOUT_CACHE_ENTRIES: usize = 2;
-
 mod imp {
     use std::cell::RefCell;
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -207,12 +195,9 @@ mod imp {
     use super::super::math::{self, ceil_px, f32_px, from_pango_units, left_edge, to_pango_units};
     use super::super::math_view::em_px;
     use super::{
-        Fingerprint, LAYOUT_CACHE_ENTRIES, Laid, LineContent, MATH_SCALE, MAX_LINE_EM, Placed,
-        fit_scale, line_box_width,
+        Fingerprint, LAYOUT_CACHE_ENTRIES, Laid, LineContent, MATH_SCALE, MAX_LINE_EM,
+        PLACEHOLDER_BYTES, Placed, fit_scale, line_box_width,
     };
-
-    /// The placeholder's length in UTF-8, for Pango's `u32` byte indices.
-    const PLACEHOLDER_BYTES: u32 = 3;
 
     /// A formula's display list and the colour it was made for.
     type Memo = (Color, Rc<DisplayList>);
@@ -386,17 +371,7 @@ mod imp {
         /// The layout for `width` pixels (-1: no limit), made again only
         /// when something it depends on changed.
         pub(super) fn laid(&self, width: i32) -> Rc<Laid> {
-            let obj = self.obj();
-            let fingerprint = Fingerprint {
-                width,
-                font: obj
-                    .pango_context()
-                    .font_description()
-                    .map(|d| d.to_str().to_string())
-                    .unwrap_or_default(),
-                dpi: obj.settings().gtk_xft_dpi(),
-                direction: obj.direction(),
-            };
+            let fingerprint = Fingerprint::of(&*self.obj(), width);
             if let Some(found) = self
                 .cache
                 .borrow()
@@ -416,7 +391,7 @@ mod imp {
 
         fn lay_out(&self, fingerprint: Fingerprint) -> Laid {
             let obj = self.obj();
-            let width = fingerprint.width;
+            let width = fingerprint.width();
             let content = self.content.borrow();
             let layout = obj.create_pango_layout(Some(&content.text));
             layout.set_single_paragraph_mode(true);

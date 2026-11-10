@@ -6,6 +6,7 @@
 //! studying (S, `starts_studying` and `StartHold`; ADR 0081).
 
 use gtk::prelude::*;
+use gtk::{gdk, glib};
 
 use crate::i18n::{self, gettext, pgettext};
 
@@ -180,6 +181,62 @@ pub fn when_left(
     page.add_controller(focus);
 }
 
+/// What a page that starts studying with S does with keys
+/// ([`install_start_key`]): its own [`StartHold`] and what S starts.
+pub trait StartKeyPage: IsA<adw::NavigationPage> + IsA<gtk::Widget> {
+    /// A key press or repeat the page saw in the bubble phase (a focused
+    /// text field has had it first); Stop swallows it.
+    fn start_key_pressed(&self, key: gdk::Key, modifiers: gdk::ModifierType) -> glib::Propagation;
+    /// A key release the page saw.
+    fn start_key_released(&self, key: gdk::Key, modifiers: gdk::ModifierType);
+    /// Every key press, seen in the capture phase before any child can
+    /// claim it (Return on a row or on a menu button never reaches the
+    /// bubble phase): [`StartHold::observe_press`].
+    fn observe_press(&self, key: gdk::Key, modifiers: gdk::ModifierType);
+    /// Forgets a held S ([`StartHold::clear`]).
+    fn clear_hold(&self);
+}
+
+/// Wires S to `page` (the deck list and a deck's page, ADR 0081): a
+/// bubble-phase key controller for its presses and releases, a capture
+/// phase one that sees every press first and returns Proceed, so it
+/// claims neither the press nor its release (gtkeventcontrollerkey.c), and
+/// [`when_left`], since a hold left behind would start a session at a
+/// later release. A popover or a dialog cannot leak its S here: a
+/// popover's native surface stops key events at its own root, and an
+/// `AdwDialog` is not a descendant of the page.
+pub fn install_start_key<P: StartKeyPage + glib::object::ObjectType>(page: &P) {
+    let keys = gtk::EventControllerKey::new();
+    let weak = page.downgrade();
+    keys.connect_key_pressed(move |_, key, _, modifiers| {
+        weak.upgrade().map_or(glib::Propagation::Proceed, |page| {
+            page.start_key_pressed(key, modifiers)
+        })
+    });
+    let weak = page.downgrade();
+    keys.connect_key_released(move |_, key, _, modifiers| {
+        if let Some(page) = weak.upgrade() {
+            page.start_key_released(key, modifiers);
+        }
+    });
+    page.add_controller(keys);
+    let observer = gtk::EventControllerKey::new();
+    observer.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let weak = page.downgrade();
+    observer.connect_key_pressed(move |_, key, _, modifiers| {
+        if let Some(page) = weak.upgrade() {
+            page.observe_press(key, modifiers);
+        }
+        glib::Propagation::Proceed
+    });
+    page.add_controller(observer);
+    when_left(page, |page| {
+        if let Some(page) = page.downcast_ref::<P>() {
+            page.clear_hold();
+        }
+    });
+}
+
 /// One action per press of a key, however long it is held: a held key
 /// repeats as further presses with no release between (`key-pressed` and
 /// `key-released` of `GtkEventControllerKey`, gtkeventcontrollerkey.c). The
@@ -190,7 +247,8 @@ pub fn when_left(
 /// layout makes of it. With a Cyrillic layout the key marked S gives
 /// `Cyrillic_yeru`, which GTK's shortcut matching still takes for S
 /// (`gdk_key_event_matches`, gdkevents.c: a partial match when the
-/// keycode gives S in another layout that lacks the event's value), so a keyval test on the release would never re-arm.
+/// keycode gives S in another layout that lacks the event's value), so a
+/// keyval test on the release would never re-arm.
 #[derive(Debug, Default)]
 pub struct OnePress {
     /// The keycode of the press that acted, while that key is down.

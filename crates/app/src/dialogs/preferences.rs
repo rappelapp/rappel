@@ -533,11 +533,11 @@ async fn choose_backup_folder(window: &RappelWindow, rows: &AutoBackupRow, ctx: 
         );
         return;
     };
-    if auto_backup::inside_data_dir(&path, ctx.state.data_dir()) {
+    if rappel_core::auto_backup::inside_data_dir(&path, ctx.state.data_dir()) {
         ctx.errors.show_in_preferences(
             &dialog,
             "choosing the automatic backup folder",
-            &gettext("Choose a folder outside Rappel’s data folder"),
+            &auto_backup::inside_data_dir_text(),
         );
         return;
     }

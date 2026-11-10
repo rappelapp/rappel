@@ -366,9 +366,7 @@ pub fn deck_tag_menu<'a>(tags: impl IntoIterator<Item = &'a Tag>) -> Option<Deck
 mod tests {
     use super::*;
 
-    fn names(list: &[&str]) -> Vec<String> {
-        list.iter().map(|&n| n.to_owned()).collect()
-    }
+    use crate::testing::strings as names;
 
     /// The due word, from "Today" to "In 3 days", with study days
     /// counted from when the next one begins.

@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-19
+- Extended by: ADR 0073 (round 4, rows 74 to 88) and ADR 0084 (round 5, rows 89 on)
 - Amends: ADR 0054 (an import's apply syncs its new media files in batches before naming them), ADR 0025, ADR 0050 (rows 50 on of the untrusted-input table)
 - Refers to: SPEC §4.1, §4.3, §4.9, §4.11, §4.10; `docs/briefs/phase-2.md` (slice 10); ADR 0062 (the GStreamer allow-list, found and fixed in the same slice)
 

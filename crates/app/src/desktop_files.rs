@@ -52,7 +52,7 @@ const MAX_SCREENSHOT_BYTES: u64 = 300 * 1024;
 
 /// The issue `appstreamcli --pedantic` raises that Rappel keeps on
 /// purpose: the component id has capitals, because it is the app id
-/// (`io.github.rappelapp.Rappel`, fixed since ADR 0020).
+/// (`io.github.rappelapp.Rappel`, since ADR 0075).
 const ACCEPTED_APPSTREAM_ISSUES: [&str; 1] = ["cid-contains-uppercase-letter"];
 
 fn desktop_source() -> String {
@@ -187,6 +187,17 @@ fn the_metainfo_is_valid_in_english_and_french() {
     assert_eq!(
         between(&src, "<name>", "</name>"),
         Some(rappel_core::APP_NAME)
+    );
+    // The developer is About's (ADR 0075): the store and the app name the
+    // same one, under the app id's reverse domain.
+    let developer = between(&src, "<developer id=\"", "</developer>").expect("a developer");
+    let (id, name) = developer
+        .split_once("\">")
+        .expect("the developer's id is quoted");
+    assert_eq!(Some(id), APP_ID.rsplit_once('.').map(|(domain, _)| domain));
+    assert_eq!(
+        between(name, "<name translate=\"no\">", "</name>"),
+        Some(crate::dialogs::about::DEVELOPER)
     );
     let summary = between(&src, "<summary>", "</summary>").expect("a summary");
     assert!(

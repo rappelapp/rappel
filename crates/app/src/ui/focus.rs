@@ -8,10 +8,6 @@ use std::ops::Sub;
 use gtk::glib;
 use gtk::prelude::*;
 
-/// The row to focus after the row at `removed` was taken out, leaving
-/// `remaining` rows: the row now at that position, or the last row if it
-/// was the last. `None` when the list is empty: focus the empty state's
-/// button instead.
 /// Scrolls `list` to the row at `position` and gives it the keyboard focus,
 /// as `gtk_list_view_scroll_to` with `FOCUS` does, except that the first
 /// row is shown with whatever is above it: the first section header of a
@@ -23,8 +19,16 @@ use gtk::prelude::*;
 /// view and GTK leaves it (a row already in view keeps its place); the
 /// position re-anchors the list at once
 /// (`gtk_list_base_adjustment_value_changed_cb`), with no wait for a frame.
-/// Elsewhere, a plain `scroll_to`. The list must have been laid out; on a
-/// page just opened, the deck page waits for that first.
+/// Elsewhere, a plain `scroll_to`.
+///
+/// A list whose items were just replaced (a page that read its cards
+/// again after a bulk action) has rows with no place yet:
+/// `gtk_list_view_get_allocation` puts a new row at 0, so `scroll_to`
+/// anchors the first row at the top of the view, and the next layout
+/// scrolls the header above it away. So the first row's focus is checked
+/// once more at the end of the next layout of the window
+/// ([`top_after_next_layout`]). On a page just opened, the deck page waits
+/// for its list's first layout itself (`focus_first_row_when_laid_out`).
 pub fn focus_row(list: &gtk::ListView, position: u32) {
     if position == 0
         && let Some(adjustment) = list.vadjustment()
@@ -35,8 +39,70 @@ pub fn focus_row(list: &gtk::ListView, position: u32) {
     // focus is outside it; it grabs the row itself when the focus is
     // inside (`gtk_list_base_scroll_to`, gtk/gtklistbase.c).
     list.scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+    // With the focus elsewhere (a bulk action's button, which handed it to
+    // Select as selection mode ended), `scroll_to` only moved the list's
+    // focus item; the grab focuses that item's row, making it if needed
+    // (`gtk_list_base_grab_focus`, gtk/gtklistbase.c). Not on a list off
+    // screen, which must not take the keyboard (ADR 0084, found by the
+    // review of slice 9).
+    let inside = list
+        .root()
+        .and_then(|root| root.focus())
+        .is_some_and(|focus| focus.is_ancestor(list));
+    if !inside && list.is_mapped() {
+        list.grab_focus();
+    }
+    if position == 0 {
+        top_after_next_layout(list);
+    }
 }
 
+/// Once the window's next layout has allocated `list`, sets its view back
+/// to the very top if the row that has the focus now (the first one,
+/// focused by [`focus_row`]) still has it and the view is not there. The
+/// window's surface emits `layout` from the frame clock's layout phase,
+/// and `GtkNative` allocates the widgets in its own handler, connected
+/// when the window was realized (`gtk_native_realize`, gtk/gtknative.c),
+/// so a handler connected now runs after that allocation. Setting the
+/// position there queues one more allocation, which the frame clock runs
+/// before it paints (`gdk_frame_clock_run_layout` loops while a layout is
+/// requested, gdk/gdkframeclock.c): the frame shows the header, with no
+/// frame scrolled in between. Keyed to the layout, not to frames or to a
+/// scroll, and it runs once: a scroll of the user's within that same frame is
+/// the only one it can undo.
+fn top_after_next_layout(list: &gtk::ListView) {
+    let Some(surface) = list.native().and_then(|native| native.surface()) else {
+        return;
+    };
+    let Some(focused) = list.focus_child() else {
+        return;
+    };
+    let handler: std::rc::Rc<Cell<Option<glib::SignalHandlerId>>> = std::rc::Rc::default();
+    let once = std::rc::Rc::clone(&handler);
+    let list = list.downgrade();
+    let id = surface.connect_layout(move |surface, _, _| {
+        if let Some(id) = once.take() {
+            surface.disconnect(id);
+        }
+        let Some(list) = list.upgrade() else {
+            return;
+        };
+        let still = list.focus_child().as_ref() == Some(&focused)
+            && list.root().and_then(|root| root.focus()).as_ref() == Some(&focused);
+        if let Some(adjustment) = list.vadjustment()
+            && still
+            && adjustment.value() != 0.0
+        {
+            adjustment.set_value(0.0);
+        }
+    });
+    handler.set(Some(id));
+}
+
+/// The row to focus after the row at `removed` was taken out, leaving
+/// `remaining` rows: the row now at that position, or the last row if it
+/// was the last. `None` when the list is empty: focus the empty state's
+/// button instead.
 pub fn index_after_removal<T>(removed: T, remaining: T) -> Option<T>
 where
     T: Copy + Ord + Sub<Output = T> + From<u8>,

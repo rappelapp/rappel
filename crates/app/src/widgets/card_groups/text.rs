@@ -2,7 +2,6 @@
 //! unit-tested.
 
 use crate::i18n::{fill, gettext, pgettext};
-use crate::pages::browser_text::count_text;
 
 /// The words before a group's tags: "Also" (the cards have these tags
 /// besides the shared ones), "Tagged" when no tag is shared (no "On every
@@ -29,7 +28,7 @@ pub fn title(extra: bool, shared: bool) -> String {
 
 /// "14 cards", at the end of a group's header.
 pub fn count(n: u32) -> String {
-    count_text(usize::try_from(n).unwrap_or(usize::MAX))
+    crate::ui::text::card_count(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
 /// What a screen reader says for a group's header: its title, the tags
@@ -63,9 +62,7 @@ pub fn spoken(tags: &[String], shared: bool, n: u32) -> String {
 mod tests {
     use super::*;
 
-    fn names(list: &[&str]) -> Vec<String> {
-        list.iter().map(|&s| s.to_owned()).collect()
-    }
+    use crate::testing::strings as names;
 
     #[test]
     fn a_header_names_its_group_and_counts_it() {

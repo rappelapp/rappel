@@ -8,8 +8,8 @@
 use rappel_core::domain::{Deck, Tag, name_key};
 use rappel_core::storage::{BrowseQuery, CardStatus, StateFilter};
 
-use crate::i18n::{fill, gettext, ngettext};
-use crate::ui::text::{counted, isolate, one_line};
+use crate::i18n::{fill, gettext};
+use crate::ui::text::{isolate, one_line};
 use crate::ui::time::relative_due;
 
 /// A card's status as a short phrase: "New", "Learning", "Due now",
@@ -75,15 +75,6 @@ pub fn row_label(card: &str, deck: &str, status: &str, selected: Option<bool>) -
         ],
     );
     crate::ui::selection::text::with_selected(base, selected)
-}
-
-/// "1,234 cards", "1 card", "No cards".
-pub fn count_text(n: usize) -> String {
-    if n == 0 {
-        gettext("No cards")
-    } else {
-        cards(n)
-    }
 }
 
 /// What the list area shows when it has no row.
@@ -330,12 +321,6 @@ pub fn all_tags() -> String {
     gettext("All Tags")
 }
 
-/// "3 cards" / "1 card".
-fn cards(n: usize) -> String {
-    // Translators: {count} is a number of cards.
-    counted(&ngettext("{count} card", "{count} cards", n), n)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,9 +424,9 @@ mod tests {
 
     #[test]
     fn counts_and_titles() {
-        assert_eq!(count_text(0), "No cards");
-        assert_eq!(count_text(1), "1 card");
-        assert_eq!(count_text(5_000), "5,000 cards");
+        assert_eq!(crate::ui::text::card_count(0), "No cards");
+        assert_eq!(crate::ui::text::card_count(1), "1 card");
+        assert_eq!(crate::ui::text::card_count(5_000), "5,000 cards");
         assert_eq!(
             crate::ui::selection::text::selection_title(0),
             "Select Cards"
@@ -608,8 +593,8 @@ mod tests {
                 ),
                 "À revoir dans 3\u{a0}jours"
             );
-            assert_eq!(count_text(5_000), "5\u{202f}000 cartes");
-            assert_eq!(count_text(0), "Aucune carte");
+            assert_eq!(crate::ui::text::card_count(5_000), "5\u{202f}000 cartes");
+            assert_eq!(crate::ui::text::card_count(0), "Aucune carte");
             assert_eq!(
                 crate::ui::selection::text::moved_text(1),
                 "1 carte déplacée"

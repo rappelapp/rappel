@@ -120,6 +120,18 @@ thread_local! {
     static LAYOUTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// How many layouts this thread did so far, for tests elsewhere.
+#[cfg(test)]
+pub fn layouts_done() -> usize {
+    LAYOUTS.with(std::cell::Cell::get)
+}
+
+/// How many formulas the cache holds now, for tests elsewhere.
+#[cfg(test)]
+pub fn cached_formulas() -> usize {
+    CACHE.with(|c| c.borrow().entries.len())
+}
+
 fn color_key(color: Color) -> [u32; 4] {
     [
         color.r.to_bits(),

@@ -24,16 +24,20 @@
 //! gsk/gskcolornode.c), so whenever the side draws anew, the whole area its
 //! glyphs can reach is repainted. GTK calls the snapshot again only when
 //! something in the side asked to be drawn (new content, the reveal's
-//! slide, a hovered link, a playing sound's progress), and keeps the box's
-//! node otherwise, so the frames in between repaint no more than before.
+//! slide, a hovered link or button, a playing sound's time when its text
+//! changes: once a second), and keeps the box's node otherwise, so the
+//! frames in between repaint no more than before.
 
 use gtk::glib;
 use gtk::{gdk, graphene};
 
 /// How far, in logical pixels, a drawn glyph may reach beyond the bounds
-/// GTK gives its text node: half a device pixel of hinting, a device pixel
-/// of antialiasing, and as much again for safety. A device pixel is at
-/// most a logical one (scale ≥ 1).
+/// GTK gives its text node. Hinting moves an outline by less than a device
+/// pixel, so its antialiased edge reaches at most one pixel row or column
+/// past the node's bounds rounded out: the test below measured one, never
+/// two (ADR 0076). A device pixel is at most a logical one (scale ≥ 1), so
+/// one logical pixel would be enough; two leave the same again for a font
+/// or renderer that rounds differently.
 pub const INK_MARGIN: f32 = 2.0;
 
 /// The area a side's drawing can touch: `drawn` (the bounds of its render
@@ -207,7 +211,23 @@ mod tests {
             let ink = side.downcast::<InkBox>().expect("checked above");
             let window = gtk::Window::builder().child(&ink).build();
             window.present();
-            crate::testing::settle();
+            // Until every shown child has its size: a window on a compositor (an
+            // X server with a window manager, such as Xwayland in a desktop
+            // session) is mapped and allocated only once the compositor
+            // answers, later than one turn of the main loop; without a size a
+            // label draws nothing ("Trying to snapshot GtkLabel … without a
+            // current allocation"), and the box would have nothing to mark.
+            // Under Xvfb, with no window manager, the first turn does it.
+            let laid_out = crate::testing::settle_until(
+                || {
+                    crate::testing::descendants::<gtk::Widget>(ink.upcast_ref())
+                        .iter()
+                        .filter(|child| child.is_visible())
+                        .all(|child| child.width() > 0 && child.height() > 0)
+                },
+                std::time::Duration::from_secs(10),
+            );
+            assert!(laid_out, "the side is laid out");
             let (first, second) = (snapshot_of(&ink), snapshot_of(&ink));
             window.destroy();
             let children = first.downcast_ref::<gsk::ContainerNode>().map(|c| {

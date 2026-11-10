@@ -101,7 +101,7 @@ The mapping from `errno` is a pure function, tested.
 - **Choose…**, the row's activatable widget, which opens the chooser;
 - a flat button with the `edit-clear-symbolic` icon, "Turn Off Automatic Backups" (tooltip and accessible label), shown only while a folder is set.
 
-A folder inside the data directory (the data directory itself, its `backups/` or `media/`, with links resolved) is refused when chosen ("Choose a folder outside Rappel’s data folder"): a backup there would be lost with what it backs up. An `auto-backup.ini` that is there but cannot be read means backups are off; each start says so ("Automatic backups off: their setting could not be read. Choose the folder again in Preferences."), and choosing a folder writes the file anew.
+A folder inside the data directory (the data directory itself, its `backups/` or `media/`, with links resolved) is refused when chosen ("Choose a folder outside Rappel’s data folder"): a backup there would be lost with what it backs up. (Amended by ADR 0084: the toast is now "Folder not allowed: …", whose title fits at 360 px, and the backup itself refuses such a folder too, by path and by device and inode, for a setting saved before the check or a data directory moved since.) An `auto-backup.ini` that is there but cannot be read means backups are off; each start says so ("Automatic backups off: their setting could not be read. Choose the folder again in Preferences."), and choosing a folder writes the file anew.
 
 Both save at once; a failed write shows the dialog's error toast. Turn Off hidden under the focus hands the focus to Choose….
 
@@ -111,7 +111,7 @@ Both save at once; a failed write shows the dialog's error toast. Turn Off hidde
 
 - The export gains `Store::export_into` (an open file), used by `export_to_with` and the backup, and `collection_fingerprint`. The format is unchanged.
 - A backup is skipped on a day nothing changed, so a quiet week leaves fewer than 7 files. The 14 kept are the 14 most recent changes.
-- A backup cut off by the cap removes its own partial file. Only one cut off by a shutdown or a crash, or by a disk stuck past the grace period, leaves a hidden `.partial` file; the deletion rule does not allow removing it later, so it is left for the user.
+- A backup cut off by the cap removes its own partial file. Only one cut off by a shutdown or a crash, or by a disk stuck past the grace period, leaves a hidden `.partial` file. (Amended by ADR 0084: such files could gather without bound, one per killed backup, each as large as a backup; the next backup now removes the job's own partial files, by their exact pattern, regular files only, once they are a day old.)
 - On a disk too slow for the cap (a large media collection on a USB 2 stick), every close that day tries again and is cancelled again; each start says it took too long. Export… has no cap for such a case.
 - A day's later changes go into the next day's backup, not today's. That follows from "once a day".
 - The record is per data directory, so a debug build (`rappel-dev`) has its own setting and never writes into the release folder's record.

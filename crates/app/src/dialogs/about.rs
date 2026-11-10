@@ -10,8 +10,9 @@ use crate::i18n::gettext;
 /// The repository, from the workspace's `[package] repository`.
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
-/// The name shown as the developer and copyright holder.
-const DEVELOPER: &str = "The Rappel Project";
+/// The name shown as the developer and copyright holder; the metainfo's
+/// `<developer>` names the same (checked by `desktop_files.rs`).
+pub(crate) const DEVELOPER: &str = "The Rappel Project";
 
 /// The libraries Rappel is built on, credited by name.
 const LIBRARIES: [&str; 9] = [
