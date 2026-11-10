@@ -3589,7 +3589,7 @@ msgstr "Les cartes d’un paquet, groupées par étiquette"
 
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Find any card by words, tags or state"
-msgstr "Trouvez une carte par mots, étiquettes ou état"
+msgstr "Trouvez une carte par mot, étiquette ou état"
 
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "See how much you studied, a month at a time"

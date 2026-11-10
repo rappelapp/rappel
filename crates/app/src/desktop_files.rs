@@ -374,6 +374,14 @@ fn the_screenshots_are_committed_and_within_flathub_s_size() {
             "Flathub: a caption has no full stop and does not start with a number: {caption:?}"
         );
     }
+    // A release build pins the screenshots to its own tag (ADR 0083).
+    let built = env!("CARGO_PKG_VERSION");
+    if !built.contains('-') {
+        assert!(
+            SCREENSHOT_URL.contains(&format!("/v{built}/")),
+            "the crate is released as {built}: SCREENSHOT_URL must name the tag v{built}"
+        );
+    }
     let folder = repo().join("data/screenshots");
     let mut names = Vec::new();
     for url in &listed {

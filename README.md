@@ -80,13 +80,14 @@ Rappel uses gettext, laid out as GNOME projects are (ADR 0059): `po/LINGUAS` lis
 Drafts of the files that make Rappel look like a GNOME app once installed are in [`data/`](data/) (ADR 0060): the desktop entry (`io.github.rappelapp.Rappel.desktop.in`), the AppStream metainfo for software stores (`io.github.rappelapp.Rappel.metainfo.xml.in`: description, releases, content rating, screenshots), the app icon and its symbolic icon in `data/icons/` (ADR 0074), and the store screenshots in `data/screenshots/`. Nothing installs them yet: packaging (a Meson build that merges their translations and installs them, a Snap, and a self-hosted Flatpak with a manifest written by hand) comes in phases 3b (the Snap, ending in 0.4.0) and 3c (the Flatpak, ending in 1.0).
 
 - **Validate them**: the gate does (`cargo test -p rappel desktop_files`), with `desktop-file-validate` and `appstreamcli validate --no-net --pedantic`, in English and with the French translation merged in. Their texts are in `po/rappel.pot` like the app's.
-- **A new release** needs its `<release>` in the metainfo (newest first, a pre-release written `0.3.0~beta.1`); the gate fails while `CHANGELOG.md` has a version the metainfo lacks.
+- **A new release** needs its `<release>` in the metainfo (newest first, a pre-release written `0.3.0~beta.1`); the gate fails while `CHANGELOG.md` has a version the metainfo lacks. The screenshot URLs name the release's tag (`…/rappel/v0.4.0/…`, ADR 0083): bump it in the metainfo and in `SCREENSHOT_URL` of `desktop_files.rs` (a test checks it once the crate has a release version). The notes for 0.4.0 wait in a comment in the metainfo, to become its `<release>` with the version bump.
 - **Retake the store screenshots** after a visible change (light style, GNOME's window buttons and accent, 1000 × 700 and a phone at 360 × 640):
   ```sh
   cargo run -p rappel-core --example fill_scratch_db -- $PWD/target/tmp/demo 0 --demo --probability
   scripts/screenshot.py --out store --size 1000x700 --data target/tmp/demo \
-      --env ADW_DEBUG_ACCENT_COLOR=blue --decoration-layout :close --steps "wait:6 shot:decks"
+      --env ADW_DEBUG_ACCENT_COLOR=blue --decoration-layout :close --steps "wait:5 shot:decks"
   ```
+  The other shots use the same flags with `--size`, `--deck` (an id from the `decks` table) and these steps (ADR 0083 has the details): `review`: Calculus, `--steps "wait:5 key:s wait:2 key:space wait:1 shot:review"`; `deck`: the "SIC 3101 – Probabilités" deck, `wait:5 shot:deck`; `all-cards`: `wait:5 key:ctrl+f wait:2 click:850,28 wait:1 shot:allcards` (the click moves the pointer off the list); `statistics`: `wait:5 click:932,28 wait:1 click:838,79 wait:2 shot:statistics`; `editor`: Calculus, `wait:5 key:ctrl+n wait:2 type:What%20is%20the%20derivative%20of%20$\sin(x^2)$? click:310,450 type:$2x\cos(x^2)$,%20by%20the%20**chain%20rule** click:310,630 type:derivatives, wait:1 shot:editor`; `phone`: `--size 360x640`, the Flags deck, `wait:5 key:s wait:2 key:space wait:1 shot:phone`.
   then copy the shots from `docs/briefs/screenshots/` to `data/screenshots/` (`convert … -strip` keeps them small). The harness has no compositor, so the windows have no shadow; for a Flathub submission, retake them on GNOME with Alt+Print.
 
 ## Recovering your data

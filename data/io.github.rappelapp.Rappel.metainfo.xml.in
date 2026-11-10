@@ -91,10 +91,14 @@
        type, translate="no") in the change that bumps the version and adds [0.4.0]
        to CHANGELOG.md; the gate needs the changelog and this list to agree, so
        the entry cannot be added before:
-       "Card lists are tidier: grouped by tag on a deck's page, with formulas drawn
-       and a word saying when each card is due. Statistics show a month at a time.
-       Rappel can back up to a folder you choose when it closes. S starts studying,
-       and 3 and 4 pass. No more stray dots around a card's text. The app ID is now
+       "Since 0.1.0, the betas added Markdown cards with formulas drawn as in LaTeX,
+       images and sound, tags, search and All Cards, statistics, export and import
+       (also from Anki), Undo, a phone-sized layout and French. This release adds:
+       card lists grouped by tag on a deck's page, with formulas drawn and a word
+       saying when each card is due; Statistics a month at a time; backups to a
+       folder you choose when Rappel closes; S to start studying, and 3 and 4 to
+       pass; no more stray dots around a card's text; and a newer SQLite that fixes
+       a security flaw when opening a crafted database file. The app ID is now
        io.github.rappelapp.Rappel; your data stays where it was." -->
 
   <!-- Newest first, one per version of CHANGELOG.md (a test checks).
