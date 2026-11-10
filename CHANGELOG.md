@@ -20,6 +20,10 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 - **The store listing is ready for 0.4.0**: two new store screenshots (the deck page grouped by tag, and All Cards) and five retaken (review, the deck list, the Statistics card, the editor and a phone-sized one), all from scratch data, their URLs in the metainfo pinned to the `v0.4.0` tag, and the notes for 0.4.0 kept ready in the metainfo for the release change (ADR 0083).
 
 ### Fixed
+- **Automatic backups, hardened** (round 5 of the hardening, ADR 0084): a full disk during a backup is now reported as "the disk is full" (it said "something unexpected happened"); a hidden partial file left by a backup that was cut off by a shutdown or a crash is removed, once it is a day old, by the next backup that succeeds (before, such files could pile up, each as large as a backup); only Rappel's own partial files are removed, never a link, a folder or any other file (this extends the backup's deletion rule and awaits the maintainer's confirmation, `docs/briefs/QUESTIONS.md`); a backup folder inside Rappel's data folder is refused when the backup runs too, not only when it is chosen; and choosing such a folder now shows "Folder not allowed" with the reason behind Details, instead of "Something went wrong".
+- **After a bulk action on a deck page grouped by tag**, the first group's header stays in view above the first card (it was scrolled just out of sight) (ADR 0084).
+- **The statistics chart grows with a larger text size set by a theme**, not only by the system font settings (ADR 0084).
+- Export… names its own file, not a media file, when writing fails part-way (ADR 0084).
 - **No more stray light dots around a card's text.** Moving to the next card, revealing the answer or editing in the preview could leave a pixel of the previous text (often of an accent, as above "Tribu engendrée"), or cut the top pixel off a new one. GTK repaints only what changed, measured on the letters without hinting, but draws them hinted, which can reach one pixel further; each card side now has GTK repaint a margin around everything it draws whenever it changes (ADR 0076, #120).
 
 ### Security

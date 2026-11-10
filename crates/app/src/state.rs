@@ -614,7 +614,7 @@ impl AppState {
     /// ones before them, and so on (clamped to `STATS_MAX_PERIOD`). The
     /// forecast is the `STATS_DAYS` days from tomorrow whatever the period.
     /// The days follow the settings' day start hour in local time (see
-    /// [`Store::stats`], [`Store::first_activity_at`]).
+    /// [`Store::stats_and_first_activity`]).
     ///
     /// # Errors
     /// A missing or deleted deck, or a failed read; a day grid that cannot
@@ -881,5 +881,242 @@ mod tests {
         assert_eq!(data.stats.days.iter().map(|d| d.reviews).sum::<u32>(), 0);
         let then = state.stats(Some(&deck.id), now, 1).unwrap();
         assert_eq!(then.stats.days.iter().map(|d| d.reviews).sum::<u32>(), 1);
+    }
+
+    // Hardening round 5 (ADR 0084): paging the statistics back.
+
+    use crate::pages::stats_text::{can_page_back, nothing_to_show, paged};
+
+    /// Writes `times` (UTC milliseconds, in order) as passed reviews of
+    /// card `card_id`, straight into the log as an import would, since one
+    /// write per review through the store waits for the disk each time.
+    fn log_reviews(state: &AppState, card_id: &str, times: &[i64]) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let mut conn = rusqlite::Connection::open(state.data_dir().join("rappel.sqlite3")).unwrap();
+        // One transaction: one wait for the disk, not one per review.
+        let tx = conn.transaction().unwrap();
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO review_events (id, card_id, kind, reviewed_at, grade, duration_ms)
+                 VALUES (?1, ?2, 'review', ?3, 'pass', 1000)",
+            )
+            .unwrap();
+        for at in times {
+            let k = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let id = format!("0ffd0000-0000-7000-8000-{k:012x}");
+            insert.execute(rusqlite::params![id, card_id, at]).unwrap();
+        }
+        drop(insert);
+        tx.commit().unwrap();
+    }
+
+    /// How many presses of Previous the page allows from the current
+    /// period, as the page decides them, up to `limit`.
+    fn presses_back(state: &AppState, deck: Option<&str>, now: i64, limit: u32) -> u32 {
+        let mut period = 0;
+        while period < limit {
+            let data = state.stats(deck, now, period).unwrap();
+            if !can_page_back(&data, period) {
+                break;
+            }
+            period = paged(period, true);
+        }
+        period
+    }
+
+    /// With no review at all, or only reviews of cards and decks that are
+    /// gone, there is nothing to page to; an archived deck's reviews still
+    /// count for every deck together (ADR 0068).
+    #[test]
+    fn paging_back_with_no_reviews_or_only_gone_ones() {
+        let (_tmp, state) = crate::testing::temporary_state();
+        let now = rappel_core::time::now_ms();
+        let day = crate::ui::time::DAY_MS;
+        let empty = state.create_deck("Empty").unwrap();
+        let data = state.stats(Some(&empty.id), now, 0).unwrap();
+        assert!(nothing_to_show(&data));
+        assert!(!can_page_back(&data, 0));
+        assert_eq!(presses_back(&state, None, now, 5), 0);
+
+        // A deck whose only card was reviewed 90 days ago, then deleted.
+        let gone = state.create_deck("Gone").unwrap();
+        let card = state
+            .add_card_with_tags(&gone.id, "f", "b", &[])
+            .unwrap()
+            .card;
+        log_reviews(&state, &card.id, &[now - 90 * day]);
+        state.delete_card(&card.id).unwrap();
+        let data = state.stats(Some(&gone.id), now, 0).unwrap();
+        assert_eq!(
+            data.first_review_at, None,
+            "a deleted card's reviews are gone"
+        );
+        assert!(!can_page_back(&data, 0));
+        // A deck archived after a review 70 days ago: its own page and the
+        // page of every deck can page back to that review.
+        let kept = state.create_deck("Kept").unwrap();
+        let card = state
+            .add_card_with_tags(&kept.id, "f", "b", &[])
+            .unwrap()
+            .card;
+        log_reviews(&state, &card.id, &[now - 70 * day]);
+        state.archive_deck(&kept.id).unwrap();
+        assert_eq!(presses_back(&state, Some(&kept.id), now, 10), 2);
+        assert_eq!(presses_back(&state, None, now, 10), 2);
+        let data = state.stats(None, now, 2).unwrap();
+        assert_eq!(data.stats.days.iter().map(|d| d.reviews).sum::<u32>(), 1);
+        // The deck deleted too: gone from every page.
+        state.delete_deck(&gone.id).unwrap();
+        assert_eq!(presses_back(&state, Some(&kept.id), now, 10), 2);
+    }
+
+    /// A first review far in the past: paging stops at the furthest period
+    /// (`STATS_MAX_PERIOD`, about 82 years), which still reads; one in the
+    /// future (made with a clock set ahead, then put right) gives nothing
+    /// to page to and is in no day, until the clock passes it.
+    #[test]
+    fn paging_back_to_a_first_review_far_in_the_past_or_in_the_future() {
+        let (_tmp, state) = crate::testing::temporary_state();
+        let now = rappel_core::time::now_ms();
+        let day = crate::ui::time::DAY_MS;
+        let deck = state.create_deck("Deck").unwrap();
+        let card = state
+            .add_card_with_tags(&deck.id, "f", "b", &[])
+            .unwrap()
+            .card;
+        let year = 365 * day;
+        log_reviews(&state, &card.id, &[now - 200 * year, now - 45 * day]);
+        let (cpu, presses) =
+            crate::testing::cpu_time_of(|| presses_back(&state, Some(&deck.id), now, u32::MAX));
+        assert_eq!(presses, STATS_MAX_PERIOD);
+        let furthest = state.stats(Some(&deck.id), now, STATS_MAX_PERIOD).unwrap();
+        assert_eq!(furthest.past_starts.len(), STATS_DAYS);
+        assert!(!can_page_back(&furthest, STATS_MAX_PERIOD));
+        crate::testing::print_timing("1,000 statistics periods paged back", cpu);
+        crate::testing::assert_cpu_within(cpu, Duration::from_secs(20), "1,000 periods");
+
+        let (_tmp, state) = crate::testing::temporary_state();
+        let deck = state.create_deck("Deck").unwrap();
+        let card = state
+            .add_card_with_tags(&deck.id, "f", "b", &[])
+            .unwrap()
+            .card;
+        log_reviews(&state, &card.id, &[now + 10 * year]);
+        let data = state.stats(Some(&deck.id), now, 0).unwrap();
+        assert_eq!(data.first_review_at, Some(now + 10 * year));
+        assert!(!can_page_back(&data, 0));
+        assert!(!nothing_to_show(&data), "the page shows, with empty days");
+        assert_eq!(data.stats.days.iter().map(|d| d.reviews).sum::<u32>(), 0);
+        // Ten years and two months later it is in the past.
+        assert_eq!(
+            presses_back(&state, Some(&deck.id), now + 10 * year + 60 * day, 10),
+            2
+        );
+    }
+
+    /// Clocks no real computer shows (before 1970, past `GLib`'s year 9999,
+    /// the ends of `i64`) never panic; within `GLib`'s years the statistics
+    /// read as usual, beyond them they read or fail with an error, which
+    /// the page shows as a toast.
+    #[test]
+    fn statistics_at_odd_clocks_never_panic() {
+        let (_tmp, state) = crate::testing::temporary_state();
+        let deck = state.create_deck("Deck").unwrap();
+        let card = state
+            .add_card_with_tags(&deck.id, "f", "b", &[])
+            .unwrap()
+            .card;
+        log_reviews(&state, &card.id, &[0]);
+        let year = 365 * crate::ui::time::DAY_MS;
+        for now in [0, -1, -60 * year, 8_000 * year, i64::MIN, i64::MAX] {
+            // A panic here fails the test: none may happen.
+            for period in [0, 1, STATS_MAX_PERIOD] {
+                let read = state.stats(None, now, period).map(|d| d.past_starts.len());
+                if (-60 * year..=8_000 * year).contains(&now) && period < STATS_MAX_PERIOD {
+                    assert_eq!(read.ok(), Some(STATS_DAYS), "at {now}, period {period}");
+                }
+            }
+            let mut period = 0;
+            while let Ok(data) = state.stats(None, now, period)
+                && can_page_back(&data, period)
+                && period < 3
+            {
+                period = paged(period, true);
+            }
+        }
+    }
+
+    /// Every review is in exactly one period: consecutive periods meet at
+    /// the same instant and none is lost or counted twice, across two
+    /// years of daylight-saving changes. Run in a process of its own with
+    /// a Central European time zone (a POSIX rule: no tzdata needed).
+    #[test]
+    fn periods_meet_across_daylight_saving_changes() {
+        crate::testing::run_alone("state::tests::periods_meet_in_paris", |command| {
+            command
+                .env("TZ", "CET-1CEST,M3.5.0,M10.5.0/3")
+                .env("RAPPEL_PERIODS_IN_PARIS", "1");
+        });
+    }
+
+    /// The body of `periods_meet_across_daylight_saving_changes`: it runs
+    /// only as that test's child process (`RAPPEL_PERIODS_IN_PARIS`), and
+    /// passes at once in a normal run.
+    #[test]
+    fn periods_meet_in_paris() {
+        if std::env::var_os("RAPPEL_PERIODS_IN_PARIS").is_none() {
+            return;
+        }
+        let (_tmp, state) = crate::testing::temporary_state();
+        let deck = state.create_deck("Deck").unwrap();
+        let card = state
+            .add_card_with_tags(&deck.id, "f", "b", &[])
+            .unwrap()
+            .card;
+        // 2026-11-10 12:00 UTC; reviews at each study day's start, a
+        // millisecond before it, an hour after it, for 800 days back.
+        let now = 1_794_312_000_000;
+        let hour = state.settings().unwrap().day_start_hour;
+        let starts = local_day_bounds_ms(now, hour, -800, 801);
+        let mut times = Vec::new();
+        for pair in starts.windows(2) {
+            times.extend([pair[0], pair[0] + crate::ui::time::HOUR_MS, pair[1] - 1]);
+        }
+        log_reviews(&state, &card.id, &times);
+        let mut counted = 0;
+        let mut newer_start = None;
+        let mut lengths = std::collections::BTreeSet::new();
+        for period in 0..30 {
+            let data = state.stats(Some(&deck.id), now, period).unwrap();
+            // Day lengths across the changes: 23, 24 or 25 hours.
+            for pair in data.past_starts.windows(2) {
+                let length = pair[1] - pair[0];
+                assert!(
+                    [23, 24, 25]
+                        .map(|h| h * crate::ui::time::HOUR_MS)
+                        .contains(&length),
+                    "a day of {length} ms"
+                );
+                lengths.insert(length / crate::ui::time::HOUR_MS);
+            }
+            if let Some(start) = newer_start {
+                let end = data.past_starts[STATS_DAYS - 1] + {
+                    // This period's last day ends where the newer one starts.
+                    let next = local_day_bounds_ms(data.past_starts[STATS_DAYS - 1], hour, 1, 1)[0];
+                    next - data.past_starts[STATS_DAYS - 1]
+                };
+                assert_eq!(end, start, "period {period} meets the one after it");
+            }
+            newer_start = Some(data.past_starts[0]);
+            counted += data.stats.days.iter().map(|d| d.reviews).sum::<u32>();
+        }
+        assert_eq!(
+            lengths.into_iter().collect::<Vec<_>>(),
+            [23, 24, 25],
+            "the zone's changes were crossed"
+        );
+        // The current period holds today, which has no review; 800 study
+        // days of three reviews each are in the 27 periods before.
+        assert_eq!(counted as usize, times.len());
     }
 }

@@ -471,9 +471,7 @@ fn pill_label(removable: bool) -> gtk::Label {
 mod tests {
     use super::*;
 
-    fn names(list: &[&str]) -> Vec<String> {
-        list.iter().map(|&n| n.to_owned()).collect()
-    }
+    use crate::testing::strings as names;
 
     #[test]
     fn pills_are_reused_and_the_rest_counted() {

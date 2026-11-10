@@ -23,7 +23,9 @@
 //! Redrawing: GTK draws again when the size changes, and the widget queues
 //! a draw when `AdwStyleManager` reports a new accent colour or dark mode.
 //! A change of the CSS `color` queues one through GTK's default
-//! `css_changed` handling (see `render/math_view.rs`).
+//! `css_changed` handling (see `render/math_view.rs`). Its height is
+//! measured from its font each time GTK asks, so a new text size, from
+//! the settings or from CSS, changes it.
 
 pub mod layout;
 
@@ -114,7 +116,7 @@ impl BarChart {
         let days = model.bars.len();
         imp.model.replace(model);
         imp.selected.set(selected.filter(|&d| d < days));
-        self.set_content_height(imp.height());
+        self.queue_resize();
         self.queue_draw();
     }
 
@@ -329,7 +331,6 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
             let chart = self.obj();
-            chart.set_content_height(self.height());
             chart.set_hexpand(true);
             chart.set_focusable(true);
             chart.add_css_class("bar-chart");
@@ -396,10 +397,29 @@ mod imp {
     }
 
     impl WidgetImpl for BarChart {
+        /// Its height follows its text: worked out from the widget's Pango
+        /// context at each measure, so any change of the text size is
+        /// followed. GTK queues a resize when the CSS font changes (a
+        /// style with another font size: `gtk_widget_real_css_changed`
+        /// updates the Pango context, then queues one for
+        /// `GTK_CSS_AFFECTS_TEXT_SIZE`, gtk/gtkwidget.c) and when the font,
+        /// its DPI or the font configuration does (below). gtk4-rs 0.11
+        /// has no `css_changed` to override, so the height is never stored
+        /// (ADR 0084: `set_content_height` kept the height of the font the
+        /// chart was made with). The width is the drawing area's.
+        fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
+            if orientation == gtk::Orientation::Vertical {
+                let height = self.height();
+                (height, height, -1, -1)
+            } else {
+                self.parent_measure(orientation, for_size)
+            }
+        }
+
         /// The text size changed (the font, its DPI or the font
         /// configuration: Gtk-4.0.gir, `GtkSystemSetting`): the labels'
-        /// lines are taller or shorter, so the chart's height follows. The
-        /// parent's handler updates the widget's Pango context first.
+        /// lines are taller or shorter, so the chart is measured again.
+        /// The parent's handler updates the widget's Pango context first.
         fn system_setting_changed(&self, setting: &gtk::SystemSetting) {
             self.parent_system_setting_changed(setting);
             if matches!(
@@ -409,15 +429,9 @@ mod imp {
                     | gtk::SystemSetting::FontConfig
             ) {
                 let chart = self.obj();
-                chart.set_content_height(self.height());
+                chart.queue_resize();
                 chart.queue_draw();
             }
-        }
-
-        /// A new window may have another display and font settings.
-        fn root(&self) {
-            self.parent_root();
-            self.obj().set_content_height(self.height());
         }
 
         /// The drawing area paints the shapes (`paint`, through the draw
@@ -652,6 +666,47 @@ mod tests {
             .flat_map(|y| (0..row_bytes).step_by(4).map(move |x| (y, x)))
             .map(|(y, x)| data[y * stride + x + 3])
             .collect()
+    }
+
+    /// A style on the display, taken off again when dropped, even if the
+    /// test fails, so no later test in the process sees it.
+    struct Styled(gtk::gdk::Display, gtk::CssProvider);
+
+    impl Drop for Styled {
+        fn drop(&mut self) {
+            gtk::style_context_remove_provider_for_display(&self.0, &self.1);
+        }
+    }
+
+    /// A larger font from CSS alone (no system setting changed) makes the
+    /// chart taller at the next layout (carry-over E, ADR 0084).
+    #[test]
+    fn the_height_follows_a_font_size_set_by_css() {
+        crate::testing::with_widgets(|| {
+            let chart = BarChart::default();
+            chart.set_model(model(&[(1.0, 0.0), (2.0, 1.0)], 5.0), None);
+            let window = gtk::Window::builder().child(&chart).build();
+            window.present();
+            crate::testing::settle();
+            let (before, _, _, _) = chart.measure(gtk::Orientation::Vertical, -1);
+            let provider = gtk::CssProvider::new();
+            provider.load_from_string(".bar-chart { font-size: 40px; }");
+            let display = gtk::prelude::WidgetExt::display(&chart);
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+            let styled = Styled(display, provider);
+            let grew = crate::testing::settle_until(
+                || chart.height() > before,
+                std::time::Duration::from_secs(5),
+            );
+            drop(styled);
+            let after = chart.height();
+            window.destroy();
+            assert!(grew, "{before} px, then {after} px");
+        });
     }
 
     #[test]

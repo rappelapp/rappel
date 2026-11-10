@@ -9,7 +9,7 @@
 //! that moment; paging reads another period with the same clock, so the
 //! days stay put while the page is open. Reopening the page reads again.
 
-mod text;
+pub(crate) mod text;
 
 use crate::i18n::gettext;
 use adw::prelude::*;

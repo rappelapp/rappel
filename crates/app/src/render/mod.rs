@@ -29,6 +29,7 @@ mod audio_player;
 mod breaks;
 mod images;
 mod ink_box;
+mod layout_key;
 mod markup;
 mod math;
 mod math_line;
@@ -52,6 +53,8 @@ use audio::AudioBudget;
 pub use audio_player::{CardAudio, stop_all as stop_audio};
 use images::{Failure, ImageBudget, Piece, PixelBudget};
 use math::{Budget, Placement};
+#[cfg(test)]
+pub(crate) use math::{cached_formulas, layouts_done as math_layouts_done};
 pub use math_line::MathLine;
 use math_paragraph::MathParagraph;
 use math_view::MathView;

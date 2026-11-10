@@ -15,6 +15,7 @@
 use gtk::glib;
 use gtk::subclass::prelude::*;
 
+use super::layout_key::{LAYOUT_CACHE_ENTRIES, LayoutKey as Fingerprint, PLACEHOLDER_BYTES};
 use super::markup::{self, Formula, Markup};
 use super::math_view::{self, MathView};
 
@@ -54,27 +55,6 @@ pub fn accessible_text(text: &str, formulas: &[Formula]) -> String {
     }
     out.push_str(text.get(from..).unwrap_or_default());
     super::breaks::without_breaks(&out)
-}
-
-/// The placeholder's length in UTF-8 (3), for Pango's `u32` byte indices.
-const PLACEHOLDER_BYTES: u32 = 3;
-
-/// How many layouts a paragraph keeps: GTK alternates between the unlimited
-/// width (the horizontal measure) and the real one. The oldest goes first,
-/// with `Vec::remove(0)`: at this size that moves one element (issue #42).
-const LAYOUT_CACHE_ENTRIES: usize = 2;
-
-/// What a Pango layout depends on besides the text. If it is the same, the
-/// layout from the last call is reused: GTK measures and allocates a widget
-/// several times and draws it every frame. `css_changed` cannot be
-/// overridden from gtk-rs, but a changed font makes GTK measure again, and
-/// this comparison then sees it.
-#[derive(Debug, Clone, PartialEq)]
-struct Fingerprint {
-    width: i32,
-    font: String,
-    dpi: i32,
-    direction: gtk::TextDirection,
 }
 
 mod imp {
@@ -222,17 +202,7 @@ mod imp {
         /// only when something it depends on changed.
         pub(super) fn layout(&self, width: i32) -> pango::Layout {
             let obj = self.obj();
-            let settings = obj.settings();
-            let fingerprint = Fingerprint {
-                width,
-                font: obj
-                    .pango_context()
-                    .font_description()
-                    .map(|d| d.to_str().to_string())
-                    .unwrap_or_default(),
-                dpi: settings.gtk_xft_dpi(),
-                direction: obj.direction(),
-            };
+            let fingerprint = Fingerprint::of(&*obj, width);
             if let Some((_, layout)) = self
                 .cache
                 .borrow()
@@ -330,11 +300,6 @@ mod tests {
             source: source.to_owned(),
             display: false,
         }
-    }
-
-    #[test]
-    fn the_placeholder_is_three_bytes() {
-        assert_eq!(PLACEHOLDER_BYTES as usize, markup::PLACEHOLDER.len_utf8());
     }
 
     #[test]

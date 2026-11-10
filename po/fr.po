@@ -1013,9 +1013,15 @@ msgstr "Mettez Rappel à jour pour continuer"
 msgid "Rappel Could Not Start"
 msgstr "Rappel n’a pas pu démarrer"
 
+#. Translators: a toast at the start: what is before ":" is its title (at most 24 characters), the rest is behind Details.
 #: crates/app/src/auto_backup.rs
 msgid "Automatic backups off: their setting could not be read. Choose the folder again in Preferences."
 msgstr "Sauvegardes désactivées : leur réglage n’a pas pu être lu. Choisissez à nouveau le dossier dans les Préférences."
+
+#. Translators: a toast: what is before ":" is its title (at most 24 characters), the rest is behind Details.
+#: crates/app/src/auto_backup.rs
+msgid "Folder not allowed: a backup inside Rappel’s data folder would be lost with it. Choose a folder outside it."
+msgstr "Dossier refusé : une sauvegarde dans le dossier de données de Rappel serait perdue avec lui. Choisissez un dossier en dehors."
 
 #: crates/app/src/auto_backup.rs
 msgid "the backup folder was not found; is its disk connected?"
@@ -1048,6 +1054,10 @@ msgstr "la sauvegarde dépasserait la taille qu’un import lit ; utilisez plu
 #: crates/app/src/auto_backup.rs
 msgid "something that is not a backup has today’s backup’s name in the backup folder"
 msgstr "un élément qui n’est pas une sauvegarde porte le nom de la sauvegarde du jour dans le dossier de sauvegarde"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is inside Rappel’s data folder, where a backup would be lost with the data; choose another one in Preferences"
+msgstr "le dossier de sauvegarde est dans le dossier de données de Rappel, où une sauvegarde serait perdue avec les données ; choisissez-en un autre dans les Préférences"
 
 #: crates/app/src/auto_backup.rs
 msgid "something unexpected happened"
@@ -1500,10 +1510,6 @@ msgid "Choose a folder on this computer"
 msgstr "Choisissez un dossier local"
 
 #: crates/app/src/dialogs/preferences.rs
-msgid "Choose a folder outside Rappel’s data folder"
-msgstr "Choisissez un dossier hors du dossier de données de Rappel"
-
-#: crates/app/src/dialogs/preferences.rs
 msgid "Recalculating…"
 msgstr "Recalcul…"
 
@@ -1550,22 +1556,6 @@ msgstr "Tous les paquets sont archivés"
 #: crates/app/src/pages/archived_page/text.rs
 msgid "Create a deck, or unarchive one to study it again"
 msgstr "Créez un paquet, ou désarchivez-en un pour l’étudier à nouveau"
-
-#: crates/app/src/pages/archived_page/text.rs
-#: crates/app/src/pages/browser_page/text.rs
-msgid "No cards"
-msgstr "Aucune carte"
-
-#. Translators: {count} is a number of cards.
-#. Translators: {count} is a number of cards falling due ("12 cards").
-#: crates/app/src/pages/archived_page/text.rs
-#: crates/app/src/pages/browser_page/text.rs
-#: crates/app/src/pages/stats_page/text.rs
-#: crates/app/src/ui/text.rs
-msgid "{count} card"
-msgid_plural "{count} cards"
-msgstr[0] "{count} carte"
-msgstr[1] "{count} cartes"
 
 #: crates/app/src/pages/archived_page/text.rs
 msgid "Unarchive"
@@ -2078,6 +2068,15 @@ msgid "{count} failed"
 msgid_plural "{count} failed"
 msgstr[0] "{count} ratée"
 msgstr[1] "{count} ratées"
+
+#. Translators: {count} is a number of cards falling due ("12 cards").
+#. Translators: {count} is a number of cards.
+#: crates/app/src/pages/stats_page/text.rs
+#: crates/app/src/ui/text.rs
+msgid "{count} card"
+msgid_plural "{count} cards"
+msgstr[0] "{count} carte"
+msgstr[1] "{count} cartes"
 
 #. Translators: {count} is a number of cards due on a day.
 #: crates/app/src/pages/stats_page/text.rs
@@ -3087,6 +3086,10 @@ msgstr ","
 msgid "“{name}” could not be restored: {error}"
 msgstr "« {name} » n’a pas pu être restauré : {error}"
 
+#: crates/app/src/ui/text.rs
+msgid "No cards"
+msgstr "Aucune carte"
+
 #. Translators: {count} is a number of cards to review now ("12 due"), shown under a deck's name.
 #: crates/app/src/ui/text.rs
 msgid "{count} due"
@@ -3602,6 +3605,9 @@ msgstr "Écrivez vos cartes en Markdown avec un aperçu en direct"
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr "Des images sur les cartes, sur un téléphone"
+
+#~ msgid "Choose a folder outside Rappel’s data folder"
+#~ msgstr "Choisissez un dossier hors du dossier de données de Rappel"
 
 #~ msgid "See how much you studied and how well you remember"
 #~ msgstr "Voyez combien vous avez étudié et ce que vous retenez"

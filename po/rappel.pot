@@ -1011,8 +1011,14 @@ msgstr ""
 msgid "Rappel Could Not Start"
 msgstr ""
 
+#. Translators: a toast at the start: what is before ":" is its title (at most 24 characters), the rest is behind Details.
 #: crates/app/src/auto_backup.rs
 msgid "Automatic backups off: their setting could not be read. Choose the folder again in Preferences."
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title (at most 24 characters), the rest is behind Details.
+#: crates/app/src/auto_backup.rs
+msgid "Folder not allowed: a backup inside Rappel’s data folder would be lost with it. Choose a folder outside it."
 msgstr ""
 
 #: crates/app/src/auto_backup.rs
@@ -1045,6 +1051,10 @@ msgstr ""
 
 #: crates/app/src/auto_backup.rs
 msgid "something that is not a backup has today’s backup’s name in the backup folder"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is inside Rappel’s data folder, where a backup would be lost with the data; choose another one in Preferences"
 msgstr ""
 
 #: crates/app/src/auto_backup.rs
@@ -1498,10 +1508,6 @@ msgid "Choose a folder on this computer"
 msgstr ""
 
 #: crates/app/src/dialogs/preferences.rs
-msgid "Choose a folder outside Rappel’s data folder"
-msgstr ""
-
-#: crates/app/src/dialogs/preferences.rs
 msgid "Recalculating…"
 msgstr ""
 
@@ -1548,22 +1554,6 @@ msgstr ""
 #: crates/app/src/pages/archived_page/text.rs
 msgid "Create a deck, or unarchive one to study it again"
 msgstr ""
-
-#: crates/app/src/pages/archived_page/text.rs
-#: crates/app/src/pages/browser_page/text.rs
-msgid "No cards"
-msgstr ""
-
-#. Translators: {count} is a number of cards.
-#. Translators: {count} is a number of cards falling due ("12 cards").
-#: crates/app/src/pages/archived_page/text.rs
-#: crates/app/src/pages/browser_page/text.rs
-#: crates/app/src/pages/stats_page/text.rs
-#: crates/app/src/ui/text.rs
-msgid "{count} card"
-msgid_plural "{count} cards"
-msgstr[0] ""
-msgstr[1] ""
 
 #: crates/app/src/pages/archived_page/text.rs
 msgid "Unarchive"
@@ -2074,6 +2064,15 @@ msgstr[1] ""
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{count} failed"
 msgid_plural "{count} failed"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: {count} is a number of cards falling due ("12 cards").
+#. Translators: {count} is a number of cards.
+#: crates/app/src/pages/stats_page/text.rs
+#: crates/app/src/ui/text.rs
+msgid "{count} card"
+msgid_plural "{count} cards"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -3083,6 +3082,10 @@ msgstr ""
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {name} is a deck's name, {error} why, in English.
 #: crates/app/src/ui/text.rs
 msgid "“{name}” could not be restored: {error}"
+msgstr ""
+
+#: crates/app/src/ui/text.rs
+msgid "No cards"
 msgstr ""
 
 #. Translators: {count} is a number of cards to review now ("12 due"), shown under a deck's name.

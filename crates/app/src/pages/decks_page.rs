@@ -326,43 +326,7 @@ impl DecksPage {
     /// native surface stops key events at its own root, and an `AdwDialog`
     /// is not a descendant of the page.
     fn add_study_key(&self) {
-        let keys = gtk::EventControllerKey::new();
-        keys.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, modifiers| page.study_key_pressed(key, modifiers)
-        ));
-        keys.connect_key_released(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move |_, key, _, modifiers| page.study_key_released(key, modifiers)
-        ));
-        self.add_controller(keys);
-        // Every press, before any child can claim it (Return on a row or
-        // on a menu button never reaches the bubble phase above): anything
-        // but a plain S cancels a held S. Returns Proceed, so it claims
-        // neither the press nor its release (gtkeventcontrollerkey.c).
-        let observer = gtk::EventControllerKey::new();
-        observer.set_propagation_phase(gtk::PropagationPhase::Capture);
-        observer.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, modifiers| {
-                page.imp().start_hold.observe_press(key, modifiers);
-                glib::Propagation::Proceed
-            }
-        ));
-        self.add_controller(observer);
-        // A hold left behind would start a session at a later release.
-        keys::when_left(self, |page| {
-            if let Some(page) = page.downcast_ref::<Self>() {
-                page.imp().start_hold.clear();
-            }
-        });
+        keys::install_start_key(self);
     }
 
     /// The deck row that has the keyboard focus, or holds the widget that
@@ -1028,6 +992,28 @@ fn log_first_frame(view: &adw::NavigationView, started: Instant, built_ms: u128)
         }
     ));
     handler.replace(Some(id));
+}
+
+impl keys::StartKeyPage for DecksPage {
+    fn start_key_pressed(
+        &self,
+        key: gtk::gdk::Key,
+        modifiers: gtk::gdk::ModifierType,
+    ) -> glib::Propagation {
+        self.study_key_pressed(key, modifiers)
+    }
+
+    fn start_key_released(&self, key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) {
+        self.study_key_released(key, modifiers);
+    }
+
+    fn observe_press(&self, key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) {
+        self.imp().start_hold.observe_press(key, modifiers);
+    }
+
+    fn clear_hold(&self) {
+        self.imp().start_hold.clear();
+    }
 }
 
 #[cfg(test)]

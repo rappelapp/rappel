@@ -636,7 +636,7 @@ impl BrowserPage {
         let n = imp.items.get().map_or(0, gio::ListStore::n_items);
         // From the page: the count label is hidden on a narrow window.
         self.announce(
-            &text::count_text(n as usize),
+            &crate::ui::text::card_count(n as usize),
             gtk::AccessibleAnnouncementPriority::Medium,
         );
     }
@@ -703,7 +703,8 @@ impl BrowserPage {
                 imp.content_stack.set_visible_child_name("empty");
             }
         }
-        imp.count_label.set_label(&text::count_text(items.len()));
+        imp.count_label
+            .set_label(&crate::ui::text::card_count(items.len()));
         // Select is enabled while there is a card to choose.
         self.selection().list_changed();
         self.update_study_tag();
@@ -1961,6 +1962,73 @@ mod tests {
         });
     }
 
+    /// Hardening round 5 (ADR 0084): All Cards over 10,000 cards full of
+    /// math (`testing::math_side`), as the deck page's test does: opening
+    /// and the first frame, then 20 screens down, in bounded CPU time, with
+    /// only the rows near the screen built and summarised, and the formula
+    /// cache within its 800 entries.
+    #[test]
+    fn ten_thousand_cards_full_of_math_open_and_scroll_quickly() {
+        crate::testing::with_widgets(|| {
+            const N: usize = 10_000;
+            let (_tmp, state, _deck, _ids) = crate::testing::state_with_cards(
+                N,
+                |i| {
+                    (
+                        crate::testing::math_side(i * 2, 0),
+                        crate::testing::math_side(i * 2 + 1, i % 3),
+                    )
+                },
+                &["maths"],
+                |_| vec![0],
+            );
+            let (open, (page, window)) = crate::testing::cpu_time_of(|| {
+                let page = page_over(&state, None);
+                let window = gtk::Window::builder()
+                    .default_width(800)
+                    .default_height(600)
+                    .child(&page)
+                    .build();
+                window.present();
+                let shown = crate::testing::settle_until(
+                    || count_rows(page.upcast_ref()) > 0,
+                    Duration::from_secs(30),
+                );
+                assert!(shown, "rows are shown");
+                crate::testing::settle();
+                (page, window)
+            });
+            let built = count_rows(page.upcast_ref());
+            assert!((1..1_000).contains(&built), "{built} rows");
+            let adjustment = page.imp().card_list.vadjustment().unwrap();
+            let (scroll, ()) = crate::testing::cpu_time_of(|| {
+                for _ in 0..20 {
+                    adjustment.set_value(adjustment.value() + adjustment.page_size());
+                    crate::testing::settle_until(|| false, Duration::from_millis(30));
+                }
+            });
+            assert!(adjustment.value() > 0.0);
+            assert!(crate::render::cached_formulas() <= 800);
+            let summarised = (0..u32::try_from(N).unwrap())
+                .filter(|&p| page.item(p).unwrap().has_previews())
+                .count();
+            assert!(summarised < 2_000, "{summarised} cards summarised");
+            window.destroy();
+            crate::testing::print_timing(
+                &format!("All Cards over 10,000 math cards: open and first frame ({built} rows)"),
+                open,
+            );
+            crate::testing::print_timing(
+                &format!(
+                    "All Cards over 10,000 math cards: 20 screens down ({summarised} summarised)"
+                ),
+                scroll,
+            );
+            crate::testing::assert_cpu_within(open, Duration::from_secs(10), "open");
+            crate::testing::assert_cpu_within(scroll, Duration::from_secs(20), "scroll");
+        });
+    }
+
     /// Hardening round 4 (ADR 0073): Ctrl+A on 10,000 cards. Choosing them
     /// all is quick (CPU time, ADR 0049), the header counts them, the list
     /// still builds only the rows on screen, and Delete on all of them and
@@ -2143,6 +2211,6 @@ mod tests {
     }
 
     fn count_rows(widget: &gtk::Widget) -> usize {
-        crate::testing::descendants::<CardRow>(widget).len()
+        crate::testing::card_rows(widget).len()
     }
 }

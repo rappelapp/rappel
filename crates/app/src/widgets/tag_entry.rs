@@ -815,9 +815,7 @@ mod tests {
 
     use super::*;
 
-    fn strings(list: &[&str]) -> Vec<String> {
-        list.iter().map(|&s| s.to_owned()).collect()
-    }
+    use crate::testing::strings;
 
     #[test]
     fn a_comma_or_enter_makes_pills_and_the_typed_name_counts() {

@@ -845,22 +845,25 @@ fn the_size_bound_is_no_more_than_a_real_export() {
 fn the_export_and_the_import_agree_at_the_exact_size_limit() {
     let (env, _, _) = media_env();
     let path = env.tmp.path().join("edge.rappel");
-    env.store.export_to(&path).unwrap();
+    // One time for every export: the time is written in `cards.json`, so
+    // two exports at two times can differ in size (ADR 0084, A).
+    let limited = |limit| {
+        env.store
+            .export_to_limited(&path, ExportOptions::default(), limit, T_EXPORT)
+    };
+    limited(MAX_ARCHIVE_BYTES).unwrap();
     let size = fs::metadata(&path).unwrap().len();
     let bytes = fs::read(&path).unwrap();
-    // The export writes the clock's time, whose digits can change the
-    // compressed size by a byte or two between two writes (as in
-    // `an_export_larger_than_an_import_reads_is_not_kept`): the export's
-    // own check is tried with that slack, the import's at the exact byte.
-    env.store
-        .export_to_limited(&path, ExportOptions::default(), size + 2)
-        .unwrap();
-    let kept = fs::metadata(&path).unwrap().len();
-    assert!(
-        env.store
-            .export_to_limited(&path, ExportOptions::default(), kept - 3)
-            .is_err_and(|e| matches!(e, Error::ExportTooLarge { .. }))
-    );
+    assert_eq!(bytes, env.store.export_bytes_at(T_EXPORT).unwrap().0);
+    // The export's own check, at the exact byte: kept at its size, refused
+    // one byte under it.
+    limited(size).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert!(limited(size - 1).is_err_and(|e| matches!(
+        e,
+        Error::ExportTooLarge { bytes: b, limit: l } if b == size && l == size - 1
+    )));
+    assert_eq!(fs::read(&path).unwrap(), bytes, "the file there stays");
     let at = |archive| Limits {
         archive,
         ..Limits::DEFAULT
@@ -879,28 +882,22 @@ fn the_export_and_the_import_agree_at_the_exact_size_limit() {
 fn an_export_larger_than_an_import_reads_is_not_kept() {
     let (env, _, _) = media_env();
     let path = env.tmp.path().join("big.rappel");
-    env.store.export_to(&path).unwrap();
-    // The time written in the file may differ by a digit between runs.
-    let size = fs::metadata(&path).unwrap().len();
+    let limited = |limit| {
+        env.store
+            .export_to_limited(&path, ExportOptions::default(), limit, T_EXPORT)
+    };
+    let size = env.store.export_bytes_at(T_EXPORT).unwrap().0.len() as u64;
     fs::write(&path, b"old").unwrap();
     let limit = size - 50;
-    let err = env
-        .store
-        .export_to_limited(&path, ExportOptions::default(), limit)
-        .unwrap_err();
+    let err = limited(limit).unwrap_err();
     assert!(
-        matches!(err, Error::ExportTooLarge { bytes, limit: l } if l == limit && bytes.abs_diff(size) <= 2),
+        matches!(err, Error::ExportTooLarge { bytes, limit: l } if l == limit && bytes == size),
         "{err:?}"
     );
     assert_eq!(fs::read(&path).unwrap(), b"old");
     assert!(!format::partial(&path).exists());
-    // Within the limit it is kept (the limit itself is not a refusal: only
+    // Within the limit it is kept; the limit itself is not a refusal (only
     // a file larger than it is).
-    env.store
-        .export_to_limited(&path, ExportOptions::default(), size + 50)
-        .unwrap();
-    let kept = fs::metadata(&path).unwrap().len();
-    env.store
-        .export_to_limited(&path, ExportOptions::default(), kept + 2)
-        .unwrap();
+    limited(size).unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().len(), size);
 }

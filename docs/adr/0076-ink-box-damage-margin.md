@@ -20,7 +20,7 @@ This is in GTK, not in Rappel's own drawing: `MathView` draws into a cairo node 
 
 **The box that holds a rendered card side, `InkBox` (`render/ink_box.rs`), adds a transparent colour node under its children, over their bounds grown by 2 px (`INK_MARGIN`), in a colour that differs at every snapshot.** `render::render` returns it, so the review page's front and back and the card editor's preview get it. A colour node whose colour or bounds changed is damaged as a whole (`gsk_color_node_diff`, gsk/gskcolornode.c), so each time the side draws anew, GTK repaints everything its glyphs can reach. The colour is fully transparent and draws nothing; its red, green and blue carry a 24-bit counter shared by all boxes, so a side that replaces another in the same place never matches it.
 
-The margin is 2 logical px: the measured overflow is one device pixel, and a device pixel is at most one logical pixel. The test asserts that the grown bounds contain both the painted pixels and Pango's (hinted) ink extents, at every size and offset tried.
+The margin is 2 logical px: the measured overflow is one device pixel, and a device pixel is at most one logical pixel, so one logical pixel would do; the second is room for a font or renderer that rounds differently. The test asserts that the grown bounds contain both the painted pixels and Pango's (hinted) ink extents, at every size and offset tried.
 
 Alternatives not taken:
 
@@ -33,7 +33,7 @@ Alternatives not taken:
 ## Consequences
 
 - Moving between cards, revealing the answer and typing in the editor preview no longer leave dots or cut tops of accents, whatever the renderer, since the overflow comes from hinting, which every renderer applies.
-- Whenever anything inside a side redraws (a hovered link, a playing sound's progress bar), the whole side's area is repainted, not just that widget. A side is small, and this happens only while something in it changes.
+- Whenever anything inside a side redraws (a hovered link or button, a playing sound's time), the whole side's area is repainted, not just that widget. A side is small, and this happens only while something in it changes. Checked for the audio control (ADR 0084): GTK's media file notifies its timestamp at GstPlay's position interval (100 ms, `position-updated`, gtk/media/gtkgstmediafile.c), and the control sets its note's text each time, but `gtk_label_set_label` does nothing for the text it already has (`gtk_label_set_label_internal`, gtk/gtklabel.c) and the note shows whole seconds ("0:03 / 0:12"), so a playing sound repaints its side once a second, plus once when it starts and stops. The control has no progress bar.
 - Other text in the app (card rows in lists, deck rows, dialogs) can show the same one-pixel leftovers in principle. Nothing reported it, and those widgets are replaced or recycled with much larger damage around them (rows, pages); if it shows there, the same box can hold them.
 - Not verified on the maintainer's renderer: under Xvfb, the GL and Vulkan renderers repaint the whole window every frame (no buffer age), so only the cairo renderer reproduces it there. The cause is in the text node's bounds, which all renderers share, so the fix applies to them too; the maintainer checks on his desktop.
 - A single pixel at the right edge of an "e" stays 3 to 9 levels (out of 255) darker than with a full redraw, inside the repainted area, on the cairo renderer only. It is not damage (the area is repainted) and not visible.

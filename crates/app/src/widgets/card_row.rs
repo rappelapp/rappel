@@ -1306,6 +1306,85 @@ mod tests {
         });
     }
 
+    /// Card `i` whose sides are full of math of `kind`
+    /// (`testing::math_side`), each side its own.
+    fn math_card(i: usize, kind: usize) -> CardObject {
+        let side = |salt: usize| crate::testing::math_side(i * 2 + salt, kind);
+        CardObject::new(TaggedCard {
+            card: Card {
+                id: format!("math-{kind}-{i:05}"),
+                deck_id: "deck".to_owned(),
+                front_md: side(0),
+                back_md: side(1),
+                created_at: 0,
+                updated_at: 0,
+                suspended: false,
+            },
+            tags: Vec::new(),
+        })
+    }
+
+    /// Binding, measuring and drawing a row whose two sides each have 32
+    /// formulas seen nowhere else, a 1 KiB formula, or 32 pieces of broken
+    /// LaTeX, as a list does while it scrolls through 10,000 such cards:
+    /// the formula cache (`math::formula`, 800 entries) cannot hold them,
+    /// so every bind lays each formula out again. Measured in CPU time per
+    /// row (`RAPPEL_TIMINGS=1`) and bounded far above it (ADR 0084).
+    #[test]
+    fn a_row_full_of_math_binds_and_draws_quickly() {
+        use gtk::subclass::prelude::*;
+        crate::testing::with_widgets(|| {
+            let window = gtk::Window::builder().default_width(640).build();
+            let row = CardRow::default();
+            window.set_child(Some(&row));
+            window.present();
+            crate::testing::settle();
+            for (kind, what, rows, per_side) in [
+                (0, "32 unique formulas a side", 120, 32),
+                (1, "a 1 KiB formula a side", 120, 1),
+                (2, "32 broken formulas a side", 120, 32),
+            ] {
+                let items: Vec<CardObject> = (0..rows).map(|i| math_card(i, kind)).collect();
+                let layouts = crate::render::math_layouts_done();
+                let (cpu, drawn) = crate::testing::cpu_time_of(|| {
+                    let mut drawn = 0;
+                    for item in &items {
+                        row.bind(item);
+                        for line in [&row.imp().front_line, &row.imp().back_line] {
+                            let _ = line.measure(gtk::Orientation::Horizontal, -1);
+                            let _ = line.measure(gtk::Orientation::Vertical, -1);
+                            drawn += line
+                                .drawn_at(560)
+                                .iter()
+                                .filter(|(_, shown, _)| *shown)
+                                .count();
+                            let snapshot = gtk::Snapshot::new();
+                            line.imp().snapshot(&snapshot);
+                        }
+                        row.unbind();
+                    }
+                    drawn
+                });
+                // Each formula is laid out once per bind, however full the
+                // cache is: the line keeps its display lists while bound.
+                assert_eq!(
+                    crate::render::math_layouts_done() - layouts,
+                    rows * 2 * per_side,
+                    "{what}"
+                );
+                let per_row = cpu / u32::try_from(rows).unwrap_or(1);
+                crate::testing::print_timing(
+                    &format!("a row with {what} ({drawn} drawn)"),
+                    per_row,
+                );
+                // Far above what was measured: a row in 2 ms of a debug
+                // build at worst (ADR 0084).
+                crate::testing::assert_cpu_within(per_row, Duration::from_millis(40), what);
+            }
+            window.destroy();
+        });
+    }
+
     /// As above, for the rows of All Cards (ADR 0044): binding one row to
     /// 4,000 of 5,000 cards makes no pill label and no popover, makes the
     /// previews of those cards only, and leaves no handler on the items it

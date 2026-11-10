@@ -9,7 +9,7 @@ use super::{Block, Inline, parse};
 /// The longest formula source a summary keeps as a formula, in bytes. A
 /// longer one is far wider than a row, so it is shown as its (cut) source
 /// text, like any other text.
-pub const MAX_SUMMARY_FORMULA_BYTES: usize = 1024;
+pub(crate) const MAX_SUMMARY_FORMULA_BYTES: usize = 1024;
 
 /// One piece of a [`Summary`].
 #[derive(Debug, Clone, PartialEq, Eq)]

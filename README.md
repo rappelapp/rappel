@@ -56,7 +56,7 @@ cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch 60 --d
 RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 ```
 
-Add `--markdown` for a deck with one card per Markdown construct, and `--math` for a deck with 15 formulas, one per card, plus a card with invalid LaTeX (`… fill_scratch_db -- /tmp/rappel-md 0 --markdown --math` adds only those two decks). `--demo` adds six decks that look like a real collection, with a month of history (the store screenshots use it). `--probability` adds the deck of the card list mockups: 17 cards that share four tags, some with two more, with formulas on both sides.
+Add `--markdown` for a deck with one card per Markdown construct, and `--math` for a deck with 15 formulas, one per card, plus a card with invalid LaTeX (`… fill_scratch_db -- /tmp/rappel-md 0 --markdown --math` adds only those two decks). `--demo` adds six decks that look like a real collection, with a month of history (the store screenshots use it). `--probability` adds the deck of the card list mockups: 17 cards that share four tags, some with two more, with formulas on both sides. `--groups` adds a deck whose cards fall into two groups by tag and one with too many tag sets to group (the deck page's groups), and `--history DAYS` a deck reviewed on most of the past DAYS days (to page the statistics back). The other options (`--tags`, `--suspended N`, `--media`, `--unused-media`, `--archived N`, `--anki PACKAGE`) are listed at the top of `crates/core/examples/fill_scratch_db.rs`.
 
 ## Translations
 
@@ -93,6 +93,8 @@ Drafts of the files that make Rappel look like a GNOME app once installed are in
 ## Recovering your data
 
 Rappel backs up its database automatically: before every schema upgrade, before an import that adds or brings back anything, and once a day, into `backups/` inside the data directory (`~/.local/share/rappel/backups/`, keeping every backup of the last 24 hours and the newest of each of the last 14 days).
+
+Those backups live beside the database and go with its disk. For a copy elsewhere, choose a folder under **Automatic Backups** in Preferences (a synced folder or a USB disk): each day Rappel closes after a change, it saves a normal export there, `Rappel backup YYYY-MM-DD.rappel`, keeps the 14 newest and never touches any other file in that folder (ADR 0080). Such a file is restored with **Import…**.
 
 If the database is damaged or you want to go back to an earlier state, **restore a backup through Rappel. Do not copy files by hand.** A copied-in file can be silently mixed with a leftover `rappel.sqlite3-wal` file from the old database, which corrupts it or brings back data you meant to drop. Restoring checks the backup first and refuses a damaged one. It never deletes your current database: it is kept next to the new one as `rappel.sqlite3.replaced-YYYYMMDD-HHMMSS` (with its `-wal`/`-shm`/`-journal` files, if any).
 

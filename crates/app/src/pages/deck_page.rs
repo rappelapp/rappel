@@ -440,43 +440,7 @@ impl DeckPage {
     /// leak its S here: a popover's native surface stops key events at its
     /// own root, and an `AdwDialog` is not a descendant of the page.
     fn add_study_key(&self) {
-        let keys = gtk::EventControllerKey::new();
-        keys.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, modifiers| page.study_key_pressed(key, modifiers)
-        ));
-        keys.connect_key_released(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move |_, key, _, modifiers| page.study_key_released(key, modifiers)
-        ));
-        self.add_controller(keys);
-        // Every press, before any child can claim it (Return on a row or
-        // on a menu button never reaches the bubble phase above): anything
-        // but a plain S cancels a held S. Returns Proceed, so it claims
-        // neither the press nor its release (gtkeventcontrollerkey.c).
-        let observer = gtk::EventControllerKey::new();
-        observer.set_propagation_phase(gtk::PropagationPhase::Capture);
-        observer.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, modifiers| {
-                page.imp().start_hold.observe_press(key, modifiers);
-                glib::Propagation::Proceed
-            }
-        ));
-        self.add_controller(observer);
-        // A hold left behind would start a session at a later release.
-        keys::when_left(self, |page| {
-            if let Some(page) = page.downcast_ref::<Self>() {
-                page.imp().start_hold.clear();
-            }
-        });
+        keys::install_start_key(self);
         let imp = self.imp();
         if let Some(label) = keys::label(keys::START_STUDY_TRIGGER) {
             let tip = keys::tooltip(&gettext("Study"), &label);
@@ -1456,17 +1420,17 @@ impl DeckPage {
         handler.replace(Some(id));
     }
 
-    /// Whether the keyboard focus is on the row of the first card shown.
+    /// Whether the keyboard focus is on the row of the first card shown
+    /// (the row itself: a button in it that took the focus since keeps it).
     fn first_card_focused(&self) -> bool {
         let list = &self.imp().card_list;
         let Some(item) = list.focus_child() else {
             return false;
         };
-        let focus = list.root().and_then(|root| root.focus());
-        let inside = focus.is_some_and(|w| w == item || w.is_ancestor(&item));
+        let on_row = list.root().and_then(|root| root.focus()).as_ref() == Some(&item);
         let row = item.first_child().and_downcast::<CardRow>();
         let first = self.shown_item(0);
-        inside
+        on_row
             && matches!((row, first), (Some(row), Some(first)) if row.card_id() == first.card().id)
     }
 
@@ -1951,8 +1915,31 @@ impl SelectionPage for DeckPage {
     }
 }
 
+impl keys::StartKeyPage for DeckPage {
+    fn start_key_pressed(
+        &self,
+        key: gtk::gdk::Key,
+        modifiers: gtk::gdk::ModifierType,
+    ) -> glib::Propagation {
+        self.study_key_pressed(key, modifiers)
+    }
+
+    fn start_key_released(&self, key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) {
+        self.study_key_released(key, modifiers);
+    }
+
+    fn observe_press(&self, key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) {
+        self.imp().start_hold.observe_press(key, modifiers);
+    }
+
+    fn clear_hold(&self) {
+        self.imp().start_hold.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::testing::card_rows as rows;
     use rappel_core::domain::Grade;
     use rappel_core::scheduling::Due;
 
@@ -1967,7 +1954,7 @@ mod tests {
     }
 
     #[test]
-    fn the_new_flags_change_in_one_range() {
+    fn the_standings_change_in_one_range() {
         assert_eq!(changed_range::<bool>(&[]), None);
         assert_eq!(changed_range(&[(true, true), (false, false)]), None);
         assert_eq!(changed_range(&[(true, false)]), Some(0..1));
@@ -2686,6 +2673,106 @@ mod tests {
         });
     }
 
+    /// After a bulk action the page reads its cards again and focuses the
+    /// first one: the first group's header stays in sight with it, whether
+    /// the row or a button of the action bar had the keyboard (ADR 0084,
+    /// carry-over B: it was scrolled out by its own height).
+    #[test]
+    fn after_a_bulk_action_the_first_groups_header_stays_in_sight() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, _ids) = grouped_page(60);
+            assert!(page.grouped());
+            let view = adw::NavigationView::new();
+            let window = gtk::Window::builder()
+                .default_width(600)
+                .default_height(500)
+                .child(&view)
+                .build();
+            window.present();
+            view.push(&page);
+            let list = page.imp().card_list.get();
+            let adjustment = list.vadjustment().unwrap();
+            let first = page.shown_item(0).unwrap().card().id.clone();
+            let settled = crate::testing::settle_until(
+                || focused_card(&window).as_ref() == Some(&first) && adjustment.upper() > 0.0,
+                Duration::from_secs(10),
+            );
+            assert!(settled, "the first row is focused");
+            // The row was focused once laid out, so the list is still at
+            // the very top with the header in view.
+            let header_shown = || {
+                list.first_child()
+                    .is_some_and(|h| h.css_name() == "header" && h.height() > 0)
+            };
+            let top = crate::testing::settle_until(
+                || adjustment.value() == 0.0 && header_shown(),
+                Duration::from_secs(10),
+            );
+            assert!(top, "scrolled to {}", adjustment.value());
+            // After a bulk action the page reads its cards again (`reload`)
+            // and `ui::selection` focuses the first row at once: the list is
+            // laid out again only at the next frame, and the header still
+            // comes into view with the row (carry-over B, ADR 0084).
+            for start in [0.0, 900.0] {
+                adjustment.set_value(start);
+                crate::testing::settle_until(
+                    || (adjustment.value() - start).abs() < 0.5,
+                    Duration::from_secs(5),
+                );
+                page.reload();
+                focus::focus_row(&list, 0);
+                let back = crate::testing::settle_until(
+                    || {
+                        focused_card(&window).as_ref() == Some(&first)
+                            && adjustment.value() == 0.0
+                            && header_shown()
+                    },
+                    Duration::from_secs(10),
+                );
+                // And it stays there.
+                crate::testing::settle_until(|| false, Duration::from_millis(300));
+                assert!(
+                    back && adjustment.value() == 0.0,
+                    "from {start}: focus on {:?}, scrolled to {}",
+                    focused_card(&window),
+                    adjustment.value()
+                );
+            }
+            // The usual path: the first card chosen and a button of the
+            // action bar pressed (it has the keyboard). Leaving the mode
+            // hands the focus to Select first; the first card then gets it,
+            // with its header in view.
+            adjustment.set_value(900.0);
+            crate::testing::settle_until(|| adjustment.value() > 100.0, Duration::from_secs(5));
+            let selection = page.selection();
+            selection.set_active(true);
+            selection.toggle(&first);
+            crate::testing::settle();
+            let bar_button =
+                crate::testing::descendants::<gtk::Button>(page.imp().selection_bar.upcast_ref())
+                    .into_iter()
+                    .find(|b| b.is_visible() && b.is_sensitive())
+                    .expect("the bar has a button");
+            assert!(bar_button.grab_focus());
+            selection.run(&selection.chosen_ids(), Bulk::Suspend(true));
+            let back = crate::testing::settle_until(
+                || {
+                    focused_card(&window).as_ref() == Some(&first)
+                        && adjustment.value() == 0.0
+                        && header_shown()
+                },
+                Duration::from_secs(10),
+            );
+            assert!(
+                back,
+                "after the bar's action: focus on {:?}, scrolled to {}",
+                focused_card(&window),
+                adjustment.value()
+            );
+            window.destroy();
+        });
+    }
+
     /// In a grouped list, a click opens the card shown there, and after a
     /// delete the focus goes to the row now at the deleted row's place in
     /// the list shown (`index_after_removal`), not in creation order.
@@ -2872,11 +2959,6 @@ mod tests {
         (0..n)
             .map(|p| page.item(p).unwrap().card().id.clone())
             .collect()
-    }
-
-    /// The card rows built, wherever they are.
-    fn rows(widget: &gtk::Widget) -> Vec<CardRow> {
-        crate::testing::descendants(widget)
     }
 
     /// The card whose row has the window's focus.
@@ -3101,11 +3183,108 @@ mod tests {
             crate::testing::print_timing("deck page: Ctrl+A on 10,000", choose);
             crate::testing::print_timing("deck page: suspend 10,000", suspend);
             crate::testing::print_timing("deck page: undo the suspend", undo);
-            crate::testing::print_timing("deck page: 10,000 new flags", refresh);
+            crate::testing::print_timing("deck page: 10,000 standings", refresh);
             crate::testing::assert_cpu_within(choose, Duration::from_secs(1), "Ctrl+A");
             crate::testing::assert_cpu_within(suspend, Duration::from_secs(5), "suspend");
             crate::testing::assert_cpu_within(undo, Duration::from_secs(5), "undo");
-            crate::testing::assert_cpu_within(refresh, Duration::from_secs(2), "new flags");
+            crate::testing::assert_cpu_within(refresh, Duration::from_secs(2), "standings");
+        });
+    }
+
+    /// The process's resident memory, from `/proc/self/status` (Linux), in
+    /// KiB; printed only, since other tests run in the same process.
+    fn resident_kib() -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| {
+                status
+                    .lines()
+                    .find_map(|l| l.strip_prefix("VmRSS:"))
+                    .and_then(|v| v.trim().trim_end_matches(" kB").trim().parse().ok())
+            })
+            .unwrap_or(0)
+    }
+
+    /// Hardening round 5 (ADR 0084): a deck of 10,000 cards whose sides are
+    /// full of math (`testing::math_side`: 32 formulas no other card has,
+    /// a 1 KiB formula, or 32 pieces of broken LaTeX), grouped by tag and
+    /// not. Opening the page and drawing its first frame, then paging down
+    /// through it, take bounded CPU time; the list builds only the rows
+    /// near the screen, makes summaries only for the cards it showed, and
+    /// the formula cache stays within its 800 entries while every row
+    /// brings new formulas (it thrashes, and each row lays its formulas out
+    /// once).
+    #[test]
+    fn ten_thousand_cards_full_of_math_open_and_scroll_quickly() {
+        crate::testing::with_widgets(|| {
+            const N: usize = 10_000;
+            for grouped in [true, false] {
+                let (_tmp, state, deck, _ids) = crate::testing::state_with_cards(
+                    N,
+                    |i| {
+                        (
+                            crate::testing::math_side(i * 2, 0),
+                            crate::testing::math_side(i * 2 + 1, i % 3),
+                        )
+                    },
+                    &["maths", "hard"],
+                    |i| match (grouped, i % 3) {
+                        (false, _) => Vec::new(),
+                        (true, 0) => vec![0, 1],
+                        (true, _) => vec![0],
+                    },
+                );
+                let memory = resident_kib();
+                let layouts = crate::render::math_layouts_done();
+                let (open, (page, window)) = crate::testing::cpu_time_of(|| {
+                    let page = DeckPage::new(state.clone(), deck).unwrap();
+                    let window = presented(&page);
+                    let shown = crate::testing::settle_until(
+                        || !rows(page.upcast_ref()).is_empty(),
+                        Duration::from_secs(30),
+                    );
+                    assert!(shown, "rows are shown");
+                    crate::testing::settle();
+                    (page, window)
+                });
+                assert_eq!(page.grouped(), grouped);
+                let built = rows(page.upcast_ref()).len();
+                assert!((1..1_000).contains(&built), "{built} rows");
+                let first_layouts = crate::render::math_layouts_done() - layouts;
+                let adjustment = page.imp().card_list.vadjustment().unwrap();
+                let (scroll, ()) = crate::testing::cpu_time_of(|| {
+                    for _ in 0..20 {
+                        adjustment.set_value(adjustment.value() + adjustment.page_size());
+                        // The frame clock lays the list out and binds the
+                        // rows at its next frame.
+                        crate::testing::settle_until(|| false, Duration::from_millis(30));
+                    }
+                });
+                assert!(adjustment.value() > 0.0);
+                assert!(crate::render::cached_formulas() <= 800);
+                let store = page.imp().cards.get().unwrap();
+                let summarised = (0..store.n_items())
+                    .filter(|&p| page.item(p).unwrap().has_previews())
+                    .count();
+                assert!(summarised < 2_000, "{summarised} cards summarised");
+                let grown = resident_kib().saturating_sub(memory);
+                window.destroy();
+                let what = if grouped { "grouped" } else { "plain" };
+                crate::testing::print_timing(
+                    &format!(
+                        "deck page of 10,000 math cards, {what}: open and first frame ({built} rows, {first_layouts} formulas laid out)"
+                    ),
+                    open,
+                );
+                crate::testing::print_timing(
+                    &format!(
+                        "deck page of 10,000 math cards, {what}: 20 screens down ({summarised} cards summarised, {grown} KiB more resident)"
+                    ),
+                    scroll,
+                );
+                crate::testing::assert_cpu_within(open, Duration::from_secs(10), "open");
+                crate::testing::assert_cpu_within(scroll, Duration::from_secs(20), "scroll");
+            }
         });
     }
 
