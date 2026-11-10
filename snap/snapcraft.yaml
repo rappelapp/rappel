@@ -10,8 +10,9 @@
 # confinement is its boundary (ADR 0055 and ADR 0082, amendments). The
 # tests check this file for them (crates/app/src/snap_install.rs).
 name: rappel
-# Title, summary, description and licence come from the metainfo
-# (`adopt-info` below); the version from Cargo.toml (`craftctl set`).
+# Title, summary and description come from the metainfo (`adopt-info`
+# below), the licence is set here; the version comes from Cargo.toml
+# (`craftctl set`).
 adopt-info: rappel
 base: core26
 confinement: strict

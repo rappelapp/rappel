@@ -107,11 +107,13 @@ The files that make Rappel look like a GNOME app once installed are in [`data/`]
   ```sh
   # 1. Quit Rappel (native). 2. Start the snap once and close it, so the folder exists.
   snap run rappel   # then close the window
-  # 3. With both closed:
+  # 3. With both closed, put the snap's empty collection aside (never merge two
+  #    collections: a leftover rappel.sqlite3-wal would mix with the copied database):
   mkdir -p ~/snap/rappel/current/.local/share
+  mv ~/snap/rappel/current/.local/share/rappel ~/snap/rappel/current/.local/share/rappel.empty
   cp -a ~/.local/share/rappel ~/snap/rappel/current/.local/share/
   ```
-  Or Export… in the native app and Import… in the snap.
+  Or Export… in the native app and Import… in the snap, which is the safer way.
 - **Reverts and disk use:** the collection is kept per snap revision. snapd copies `~/snap/rappel/<revision>/` at each refresh and keeps the copies of the revisions it retains (two by default on desktops), so `snap revert` brings back the collection as it was at that refresh, before any upgrade of the database. But reviews and edits made since then stay only in the newer revision's folder, which snapd deletes when it drops that revision: before reverting, Export… the collection, and Import… it after. The media folder is copied too, once per kept revision.
 - **Audio:** MP3, Ogg (Opus, Vorbis) and WAV play. **M4A does not play in the snap**: its AAC decoder (`faad`) is not included, because its licence (GPL-2.0-or-later) is not yet on the project's allowed list (ADR 0085).
 - **Images:** in its own snap only, Rappel runs glycin's image loader without bubblewrap, which strict confinement cannot run; the snap's confinement is the boundary (ADR 0055, amendment). The start-up line saying which image-loader mode is in use appears only with `RUST_LOG=rappel=info`: `RUST_LOG=rappel=info snap run rappel`.
@@ -119,7 +121,7 @@ The files that make Rappel look like a GNOME app once installed are in [`data/`]
 
 ## Recovering your data
 
-Rappel backs up its database automatically: before every schema upgrade, before an import that adds or brings back anything, and once a day, into `backups/` inside the data directory (`~/.local/share/rappel/backups/`, keeping every backup of the last 24 hours and the newest of each of the last 14 days).
+Rappel backs up its database automatically: before every schema upgrade, before an import that adds or brings back anything, and once a day, into `backups/` inside the data directory (`~/.local/share/rappel/backups/`, or `~/snap/rappel/current/.local/share/rappel/backups/` in the snap, keeping every backup of the last 24 hours and the newest of each of the last 14 days).
 
 Those backups live beside the database and go with its disk. For a copy elsewhere, choose a folder under **Automatic Backups** in Preferences (a synced folder or a USB disk): each day Rappel closes after a change, it saves a normal export there, `Rappel backup YYYY-MM-DD.rappel`, keeps the 14 newest and never touches any other file in that folder (ADR 0080). Such a file is restored with **Import…**.
 
