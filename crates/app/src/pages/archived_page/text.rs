@@ -36,16 +36,6 @@ pub fn deck_list_empty(archived: usize) -> (String, String) {
     }
 }
 
-/// Under an archived deck's name: how many cards it has.
-pub fn card_count(cards: usize) -> String {
-    if cards == 0 {
-        gettext("No cards")
-    } else {
-        // Translators: {count} is a number of cards.
-        counted(&ngettext("{count} card", "{count} cards", cards), cards)
-    }
-}
-
 /// The button of an archived deck's row.
 pub fn unarchive_label() -> String {
     gettext("Unarchive")
@@ -123,9 +113,6 @@ mod tests {
 
     #[test]
     fn an_archived_row_says_its_cards_and_names_its_deck() {
-        assert_eq!(card_count(0), "No cards");
-        assert_eq!(card_count(1), "1 card");
-        assert_eq!(card_count(5_210), "5,210 cards");
         assert_eq!(unarchive_label(), "Unarchive");
         assert_eq!(unarchive_tooltip("Spanish"), "Unarchive “Spanish”");
         // Braces in a name stay as they are.

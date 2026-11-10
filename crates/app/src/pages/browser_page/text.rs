@@ -8,8 +8,8 @@
 use rappel_core::domain::{Deck, Tag, name_key};
 use rappel_core::storage::{BrowseQuery, CardStatus, StateFilter};
 
-use crate::i18n::{fill, gettext, ngettext};
-use crate::ui::text::{counted, isolate, one_line};
+use crate::i18n::{fill, gettext};
+use crate::ui::text::{isolate, one_line};
 use crate::ui::time::relative_due;
 
 /// A card's status as a short phrase: "New", "Learning", "Due now",
@@ -36,17 +36,25 @@ fn capitalised(text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The third line of an All Cards row: "Maths · Due in 3 days". The tags
-/// are pills on the line above (`widgets::card_row`).
-pub fn caption(deck: &str, status: &str) -> String {
-    // Isolated, so a right-to-left deck name or an open bidi override
-    // cannot reorder the status after it.
-    fill(
-        // Translators: under a card in All Cards: {deck} is its deck's name,
-        // {status} "Due in 3 days".
-        &gettext("{deck} · {status}"),
-        &[("deck", &isolate(&one_line(deck))), ("status", status)],
-    )
+/// The second line of an All Cards row, under the front (ADR 0077, 0079):
+/// the deck's name, isolated so a right-to-left name or an open bidi
+/// override cannot reorder what follows it, then, when the card's back
+/// follows on the same line (`before_back`; not on a narrow window, where
+/// the line has room for the deck only), a " ·" that keeps the two apart:
+/// "Maths ·". When the card is due is the word at the row's end, and the
+/// tags are pills before it (`widgets::card_row`).
+pub fn subtitle(deck: &str, before_back: bool) -> String {
+    let deck = isolate(&one_line(deck));
+    if before_back {
+        fill(
+            // Translators: the start of the line under a card in All
+            // Cards, before the card's back: {deck} is its deck's name.
+            &gettext("{deck} ·"),
+            &[("deck", &deck)],
+        )
+    } else {
+        deck
+    }
 }
 
 /// What a screen reader says for an All Cards row: the card as the deck
@@ -67,15 +75,6 @@ pub fn row_label(card: &str, deck: &str, status: &str, selected: Option<bool>) -
         ],
     );
     crate::ui::selection::text::with_selected(base, selected)
-}
-
-/// "1,234 cards", "1 card", "No cards".
-pub fn count_text(n: usize) -> String {
-    if n == 0 {
-        gettext("No cards")
-    } else {
-        cards(n)
-    }
 }
 
 /// What the list area shows when it has no row.
@@ -322,12 +321,6 @@ pub fn all_tags() -> String {
     gettext("All Tags")
 }
 
-/// "3 cards" / "1 card".
-fn cards(n: usize) -> String {
-    // Translators: {count} is a number of cards.
-    counted(&ngettext("{count} card", "{count} cards", n), n)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,14 +367,14 @@ mod tests {
     }
 
     #[test]
-    fn a_caption_says_the_deck_and_the_status() {
-        assert_eq!(caption("Maths", "New"), "\u{2068}Maths\u{2069} · New");
-        assert_eq!(caption("a\n b", "Due now"), "\u{2068}a b\u{2069} · Due now");
+    fn the_subtitle_says_the_deck_before_the_back() {
+        assert_eq!(subtitle("Maths", false), "\u{2068}Maths\u{2069}");
+        assert_eq!(subtitle("Maths", true), "\u{2068}Maths\u{2069} ·");
+        assert_eq!(subtitle("a\n b", false), "\u{2068}a b\u{2069}");
         // An override in the name ends with it.
-        assert_eq!(
-            caption("\u{202e}x", "New"),
-            "\u{2068}\u{202e}x\u{2069} · New"
-        );
+        assert_eq!(subtitle("\u{202e}x", true), "\u{2068}\u{202e}x\u{2069} ·");
+        // A placeholder in the deck name stays as it is.
+        assert_eq!(subtitle("{deck}", true), "\u{2068}{deck}\u{2069} ·");
     }
 
     #[test]
@@ -431,9 +424,9 @@ mod tests {
 
     #[test]
     fn counts_and_titles() {
-        assert_eq!(count_text(0), "No cards");
-        assert_eq!(count_text(1), "1 card");
-        assert_eq!(count_text(5_000), "5,000 cards");
+        assert_eq!(crate::ui::text::card_count(0), "No cards");
+        assert_eq!(crate::ui::text::card_count(1), "1 card");
+        assert_eq!(crate::ui::text::card_count(5_000), "5,000 cards");
         assert_eq!(
             crate::ui::selection::text::selection_title(0),
             "Select Cards"
@@ -600,8 +593,8 @@ mod tests {
                 ),
                 "À revoir dans 3\u{a0}jours"
             );
-            assert_eq!(count_text(5_000), "5\u{202f}000 cartes");
-            assert_eq!(count_text(0), "Aucune carte");
+            assert_eq!(crate::ui::text::card_count(5_000), "5\u{202f}000 cartes");
+            assert_eq!(crate::ui::text::card_count(0), "Aucune carte");
             assert_eq!(
                 crate::ui::selection::text::moved_text(1),
                 "1 carte déplacée"

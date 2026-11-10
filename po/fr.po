@@ -4,7 +4,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: rappel\n"
-"Report-Msgid-Bugs-To: https://github.com/rsmirke/rappel/issues\n"
+"Report-Msgid-Bugs-To: https://github.com/rappelapp/rappel/issues\n"
 "Language-Team: French\n"
 "Language: fr\n"
 "MIME-Version: 1.0\n"
@@ -91,8 +91,10 @@ msgstr "État"
 msgid "Any State"
 msgstr "Tous les états"
 
+#. Translators: at the end of a card's row: a card never studied.
 #: crates/app/data/browser_page.blp
 #: crates/app/src/pages/browser_page/text.rs
+#: crates/app/src/widgets/card_row/text.rs
 msgid "New"
 msgstr "Nouvelle"
 
@@ -108,6 +110,7 @@ msgstr "À revoir"
 #: crates/app/data/browser_page.blp
 #: crates/app/data/card_row.blp
 #: crates/app/src/pages/browser_page/text.rs
+#: crates/app/src/widgets/card_row/text.rs
 msgid "Suspended"
 msgstr "Suspendue"
 
@@ -207,6 +210,7 @@ msgstr "Modifiée"
 
 #: crates/app/data/card_info_dialog.blp
 #: crates/app/data/preferences_dialog.blp
+#: crates/app/data/stats_page.blp
 msgid "Memory"
 msgstr "Mémoire"
 
@@ -250,6 +254,10 @@ msgstr "Prochaine révision"
 msgid "History"
 msgstr "Historique"
 
+#: crates/app/data/card_list_header.blp
+msgid "On every card:"
+msgstr "Sur toutes les cartes :"
+
 #: crates/app/data/card_row.blp
 msgid "Card Actions"
 msgstr "Actions sur la carte"
@@ -285,16 +293,6 @@ msgstr "_Déplacer vers un paquet…"
 #: crates/app/data/delete_card_dialog.blp
 msgid "_Delete"
 msgstr "Su_pprimer"
-
-#: crates/app/data/chart_card.blp
-#: crates/app/src/dialogs/card_info/text.rs
-msgid "Passed"
-msgstr "Réussie"
-
-#: crates/app/data/chart_card.blp
-#: crates/app/src/dialogs/card_info/text.rs
-msgid "Failed"
-msgstr "Ratée"
 
 #: crates/app/data/clean_up_media_dialog.blp
 msgid "Clean Up Media?"
@@ -339,6 +337,7 @@ msgid "_Add Card"
 msgstr "_Ajouter une carte"
 
 #: crates/app/data/deck_page.blp
+#: crates/app/src/pages/deck_page.rs
 msgid "Study"
 msgstr "Étudier"
 
@@ -373,8 +372,8 @@ msgstr "_Renommer…"
 
 #: crates/app/data/decks_page.blp
 #: crates/app/data/window.blp
-#: data/io.github.rsmirke.Rappel.desktop.in
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.desktop.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Rappel"
 msgstr "Rappel"
 
@@ -528,6 +527,38 @@ msgstr "Rappel sauvegarde vos données chaque jour où il s’ouvre, avant qu’
 #: crates/app/data/preferences_dialog.blp
 msgid "Open Backup Folder"
 msgstr "Ouvrir le dossier des sauvegardes"
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Automatic Backups"
+msgstr "Sauvegardes automatiques"
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Each day Rappel closes after a change, it saves an export to this folder and keeps the 14 newest"
+msgstr "Chaque jour où Rappel se ferme après une modification, il enregistre un export dans ce dossier et garde les 14 plus récents"
+
+#. Translators: the folder automatic backups go to.
+#: crates/app/data/preferences_dialog.blp
+msgctxt "automatic backups"
+msgid "Folder"
+msgstr "Dossier"
+
+#: crates/app/data/preferences_dialog.blp
+#: crates/app/src/auto_backup.rs
+msgctxt "automatic backups"
+msgid "Off"
+msgstr "Aucun"
+
+#: crates/app/data/preferences_dialog.blp
+msgid "_Choose…"
+msgstr "_Choisir…"
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Choose the folder for automatic backups"
+msgstr "Choisir le dossier des sauvegardes automatiques"
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Turn Off Automatic Backups"
+msgstr "Désactiver les sauvegardes automatiques"
 
 #: crates/app/data/preferences_dialog.blp
 msgid "Storage"
@@ -757,6 +788,14 @@ msgid "Studying"
 msgstr "Étude"
 
 #: crates/app/data/shortcuts-dialog.blp
+msgid "Start Studying"
+msgstr "Commencer à étudier"
+
+#: crates/app/data/shortcuts-dialog.blp
+msgid "On a deck or the deck list"
+msgstr "Sur un paquet ou dans la liste des paquets"
+
+#: crates/app/data/shortcuts-dialog.blp
 #: crates/app/src/pages/review_page.rs
 msgid "Show Answer"
 msgstr "Afficher la réponse"
@@ -926,6 +965,42 @@ msgstr "Pas encore de statistiques"
 msgid "Study some cards to see your progress here"
 msgstr "Étudiez quelques cartes pour voir vos progrès ici"
 
+#: crates/app/data/stats_page.blp
+msgid "Chart View"
+msgstr "Vue du graphique"
+
+#: crates/app/data/stats_page.blp
+msgid "_Reviews"
+msgstr "_Révisions"
+
+#: crates/app/data/stats_page.blp
+msgid "_Time"
+msgstr "_Temps"
+
+#: crates/app/data/stats_page.blp
+msgid "_Forecast"
+msgstr "_Prévision"
+
+#: crates/app/data/stats_page.blp
+msgctxt "chart legend"
+msgid "Passed"
+msgstr "Réussies"
+
+#: crates/app/data/stats_page.blp
+msgctxt "chart legend"
+msgid "Failed"
+msgstr "Ratées"
+
+#: crates/app/data/stats_page.blp
+msgctxt "paging button"
+msgid "Previous 30 Days"
+msgstr "30 jours précédents"
+
+#: crates/app/data/stats_page.blp
+msgctxt "paging button"
+msgid "Next 30 Days"
+msgstr "30 jours suivants"
+
 #: crates/app/data/tag_suggestions.blp
 msgid "Tag suggestions"
 msgstr "Suggestions d’étiquettes"
@@ -937,6 +1012,69 @@ msgstr "Mettez Rappel à jour pour continuer"
 #: crates/app/data/window.blp
 msgid "Rappel Could Not Start"
 msgstr "Rappel n’a pas pu démarrer"
+
+#. Translators: a toast at the start: what is before ":" is its title (at most 24 characters), the rest is behind Details.
+#: crates/app/src/auto_backup.rs
+msgid "Automatic backups off: their setting could not be read. Choose the folder again in Preferences."
+msgstr "Sauvegardes désactivées : leur réglage n’a pas pu être lu. Choisissez à nouveau le dossier dans les Préférences."
+
+#. Translators: a toast: what is before ":" is its title (at most 24 characters), the rest is behind Details.
+#: crates/app/src/auto_backup.rs
+msgid "Folder not allowed: a backup inside Rappel’s data folder would be lost with it. Choose a folder outside it."
+msgstr "Dossier refusé : une sauvegarde dans le dossier de données de Rappel serait perdue avec lui. Choisissez un dossier en dehors."
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder was not found; is its disk connected?"
+msgstr "le dossier de sauvegarde est introuvable ; son disque est-il branché ?"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is not a folder any more; choose it again in Preferences"
+msgstr "le dossier de sauvegarde n’est plus un dossier ; choisissez-le à nouveau dans les Préférences"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder was replaced by a link; choose it again in Preferences"
+msgstr "le dossier de sauvegarde a été remplacé par un lien ; choisissez-le à nouveau dans les Préférences"
+
+#: crates/app/src/auto_backup.rs
+msgid "the disk is full"
+msgstr "le disque est plein"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is read-only"
+msgstr "le dossier de sauvegarde est en lecture seule"
+
+#: crates/app/src/auto_backup.rs
+msgid "Rappel may not write to the backup folder"
+msgstr "Rappel n’a pas le droit d’écrire dans le dossier de sauvegarde"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup would be larger than an import reads; use Export… without media instead"
+msgstr "la sauvegarde dépasserait la taille qu’un import lit ; utilisez plutôt Exporter… sans les médias"
+
+#: crates/app/src/auto_backup.rs
+msgid "something that is not a backup has today’s backup’s name in the backup folder"
+msgstr "un élément qui n’est pas une sauvegarde porte le nom de la sauvegarde du jour dans le dossier de sauvegarde"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is inside Rappel’s data folder, where a backup would be lost with the data; choose another one in Preferences"
+msgstr "le dossier de sauvegarde est dans le dossier de données de Rappel, où une sauvegarde serait perdue avec les données ; choisissez-en un autre dans les Préférences"
+
+#: crates/app/src/auto_backup.rs
+msgid "something unexpected happened"
+msgstr "un problème inattendu est survenu"
+
+#: crates/app/src/auto_backup.rs
+msgid "it took too long and was stopped"
+msgstr "elle a pris trop de temps et a été arrêtée"
+
+#: crates/app/src/auto_backup.rs
+msgid "Rappel was stopped before it finished"
+msgstr "Rappel a été arrêté avant la fin"
+
+#. Translators: a toast at the start: what is before ":" is its title, the rest is behind Details. {reason} is why.
+#: crates/app/src/auto_backup.rs
+msgid "Automatic backup failed: {reason}"
+msgstr "Échec de la sauvegarde : {reason}"
 
 #: crates/app/src/dialogs/about.rs
 msgid "KaTeX Fonts"
@@ -1160,6 +1298,14 @@ msgstr "{date} · {relative}"
 msgid "New card"
 msgstr "Nouvelle carte"
 
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Passed"
+msgstr "Réussie"
+
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Failed"
+msgstr "Ratée"
+
 #. Translators: a review in a card's history: {date} is when, {time} how long the answer took ("4 s"), {interval} when the card came due again ("3 days").
 #: crates/app/src/dialogs/card_info/text.rs
 msgid "{date} · {time} · next in {interval}"
@@ -1351,6 +1497,19 @@ msgid "The setting was not saved: {error}"
 msgstr "Réglage non enregistré : {error}"
 
 #: crates/app/src/dialogs/preferences.rs
+msgid "Choose Backup Folder"
+msgstr "Choisir le dossier de sauvegarde"
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/dialogs/preferences.rs
+msgid "The folder chooser failed: {error}"
+msgstr "Le sélecteur de dossier a échoué : {error}"
+
+#: crates/app/src/dialogs/preferences.rs
+msgid "Choose a folder on this computer"
+msgstr "Choisissez un dossier local"
+
+#: crates/app/src/dialogs/preferences.rs
 msgid "Recalculating…"
 msgstr "Recalcul…"
 
@@ -1397,20 +1556,6 @@ msgstr "Tous les paquets sont archivés"
 #: crates/app/src/pages/archived_page/text.rs
 msgid "Create a deck, or unarchive one to study it again"
 msgstr "Créez un paquet, ou désarchivez-en un pour l’étudier à nouveau"
-
-#: crates/app/src/pages/archived_page/text.rs
-#: crates/app/src/pages/browser_page/text.rs
-msgid "No cards"
-msgstr "Aucune carte"
-
-#. Translators: {count} is a number of cards.
-#: crates/app/src/pages/archived_page/text.rs
-#: crates/app/src/pages/browser_page/text.rs
-#: crates/app/src/ui/text.rs
-msgid "{count} card"
-msgid_plural "{count} cards"
-msgstr[0] "{count} carte"
-msgstr[1] "{count} cartes"
 
 #: crates/app/src/pages/archived_page/text.rs
 msgid "Unarchive"
@@ -1470,10 +1615,10 @@ msgstr "Lecture des données impossible : {error}"
 msgid "Due {when}"
 msgstr "À revoir {when}"
 
-#. Translators: under a card in All Cards: {deck} is its deck's name, {status} "Due in 3 days".
+#. Translators: the start of the line under a card in All Cards, before the card's back: {deck} is its deck's name.
 #: crates/app/src/pages/browser_page/text.rs
-msgid "{deck} · {status}"
-msgstr "{deck} · {status}"
+msgid "{deck} ·"
+msgstr "{deck} ·"
 
 #. Translators: what a screen reader says for a card in All Cards: {card} is the card ("2 + 2, back: 4"), {deck} its deck's name, {status} "Due in 3 days".
 #: crates/app/src/pages/browser_page/text.rs
@@ -1552,6 +1697,7 @@ msgstr "Lecture des cartes à étudier impossible : {error}"
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/pages/deck_page.rs
 #: crates/app/src/pages/decks_page.rs
+#: crates/app/src/pages/stats_page.rs
 msgid "The statistics could not be read: {error}"
 msgstr "Lecture des statistiques impossible : {error}"
 
@@ -1838,9 +1984,7 @@ msgstr[0] "Carte révisée"
 msgstr[1] "Cartes révisées"
 
 #. Translators: what a screen reader says for a headline figure: {caption} is "Pass rate", {value} "91%".
-#. Translators: what a screen reader says for a headline figure: {caption} is "Pass rate, last 30 days", {value} "91%".
 #: crates/app/src/pages/review_page.rs
-#: crates/app/src/pages/stats_page/text.rs
 msgid "{caption}: {value}"
 msgstr "{caption} : {value}"
 
@@ -1862,14 +2006,6 @@ msgid "Resetting the setting stopped unexpectedly"
 msgstr "La réinitialisation du réglage s’est arrêtée de façon inattendue"
 
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Time Studied per Day"
-msgstr "Temps d’étude par jour"
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Due Forecast"
-msgstr "Prévision des révisions"
-
-#: crates/app/src/pages/stats_page/text.rs
 msgid "Expected retention"
 msgstr "Rétention attendue"
 
@@ -1889,6 +2025,35 @@ msgstr "aucune révision"
 msgid "Time studied, last 30 days"
 msgstr "Temps d’étude, 30 derniers jours"
 
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Time Studied per Day"
+msgstr "Temps d’étude par jour"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Due Forecast"
+msgstr "Prévision des révisions"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Today"
+msgstr "Aujourd’hui"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Tomorrow"
+msgstr "Demain"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Next 30 Days"
+msgstr "30 prochains jours"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Last 30 Days"
+msgstr "30 derniers jours"
+
+#. Translators: a period of the statistics; {first} and {last} are its first and last days, as "8 Sep" (or "8 Sep 2025" in another year).
+#: crates/app/src/pages/stats_page/text.rs
+msgid "{first} – {last}"
+msgstr "{first} – {last}"
+
 #. Translators: {count} is a number of reviews (answers given to cards).
 #: crates/app/src/pages/stats_page/text.rs
 #: crates/app/src/ui/text.rs
@@ -1897,10 +2062,28 @@ msgid_plural "{count} reviews"
 msgstr[0] "{count} révision"
 msgstr[1] "{count} révisions"
 
-#. Translators: the top of a chart's scale; {value} is a number.
+#. Translators: {count} is a number of failed reviews on a day ("3 failed"), under its number of reviews.
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Up to {value}"
-msgstr "Jusqu’à {value}"
+msgid "{count} failed"
+msgid_plural "{count} failed"
+msgstr[0] "{count} ratée"
+msgstr[1] "{count} ratées"
+
+#. Translators: {count} is a number of cards falling due ("12 cards").
+#. Translators: {count} is a number of cards.
+#: crates/app/src/pages/stats_page/text.rs
+#: crates/app/src/ui/text.rs
+msgid "{count} card"
+msgid_plural "{count} cards"
+msgstr[0] "{count} carte"
+msgstr[1] "{count} cartes"
+
+#. Translators: {count} is a number of cards due on a day.
+#: crates/app/src/pages/stats_page/text.rs
+msgid "{count} card due"
+msgid_plural "{count} cards due"
+msgstr[0] "{count} carte à revoir"
+msgstr[1] "{count} cartes à revoir"
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
@@ -1912,22 +2095,15 @@ msgstr "{day} : aucune révision"
 msgid "{day}: {reviews}, {passed} passed, {failed} failed"
 msgstr "{day} : {reviews}, {passed} réussies, {failed} ratées"
 
+#. Translators: a chart's summary for screen readers; {period} is "Last 30 Days" or "8 Sep – 7 Oct".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: no reviews."
-msgstr "30 derniers jours : aucune révision."
+msgid "{period}: no reviews."
+msgstr "{period} : aucune révision."
 
-#. Translators: a chart's summary for screen readers: {reviews} is "120 reviews", {passed} a number, {day} "14 October", {most} a number of reviews.
+#. Translators: a chart's summary for screen readers: {period} is "Last 30 Days" or "8 Sep – 7 Oct", {reviews} "120 reviews", {passed} and {failed} numbers, {day} "14 October", {most} a number of reviews.
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: {reviews}, {passed} passed, busiest day {day} with {most}."
-msgstr "30 derniers jours : {reviews}, {passed} réussies, jour le plus chargé le {day} avec {most}."
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Today"
-msgstr "Aujourd’hui"
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "No reviews in the last 30 days"
-msgstr "Aucune révision ces 30 derniers jours"
+msgid "{period}: {reviews}, {passed} passed, {failed} failed, busiest day {day} with {most}."
+msgstr "{period} : {reviews}, {passed} réussies, {failed} ratées ; jour le plus chargé : {day}, avec {most}."
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
@@ -1939,74 +2115,40 @@ msgstr "{day} : aucun temps d’étude"
 msgid "{day}: {time} studied"
 msgstr "{day} : {time} d’étude"
 
+#. Translators: a chart's summary for screen readers; {period} is "Last 30 Days" or "8 Sep – 7 Oct".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: no time studied."
-msgstr "30 derniers jours : aucun temps d’étude."
+msgid "{period}: no time studied."
+msgstr "{period} : aucun temps d’étude."
 
-#. Translators: a chart's summary for screen readers: {time} is "3 h 12 min", {day} "14 October", {most} "25 min".
+#. Translators: a chart's summary for screen readers: {period} is "Last 30 Days" or "8 Sep – 7 Oct", {time} "3 h 12 min", {day} "14 October", {most} "25 min".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: {time} studied, longest day {day} with {most}."
-msgstr "30 derniers jours : {time} d’étude, jour le plus long le {day} avec {most}."
-
-#. Translators: the top of a chart's scale; {value} is a number of minutes.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Up to {value} min"
-msgstr "Jusqu’à {value} min"
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "No time studied in the last 30 days"
-msgstr "Aucun temps d’étude ces 30 derniers jours"
-
-#. Translators: {count} is a number of cards due on a day.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "{count} card due"
-msgid_plural "{count} cards due"
-msgstr[0] "{count} carte à revoir"
-msgstr[1] "{count} cartes à revoir"
+msgid "{period}: {time} studied, longest day {day} with {most}."
+msgstr "{period} : {time} d’étude ; jour le plus long : {day}, avec {most}."
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{day}: nothing due"
 msgstr "{day} : rien à revoir"
 
-#. Translators: a chart's day; {day} is "Today", {cards} "12 cards due", {overdue} a number.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "{day}: {cards}, {overdue} of them overdue"
-msgstr "{day} : {cards}, dont {overdue} en retard"
-
 #. Translators: a chart's day; {day} is "Tue 14 Oct", {cards} "12 cards due".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{day}: {cards}"
 msgstr "{day} : {cards}"
 
+#. Translators: a chart's summary for screen readers; {period} is "Next 30 Days".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Next 14 days: nothing due."
-msgstr "14 prochains jours : rien à revoir."
+msgid "{period}: nothing due."
+msgstr "{period} : rien à revoir."
 
 #: crates/app/src/pages/stats_page/text.rs
-msgid "today"
-msgstr "aujourd’hui"
+#: crates/app/src/widgets/deck_row/text.rs
+msgid "tomorrow"
+msgstr "demain"
 
-#. Translators: a chart's summary for screen readers: {cards} is "40 cards due", {overdue} a number, {day} "today" or "14 October", {most} a number of cards.
+#. Translators: a chart's summary for screen readers: {period} is "Next 30 Days", {cards} "40 cards due", {day} "tomorrow" or "14 October", {most} a number of cards.
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Next 14 days: {cards}, {overdue} of them overdue, busiest day {day} with {most}."
-msgstr "14 prochains jours : {cards}, dont {overdue} en retard ; jour le plus chargé : {day}, avec {most}."
-
-#. Translators: a chart's summary for screen readers: {cards} is "40 cards due", {day} "today" or "14 October", {most} a number of cards.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Next 14 days: {cards}, busiest day {day} with {most}."
-msgstr "14 prochains jours : {cards} ; jour le plus chargé : {day}, avec {most}."
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Nothing due in the next 14 days"
-msgstr "Rien à revoir dans les 14 prochains jours"
-
-#. Translators: under the forecast chart; {count} is a number of cards.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "{count} overdue card is counted under Today"
-msgid_plural "{count} overdue cards are counted under Today"
-msgstr[0] "{count} carte en retard est comptée dans Aujourd’hui"
-msgstr[1] "{count} cartes en retard sont comptées dans Aujourd’hui"
+msgid "{period}: {cards}, busiest day {day} with {most}."
+msgstr "{period} : {cards} ; jour le plus chargé : {day}, avec {most}."
 
 #: crates/app/src/render/audio.rs
 msgid "Play"
@@ -2944,6 +3086,10 @@ msgstr ","
 msgid "“{name}” could not be restored: {error}"
 msgstr "« {name} » n’a pas pu être restauré : {error}"
 
+#: crates/app/src/ui/text.rs
+msgid "No cards"
+msgstr "Aucune carte"
+
 #. Translators: {count} is a number of cards to review now ("12 due"), shown under a deck's name.
 #: crates/app/src/ui/text.rs
 msgid "{count} due"
@@ -2977,6 +3123,11 @@ msgstr "{minutes} min {seconds} s"
 #: crates/app/src/ui/text.rs
 msgid "{hours} h {minutes} min"
 msgstr "{hours} h {minutes} min"
+
+#. Translators: a whole number of hours ("3 h"), on a chart's scale.
+#: crates/app/src/ui/text.rs
+msgid "{hours} h"
+msgstr "{hours} h"
 
 #. Translators: a time in minutes ("12 min").
 #: crates/app/src/ui/text.rs
@@ -3041,6 +3192,12 @@ msgctxt "date format"
 msgid "%-d %b"
 msgstr "%-d %b"
 
+#. Translators: a day of another year in a period of the statistics, for g_date_time_format(): %-d is the day of the month, %b the short month name, %Y the year ("17 Sep 2025").
+#: crates/app/src/ui/time.rs
+msgctxt "date format"
+msgid "%-d %b %Y"
+msgstr "%-d %b %Y"
+
 #. Translators: a day in a chart's summary, for g_date_time_format(): %-d is the day of the month, %B the month name ("14 October").
 #: crates/app/src/ui/time.rs
 msgctxt "date format"
@@ -3098,6 +3255,45 @@ msgstr "Nettoyage incomplet. Les anciennes sauvegardes n’ont pas pu être supp
 msgid "Restore backup from {when}"
 msgstr "Restaurer la sauvegarde du {when}"
 
+#. Translators: a header in a deck's list of cards, before tag pills: the cards under it have these tags too, besides those on every card.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "Also"
+msgstr "Aussi"
+
+#. Translators: a header in a deck's list of cards, before tag pills, when no tag is on every card of the deck.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "Tagged"
+msgstr "Étiquettes"
+
+#. Translators: a header in a deck's list of cards: the cards under it have no tag but those on every card.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "Only the shared tags"
+msgstr "Seulement les étiquettes communes"
+
+#. Translators: a header in a deck's list of cards: the cards under it have no tag.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "No tags"
+msgstr "Sans étiquette"
+
+#. Translators: what a screen reader says for a group of cards: {title} is "Only the shared tags" or "No tags", {count} "14 cards".
+#: crates/app/src/widgets/card_groups/text.rs
+msgid "{title}, {count}"
+msgstr "{title}, {count}"
+
+#. Translators: what a screen reader says for a group of cards that have these tags besides the shared ones: {tags} is "Analyse, MAT3101", {count} "7 cards".
+#: crates/app/src/widgets/card_groups/text.rs
+msgid "Also tagged {tags}, {count}"
+msgstr "Également : {tags}, {count}"
+
+#. Translators: the same, when no tag is on every card.
+#: crates/app/src/widgets/card_groups/text.rs
+msgid "Tagged {tags}, {count}"
+msgstr "Étiquettes : {tags}, {count}"
+
 #: crates/app/src/widgets/card_row/text.rs
 msgid "empty front"
 msgstr "recto vide"
@@ -3110,6 +3306,64 @@ msgstr "verso : {back}"
 #: crates/app/src/widgets/card_row/text.rs
 msgid "suspended"
 msgstr "suspendue"
+
+#. Translators: what a screen reader says for a card never studied, at the end of its row's label.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "new"
+msgstr "nouvelle"
+
+#. Translators: at the end of a card's row: the card is due now.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "Today"
+msgstr "Aujourd’hui"
+
+#. Translators: what a screen reader says for a card due now.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due today"
+msgstr "à revoir aujourd’hui"
+
+#. Translators: at the end of a card's row: when it is due again, later today; {interval} is "10 min" or "5 h".
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "In {interval}"
+msgstr "Dans {interval}"
+
+#. Translators: the same for a screen reader.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due in {interval}"
+msgstr "à revoir dans {interval}"
+
+#. Translators: at the end of a card's row: due in the next study day.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "Tomorrow"
+msgstr "Demain"
+
+#. Translators: the same for a screen reader.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due tomorrow"
+msgstr "à revoir demain"
+
+#. Translators: at the end of a card's row: due in {count} days (2 or more).
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "In {count} day"
+msgid_plural "In {count} days"
+msgstr[0] "Dans {count} jour"
+msgstr[1] "Dans {count} jours"
+
+#. Translators: the same for a screen reader.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due in {count} day"
+msgid_plural "due in {count} days"
+msgstr[0] "à revoir dans {count} jour"
+msgstr[1] "à revoir dans {count} jours"
 
 #. Translators: starts a study session over the cards that carry a tag, in every deck; {tag} is the tag's name.
 #: crates/app/src/widgets/card_row/text.rs
@@ -3132,10 +3386,6 @@ msgid "{count} More Tag in All Cards…"
 msgid_plural "{count} More Tags in All Cards…"
 msgstr[0] "{count} étiquette de plus dans Toutes les cartes…"
 msgstr[1] "{count} étiquettes de plus dans Toutes les cartes…"
-
-#: crates/app/src/widgets/chart_card.rs
-msgid "Select a day to see its values"
-msgstr "Choisissez un jour pour voir ses valeurs"
 
 #. Translators: a deck row for screen readers: {name} is the deck's name, {line} "12 due, 5 new".
 #: crates/app/src/widgets/deck_row/text.rs
@@ -3193,10 +3443,6 @@ msgid "{count} hour"
 msgid_plural "{count} hours"
 msgstr[0] "{count} heure"
 msgstr[1] "{count} heures"
-
-#: crates/app/src/widgets/deck_row/text.rs
-msgid "tomorrow"
-msgstr "demain"
 
 #: crates/app/src/widgets/tag_entry.rs
 msgid "Add a tag"
@@ -3280,77 +3526,153 @@ msgid "{message}. The copy an earlier restore left waiting was kept as {path}"
 msgstr "{message}. La copie laissée en attente par une restauration précédente a été conservée sous {path}"
 
 #. Translators: A short name for what the app is, shown next to its name in some menus.
-#: data/io.github.rsmirke.Rappel.desktop.in
+#: data/io.github.rappelapp.Rappel.desktop.in
 msgid "Flashcards"
 msgstr "Cartes mémoire"
 
 #. Translators: A tooltip in the menus; the same text as the summary in the app's store listing.
 #. Translators: The app's summary in software stores, at most 35 characters.
-#: data/io.github.rsmirke.Rappel.desktop.in
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.desktop.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Memorize with flashcards"
 msgstr "Mémorisez avec des cartes"
 
 #. Translators: Search terms to find this app. Do NOT translate or localize the semicolons, and end the list with one. Add words people would search for in your language.
-#: data/io.github.rsmirke.Rappel.desktop.in
+#: data/io.github.rappelapp.Rappel.desktop.in
 msgid "flashcards;spaced repetition;memorize;learn;study;cards;"
 msgstr "cartes mémoire;répétition espacée;mémoriser;apprendre;réviser;cartes;flashcards;"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Rappel shows each card again just before you would forget it, so a few minutes a day are enough to remember what you learn. After each card you only say whether you knew it: Fail or Pass."
 msgstr "Rappel vous remontre chaque carte juste avant que vous ne l’oubliiez : quelques minutes par jour suffisent pour retenir ce que vous apprenez. Après chaque carte, vous dites seulement si vous la saviez : Raté ou Réussi."
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Cards are written in Markdown, with formulas, images and sound. Everything stays on your computer: Rappel never goes online and needs no account."
 msgstr "Les cartes s’écrivent en Markdown, avec des formules, des images et du son. Tout reste sur votre ordinateur : Rappel ne se connecte jamais à Internet et ne demande aucun compte."
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Two answers only, scheduled by FSRS, a modern model of memory"
 msgstr "Deux réponses seulement, planifiées par FSRS, un modèle moderne de la mémoire"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Formulas drawn as in LaTeX"
 msgstr "Formules dessinées comme en LaTeX"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures and sound on cards"
 msgstr "Images et sons sur les cartes"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Search, tags and statistics"
 msgstr "Recherche, étiquettes et statistiques"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Automatic backups, and export to a single file"
 msgstr "Sauvegardes automatiques et export dans un seul fichier"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Import from Anki, with your review history"
 msgstr "Import depuis Anki, avec votre historique de révisions"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Works on phones and with the keyboard alone"
 msgstr "Fonctionne sur téléphone et au clavier seul"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Study a card, then say whether you knew it"
 msgstr "Étudiez une carte, puis dites si vous la saviez"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Your decks with the cards due today"
 msgstr "Vos paquets et les cartes à revoir aujourd’hui"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "A deck's cards, grouped by their tags"
+msgstr "Les cartes d’un paquet, groupées par étiquette"
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "Find any card by words, tags or state"
+msgstr "Trouvez une carte par mot, étiquette ou état"
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "See how much you studied, a month at a time"
+msgstr "Voyez combien vous avez étudié, mois par mois"
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Write cards in Markdown with a live preview"
 msgstr "Écrivez vos cartes en Markdown avec un aperçu en direct"
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
-msgid "See how much you studied and how well you remember"
-msgstr "Voyez combien vous avez étudié et ce que vous retenez"
-
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr "Des images sur les cartes, sur un téléphone"
+
+#~ msgid "Choose a folder outside Rappel’s data folder"
+#~ msgstr "Choisissez un dossier hors du dossier de données de Rappel"
+
+#~ msgid "See how much you studied and how well you remember"
+#~ msgstr "Voyez combien vous avez étudié et ce que vous retenez"
+
+#~ msgid "{status} · {deck}"
+#~ msgstr "{status} · {deck}"
+
+#~ msgid "{subtitle} ·"
+#~ msgstr "{subtitle} ·"
+
+#~ msgid "Chart"
+#~ msgstr "Graphique"
+
+#~ msgid "Up to {value}"
+#~ msgstr "Jusqu’à {value}"
+
+#~ msgid "Last 30 days: no reviews."
+#~ msgstr "30 derniers jours : aucune révision."
+
+#~ msgid "Last 30 days: {reviews}, {passed} passed, busiest day {day} with {most}."
+#~ msgstr "30 derniers jours : {reviews}, {passed} réussies, jour le plus chargé le {day} avec {most}."
+
+#~ msgid "No reviews in the last 30 days"
+#~ msgstr "Aucune révision ces 30 derniers jours"
+
+#~ msgid "Last 30 days: no time studied."
+#~ msgstr "30 derniers jours : aucun temps d’étude."
+
+#~ msgid "Last 30 days: {time} studied, longest day {day} with {most}."
+#~ msgstr "30 derniers jours : {time} d’étude, jour le plus long le {day} avec {most}."
+
+#~ msgid "Up to {value} min"
+#~ msgstr "Jusqu’à {value} min"
+
+#~ msgid "No time studied in the last 30 days"
+#~ msgstr "Aucun temps d’étude ces 30 derniers jours"
+
+#~ msgid "{day}: {cards}, {overdue} of them overdue"
+#~ msgstr "{day} : {cards}, dont {overdue} en retard"
+
+#~ msgid "Next 14 days: nothing due."
+#~ msgstr "14 prochains jours : rien à revoir."
+
+#~ msgid "today"
+#~ msgstr "aujourd’hui"
+
+#~ msgid "Next 14 days: {cards}, {overdue} of them overdue, busiest day {day} with {most}."
+#~ msgstr "14 prochains jours : {cards}, dont {overdue} en retard ; jour le plus chargé : {day}, avec {most}."
+
+#~ msgid "Next 14 days: {cards}, busiest day {day} with {most}."
+#~ msgstr "14 prochains jours : {cards} ; jour le plus chargé : {day}, avec {most}."
+
+#~ msgid "Nothing due in the next 14 days"
+#~ msgstr "Rien à revoir dans les 14 prochains jours"
+
+#~ msgid "{count} overdue card is counted under Today"
+#~ msgid_plural "{count} overdue cards are counted under Today"
+#~ msgstr[0] "{count} carte en retard est comptée dans Aujourd’hui"
+#~ msgstr[1] "{count} cartes en retard sont comptées dans Aujourd’hui"
+
+#~ msgid "Select a day to see its values"
+#~ msgstr "Choisissez un jour pour voir ses valeurs"
+
+#~ msgid "{deck} · {status}"
+#~ msgstr "{deck} · {status}"
 
 #~ msgid "The media files add up to {size}, more than the 2 GiB that Rappel reads from one file. An export with them could not be imported again by Rappel. Export without them instead? Decks, cards and their history are exported; the media files stay where they are, and cards keep their references to them."
 #~ msgstr "Les fichiers médias font {size} en tout, soit plus que les 2 Gio que Rappel lit dans un seul fichier. Un export qui les contiendrait ne pourrait pas être réimporté par Rappel. Exporter plutôt sans eux ? Les paquets, les cartes et leur historique sont exportés ; les fichiers médias restent où ils sont, et les cartes gardent leurs références à ces fichiers."

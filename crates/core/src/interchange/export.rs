@@ -4,8 +4,10 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::Connection;
+use sha2::{Digest, Sha256};
 
 use super::archive::ArchiveWriter;
 use super::format::{
@@ -46,37 +48,103 @@ impl Store {
     /// [`media_too_large_for_import`] cannot know beforehand: the size of
     /// `cards.json`); then `path` is left as it was.
     pub fn export_to_with(&self, path: &Path, options: ExportOptions) -> Result<ExportSummary> {
-        self.export_to_limited(path, options, MAX_ARCHIVE_BYTES)
+        self.export_to_limited(path, options, MAX_ARCHIVE_BYTES, now_ms())
     }
 
-    /// [`Self::export_to_with`] with the size an import reads as `limit`,
-    /// for tests.
+    /// [`Self::export_to_with`] made at `now` (UTC milliseconds), with the
+    /// size an import reads as `limit`, for tests: the time is written in
+    /// `cards.json`, so a test that compares sizes passes one time to every
+    /// export (the same database exported at the same time gives the same
+    /// bytes, ADR 0017).
     pub(crate) fn export_to_limited(
         &self,
         path: &Path,
         options: ExportOptions,
         limit: u64,
+        now: i64,
     ) -> Result<ExportSummary> {
+        let never = AtomicBool::new(false);
         write_file_atomically(path, |file| {
-            let mut out = BufWriter::with_capacity(64 << 10, file);
-            let summary = self.write_export(&mut out, now_ms(), options)?;
-            out.flush().map_err(|source| Error::Io {
+            self.export_into(file, path, options, limit, now, &never)
+        })
+    }
+
+    /// Writes the export made at `now` (UTC milliseconds) to `file`, a new
+    /// empty file opened for writing, without syncing it; `path` only names
+    /// it in errors. The automatic
+    /// backup (`auto_backup`, ADR 0080) writes into a file it opened in its
+    /// folder itself. Once `cancel` is set, the next write fails, so a
+    /// backup cut off by the app's time cap stops within one buffer.
+    ///
+    /// # Errors
+    /// Those of [`Self::export_to_with`], [`Error::ExportTooLarge`] when the
+    /// file came out larger than `limit`, and an [`Error::Io`] on `path`
+    /// when cancelled.
+    pub(crate) fn export_into(
+        &self,
+        file: &mut File,
+        path: &Path,
+        options: ExportOptions,
+        limit: u64,
+        now: i64,
+        cancel: &AtomicBool,
+    ) -> Result<ExportSummary> {
+        let mut out = BufWriter::with_capacity(64 << 10, Cancellable { file, cancel });
+        let summary = self.write_export(&mut out, path, now, options)?;
+        out.flush().map_err(|source| Error::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let bytes = out
+            .get_ref()
+            .file
+            .metadata()
+            .map_err(|source| Error::Io {
                 path: path.to_path_buf(),
                 source,
-            })?;
-            let bytes = out
-                .get_ref()
-                .metadata()
-                .map_err(|source| Error::Io {
-                    path: path.to_path_buf(),
-                    source,
-                })?
-                .len();
-            if bytes > limit {
-                return Err(Error::ExportTooLarge { bytes, limit });
+            })?
+            .len();
+        if bytes > limit {
+            return Err(Error::ExportTooLarge { bytes, limit });
+        }
+        Ok(summary)
+    }
+
+    /// A fingerprint of what an export with media would hold, but its
+    /// date: the SHA-256, in hex, of `cards.json` as such an export writes
+    /// it with `exported_at` 0 and every media record, followed by the
+    /// hashes of the media files that are in the media folder now (a
+    /// regular file of the recorded size; not read). So it changes with
+    /// every change to the decks, cards, tags, log, settings or media list
+    /// (the export is deterministic, ADR 0017), and when a media file goes
+    /// missing or comes back. The automatic backup compares it with the
+    /// last backup's to know whether the collection changed (ADR 0080):
+    /// unlike a timestamp, it sees every kind of change (tags, suspension,
+    /// a move, archiving), and it needs no new column. A file damaged in
+    /// place at its recorded size is not seen.
+    ///
+    /// # Errors
+    /// SQLite errors.
+    pub(crate) fn collection_fingerprint(&self) -> Result<String> {
+        let (mut document, rows) = read_document(&self.conn, 0)?;
+        document.media = rows.iter().map(|(record, _)| record.clone()).collect();
+        let mut hasher = HashWriter(Sha256::new());
+        serde_json::to_writer(&mut hasher, &document)
+            .map_err(|e| Error::ExportFailed(Box::new(e)))?;
+        for (record, media) in &rows {
+            let present = media
+                .as_ref()
+                .and_then(|m| self.media_path(m))
+                .and_then(|path| fs::symlink_metadata(path).ok())
+                .is_some_and(|meta| {
+                    meta.is_file() && i64::try_from(meta.len()).ok() == Some(record.bytes)
+                });
+            if present {
+                hasher.0.update(b"\npresent ");
+                hasher.0.update(record.hash.as_bytes());
             }
-            Ok(summary)
-        })
+        }
+        Ok(crate::media::hex(&hasher.0.finalize()))
     }
 
     /// The media an export would hold, for [`media_too_large_for_import`]:
@@ -111,14 +179,18 @@ impl Store {
         options: ExportOptions,
     ) -> Result<(Vec<u8>, ExportSummary)> {
         let mut out = io::Cursor::new(Vec::new());
-        let summary = self.write_export(&mut out, now, options)?;
+        let summary = self.write_export(&mut out, Path::new("memory"), now, options)?;
         Ok((out.into_inner(), summary))
     }
 
-    /// Writes the export made at `now` to `out`.
+    /// Writes the export made at `now` to `out`, the file `dest`. An IO
+    /// error writing to `out` is an [`Error::Io`] on `dest`, so a full disk
+    /// is said as such and blames the export's file, not a media file
+    /// (ADR 0084: the automatic backup read it as "something unexpected").
     fn write_export<W: Write + Seek>(
         &self,
         out: W,
+        dest: &Path,
         now: i64,
         options: ExportOptions,
     ) -> Result<ExportSummary> {
@@ -163,12 +235,18 @@ impl Store {
             serde_json::to_vec_pretty(&document).map_err(|e| Error::ExportFailed(Box::new(e)))?;
         json.push(b'\n');
         drop(document);
-        let failed = |e: zip::result::ZipError| Error::ExportFailed(Box::new(e));
+        let failed = |e: zip::result::ZipError| match e {
+            zip::result::ZipError::Io(source) => Error::Io {
+                path: dest.to_path_buf(),
+                source,
+            },
+            other => Error::ExportFailed(Box::new(other)),
+        };
         let mut archive = ArchiveWriter::new(out, &json).map_err(failed)?;
         drop(json);
         for (media, path) in &files {
             let entry = archive.start_media(&media.file_name()).map_err(failed)?;
-            copy_media(path, media, entry)?;
+            copy_media(path, media, entry, dest)?;
         }
         archive.finish().map_err(failed)?;
         Ok(summary)
@@ -201,21 +279,24 @@ fn open_regular(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-/// Streams the media file at `path` into the archive entry `out`, hashing
-/// it again: a file that changed since it was checked fails the export
-/// (the entry is written already, so it cannot be left out any more).
-fn copy_media(path: &Path, media: &MediaRef, out: &mut impl Write) -> Result<()> {
-    let io_err = |source| Error::Io {
-        path: path.to_path_buf(),
+/// Streams the media file at `path` into the archive entry `out` of the
+/// file `dest`, hashing it again: a file that changed since it was checked
+/// fails the export (the entry is written already, so it cannot be left
+/// out any more). A failed read names the media file, a failed write the
+/// export's file.
+fn copy_media(path: &Path, media: &MediaRef, out: &mut impl Write, dest: &Path) -> Result<()> {
+    let io_err = |at: &Path, source| Error::Io {
+        path: at.to_path_buf(),
         source,
     };
-    let mut file = open_regular(path).map_err(io_err)?;
+    let mut file = open_regular(path).map_err(|source| io_err(path, source))?;
     match copy_capped(&mut file, out) {
         Ok(copied) if copied.media == *media => Ok(()),
         Ok(_) | Err(CopyFailure::Refused(_)) => Err(Error::ExportFailed(
             "a media file changed while it was exported".into(),
         )),
-        Err(CopyFailure::Read(source) | CopyFailure::Write(source)) => Err(io_err(source)),
+        Err(CopyFailure::Read(source)) => Err(io_err(path, source)),
+        Err(CopyFailure::Write(source)) => Err(io_err(dest, source)),
     }
 }
 
@@ -389,6 +470,46 @@ fn write_file_atomically<T>(path: &Path, write: impl FnOnce(&mut File) -> Result
         let _ = fs::remove_file(&partial);
     }
     result
+}
+
+/// A file whose writes fail once `cancel` is set. The error is not
+/// `Interrupted`, which `write_all` would retry for ever.
+struct Cancellable<'a> {
+    file: &'a mut File,
+    cancel: &'a AtomicBool,
+}
+
+impl Write for Cancellable<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.cancel.load(Ordering::Relaxed) {
+            return Err(io::Error::other("cancelled"));
+        }
+        self.file.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl Seek for Cancellable<'_> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        self.file.seek(pos)
+    }
+}
+
+/// Feeds what is written to a SHA-256.
+struct HashWriter(Sha256);
+
+impl Write for HashWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.update(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn partial_path(path: &Path) -> PathBuf {

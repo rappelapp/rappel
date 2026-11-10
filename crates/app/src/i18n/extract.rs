@@ -1270,7 +1270,7 @@ fn template_header() -> Entry {
         ],
         strs: vec![
             "Project-Id-Version: rappel\n\
-             Report-Msgid-Bugs-To: https://github.com/rsmirke/rappel/issues\n\
+             Report-Msgid-Bugs-To: https://github.com/rappelapp/rappel/issues\n\
              MIME-Version: 1.0\n\
              Content-Type: text/plain; charset=UTF-8\n\
              Content-Transfer-Encoding: 8bit\n\

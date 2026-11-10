@@ -5,7 +5,7 @@ use adw::prelude::*;
 use gtk::glib;
 
 /// The gresource prefix of every `.ui` file (`data/resources.gresource.xml`).
-const RESOURCE_PREFIX: &str = "/io/github/rsmirke/Rappel/";
+const RESOURCE_PREFIX: &str = "/io/github/rappelapp/Rappel/";
 
 /// The resource path of the bundled `file`, e.g. `"restore_dialog.ui"`.
 pub fn resource_path(file: &str) -> String {

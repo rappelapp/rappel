@@ -12,7 +12,7 @@ mod imp {
     use gtk::glib;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/backup_row.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/backup_row.ui")]
     pub struct BackupRow {
         #[template_child]
         pub restore_button: TemplateChild<gtk::Button>,

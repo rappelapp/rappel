@@ -285,9 +285,7 @@ mod tests {
         found.iter().map(|t| t.name.as_str()).collect()
     }
 
-    fn strings(list: &[&str]) -> Vec<String> {
-        list.iter().map(|&s| s.to_owned()).collect()
-    }
+    use crate::testing::strings;
 
     /// The name under the cursor, where `|` marks the cursor.
     fn typed(marked: &str) -> String {

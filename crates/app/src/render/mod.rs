@@ -11,7 +11,8 @@
 //! Math (ADR 0021) is drawn as vectors: inline formulas inside their
 //! paragraph's text flow ([`math_paragraph`]), display formulas as centred
 //! blocks that scroll sideways when too wide ([`math_view`]). What is over
-//! a limit ([`math`]) stays source.
+//! a limit ([`math`]) stays source. A card list's rows draw the formulas of
+//! a side's one-line summary with [`MathLine`] (ADR 0077).
 //!
 //! Images (ADR 0055): a `media:` image at the top level of a paragraph is
 //! drawn as a picture between the paragraph's runs of text
@@ -27,8 +28,11 @@ mod audio;
 mod audio_player;
 mod breaks;
 mod images;
+mod ink_box;
+mod layout_key;
 mod markup;
 mod math;
+mod math_line;
 mod math_paragraph;
 mod math_view;
 mod media_file;
@@ -49,6 +53,9 @@ use audio::AudioBudget;
 pub use audio_player::{CardAudio, stop_all as stop_audio};
 use images::{Failure, ImageBudget, Piece, PixelBudget};
 use math::{Budget, Placement};
+#[cfg(test)]
+pub(crate) use math::{cached_formulas, layouts_done as math_layouts_done};
+pub use math_line::MathLine;
 use math_paragraph::MathParagraph;
 use math_view::MathView;
 use picture::CardImage;
@@ -116,7 +123,8 @@ struct Side<'a> {
 /// aligned to the start. Only the constructs have styles of their own
 /// (headings, code, quotes, tables).
 pub fn render(doc: &Document, media: &Images) -> gtk::Box {
-    let container = blocks_box();
+    // Its redraws cover all its text draws (issue #120, ADR 0076).
+    let container = ink_box::InkBox::new(BLOCK_SPACING);
     // A block's cost counts everything inside it, so the budget is spent
     // on top-level blocks only.
     let mut budget = MAX_WIDGETS;
@@ -139,7 +147,7 @@ pub fn render(doc: &Document, media: &Images) -> gtk::Box {
         budget -= cost;
         container.append(&block_widget(block, 0, &mut side));
     }
-    container
+    container.upcast()
 }
 
 /// Replaces what `container` shows with `doc`.

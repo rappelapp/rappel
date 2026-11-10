@@ -1,8 +1,8 @@
 using Gtk 4.0;
 using Adw 1;
 
-// The statistics of every deck or of one: three headline numbers and three
-// charts. The texts are set in pages/stats_page.rs; the subtitle is a deck
+// The statistics of every deck or of one: a card with three views of 30
+// days, and the Memory list. The texts are set in pages/stats_page.rs; the subtitle is a deck
 // name (untrusted), which AdwWindowTitle shows as plain text.
 template $RappelStatsPage: Adw.NavigationPage {
   title: _("Statistics");
@@ -57,6 +57,10 @@ template $RappelStatsPage: Adw.NavigationPage {
       Gtk.StackPage {
         name: "stats";
 
+        // Design D, a month at a time (ADR 0078): one card with a switch
+        // for the three views, the selected day's and the period's
+        // figures, the chart and the paging buttons; under it, the Memory
+        // list. Narrow (a phone), the legend goes under the figures.
         child: Adw.BreakpointBin {
           width-request: 300;
           height-request: 200;
@@ -65,8 +69,8 @@ template $RappelStatsPage: Adw.NavigationPage {
             condition ("max-width: 500sp")
 
             setters {
-              tiles_box.orientation: vertical;
-              tiles_box.homogeneous: false;
+              head_box.orientation: vertical;
+              legend_box.halign: start;
             }
           }
 
@@ -84,115 +88,226 @@ template $RappelStatsPage: Adw.NavigationPage {
                 orientation: vertical;
                 spacing: 24;
 
-                Gtk.Box tiles_box {
-                  spacing: 12;
-                  homogeneous: true;
+                Gtk.Box {
+                  orientation: vertical;
+
+                  styles [
+                    "card",
+                  ]
 
                   Gtk.Box {
                     orientation: vertical;
-                    spacing: 2;
+                    spacing: 12;
+                    margin-top: 12;
+                    margin-bottom: 12;
+                    margin-start: 12;
+                    margin-end: 12;
 
-                    styles [
-                      "card",
-                    ]
+                    // The view; pages/stats_page.rs follows `active-name`.
+                    Adw.ToggleGroup view_toggles {
+                      active-name: "reviews";
+                      homogeneous: true;
 
-                    Gtk.Label retention_value {
-                      margin-top: 12;
-                      margin-start: 6;
-                      margin-end: 6;
+                      accessibility {
+                        label: _("Chart View");
+                      }
 
-                      styles [
-                        "title-1",
-                        "numeric",
-                      ]
+                      Adw.Toggle {
+                        name: "reviews";
+                        label: _("_Reviews");
+                        use-underline: true;
+                      }
+
+                      Adw.Toggle {
+                        name: "time";
+                        label: _("_Time");
+                        use-underline: true;
+                      }
+
+                      Adw.Toggle {
+                        name: "forecast";
+                        label: _("_Forecast");
+                        use-underline: true;
+                      }
                     }
 
-                    Gtk.Label retention_caption {
-                      margin-bottom: 12;
-                      margin-start: 6;
-                      margin-end: 6;
-                      wrap: true;
-                      justify: center;
+                    Gtk.Box head_box {
+                      spacing: 12;
 
-                      styles [
-                        "caption",
-                        "dimmed",
-                      ]
+                      // The selected day's figure, then the period's, as
+                      // GNOME Wellbeing lays them out; a wrap box puts the
+                      // second under the first when a line cannot hold
+                      // both. The texts are set in pages/stats_page.rs.
+                      Adw.WrapBox {
+                        hexpand: true;
+                        child-spacing: 36;
+                        line-spacing: 6;
+
+                        Gtk.Box {
+                          orientation: vertical;
+
+                          Gtk.Label day_key {
+                            xalign: 0;
+                          }
+
+                          Gtk.Label day_value {
+                            xalign: 0;
+
+                            styles [
+                              "title-1",
+                              "numeric",
+                            ]
+                          }
+
+                          Gtk.Label day_detail {
+                            xalign: 0;
+
+                            styles [
+                              "dimmed",
+                              "numeric",
+                            ]
+                          }
+                        }
+
+                        Gtk.Box {
+                          orientation: vertical;
+
+                          Gtk.Label period_key {
+                            xalign: 0;
+                          }
+
+                          Gtk.Label period_value {
+                            xalign: 0;
+
+                            styles [
+                              "title-1",
+                              "numeric",
+                            ]
+                          }
+                        }
+                      }
+
+                      // What the two parts of a bar are: the accent, and
+                      // the accent at 38 % (widgets/bar_chart.rs). Reviews
+                      // only. The swatches are hidden from screen readers;
+                      // the words say it.
+                      Gtk.Box legend_box {
+                        spacing: 6;
+                        valign: start;
+                        halign: end;
+                        margin-top: 2;
+
+                        Gtk.DrawingArea passed_swatch {
+                          content-width: 12;
+                          content-height: 12;
+                          valign: center;
+                        }
+
+                        Gtk.Label {
+                          label: C_("chart legend", "Passed");
+                          margin-end: 12;
+
+                          styles [
+                            "caption",
+                            "dimmed",
+                          ]
+                        }
+
+                        Gtk.DrawingArea failed_swatch {
+                          content-width: 12;
+                          content-height: 12;
+                          valign: center;
+                        }
+
+                        Gtk.Label {
+                          label: C_("chart legend", "Failed");
+
+                          styles [
+                            "caption",
+                            "dimmed",
+                          ]
+                        }
+                      }
                     }
-                  }
 
-                  Gtk.Box {
-                    orientation: vertical;
-                    spacing: 2;
+                    $RappelBarChart chart {}
 
-                    styles [
-                      "card",
-                    ]
+                    // Back or forward 30 days; hidden on the forecast,
+                    // which is always the next 30 days. Next is off on
+                    // the current period, Previous before the first
+                    // review (pages/stats_page/text.rs).
+                    Gtk.Box nav_box {
+                      halign: center;
+                      spacing: 12;
 
-                    Gtk.Label pass_rate_value {
-                      margin-top: 12;
-                      margin-start: 6;
-                      margin-end: 6;
+                      Gtk.Button previous_button {
+                        icon-name: "go-previous-symbolic";
+                        tooltip-text: C_("paging button", "Previous 30 Days");
 
-                      styles [
-                        "title-1",
-                        "numeric",
-                      ]
-                    }
+                        accessibility {
+                          label: C_("paging button", "Previous 30 Days");
+                        }
 
-                    Gtk.Label pass_rate_caption {
-                      margin-bottom: 12;
-                      margin-start: 6;
-                      margin-end: 6;
-                      wrap: true;
-                      justify: center;
+                        styles [
+                          "circular",
+                        ]
+                      }
 
-                      styles [
-                        "caption",
-                        "dimmed",
-                      ]
-                    }
-                  }
+                      Gtk.Button next_button {
+                        icon-name: "go-next-symbolic";
+                        tooltip-text: C_("paging button", "Next 30 Days");
 
-                  Gtk.Box {
-                    orientation: vertical;
-                    spacing: 2;
+                        accessibility {
+                          label: C_("paging button", "Next 30 Days");
+                        }
 
-                    styles [
-                      "card",
-                    ]
-
-                    Gtk.Label time_value {
-                      margin-top: 12;
-                      margin-start: 6;
-                      margin-end: 6;
-
-                      styles [
-                        "title-1",
-                        "numeric",
-                      ]
-                    }
-
-                    Gtk.Label time_caption {
-                      margin-bottom: 12;
-                      margin-start: 6;
-                      margin-end: 6;
-                      wrap: true;
-                      justify: center;
-
-                      styles [
-                        "caption",
-                        "dimmed",
-                      ]
+                        styles [
+                          "circular",
+                        ]
+                      }
                     }
                   }
                 }
 
-                $RappelChartCard reviews_chart {}
+                // Values the period does not change. The titles (our own
+                // words, shown as plain text) and values are set in
+                // pages/stats_page.rs.
+                Adw.PreferencesGroup {
+                  title: _("Memory");
 
-                $RappelChartCard time_chart {}
+                  Adw.ActionRow retention_row {
+                    use-markup: false;
 
-                $RappelChartCard forecast_chart {}
+                    [suffix]
+                    Gtk.Label retention_value {
+                      styles [
+                        "numeric",
+                      ]
+                    }
+                  }
+
+                  Adw.ActionRow pass_rate_row {
+                    use-markup: false;
+
+                    [suffix]
+                    Gtk.Label pass_rate_value {
+                      styles [
+                        "numeric",
+                      ]
+                    }
+                  }
+
+                  Adw.ActionRow time_row {
+                    use-markup: false;
+
+                    [suffix]
+                    Gtk.Label time_value {
+                      styles [
+                        "numeric",
+                      ]
+                    }
+                  }
+                }
               };
             };
           };

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Rappel's app icon (ADR 0074), drawn by Robert Smirke: a white index card
+<!-- Rappel's app icon (ADR 0074): a white index card
      and a red one on a ring. 128 x 128, in GNOME's palette. -->
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
 <rect x="16" y="37.795" width="94" height="73" rx="10" transform="rotate(-10.9124 16 37.795)" fill="url(#paint0_linear_15_52)"/>

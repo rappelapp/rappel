@@ -27,3 +27,6 @@ pub use setting_page::SettingPage;
 #[cfg(test)]
 pub(crate) use setting_page::tests::damaged_folder as damaged_setting_folder;
 pub use stats_page::StatsPage;
+/// The statistics page's paging rules, for the state's tests.
+#[cfg(test)]
+pub(crate) use stats_page::text as stats_text;

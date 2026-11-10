@@ -149,6 +149,17 @@ pub fn counted_units(template: impl Fn(usize) -> String, n: i64) -> String {
     counted(&template(n), n)
 }
 
+/// "1,234 cards", "1 card", "No cards": a count of cards on its own (All
+/// Cards' count, an archived deck's row, a group header of the deck page).
+pub fn card_count(n: usize) -> String {
+    if n == 0 {
+        gettext("No cards")
+    } else {
+        // Translators: {count} is a number of cards.
+        counted(&ngettext("{count} card", "{count} cards", n), n)
+    }
+}
+
 /// "12 due", "1,234 due": cards to review now, steps included. The deck
 /// list's rows and the deck page's subtitle both say it this way.
 pub fn due_count(n: usize) -> String {
@@ -239,8 +250,14 @@ fn hours_minutes(h: u64, m: u64) -> String {
     )
 }
 
+/// "3 h", a whole number of hours.
+pub fn hours(h: u64) -> String {
+    // Translators: a whole number of hours ("3 h"), on a chart's scale.
+    fill(&gettext("{hours} h"), &[("hours", &number(h))])
+}
+
 /// "12 min".
-fn minutes(m: u64) -> String {
+pub fn minutes(m: u64) -> String {
     // Translators: a time in minutes ("12 min").
     fill(&gettext("{minutes} min"), &[("minutes", &number(m))])
 }
@@ -331,6 +348,15 @@ mod tests {
 
     fn days(n: usize) -> String {
         crate::i18n::ngettext("{count} day", "{count} days", n)
+    }
+
+    /// One text for a count of cards (ADR 0084: All Cards, the archived
+    /// decks and the group headers had a copy each).
+    #[test]
+    fn a_count_of_cards() {
+        assert_eq!(card_count(0), "No cards");
+        assert_eq!(card_count(1), "1 card");
+        assert_eq!(card_count(5_210), "5,210 cards");
     }
 
     #[test]

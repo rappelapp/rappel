@@ -20,7 +20,7 @@ mod imp {
 
     #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::SelectionBar)]
-    #[template(resource = "/io/github/rsmirke/Rappel/selection_bar.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/selection_bar.ui")]
     pub struct SelectionBar {
         #[template_child]
         pub action_bar: TemplateChild<gtk::ActionBar>,

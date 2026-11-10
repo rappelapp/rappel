@@ -18,10 +18,10 @@
 //! reschedule, so the summary stays true.
 //!
 //! Keys, in the bubble phase so a focused button keeps its own Space and
-//! Enter: Space or Enter shows the answer; then 1 is Fail, 2 or Space is
-//! Pass; E edits the card at any time; S suspends it and Delete deletes it
-//! (after a question), both at once out of the session with an Undo toast
-//! (ADR 0037); R plays the card's audio from its start (ADR 0056,
+//! Enter: Space or Enter shows the answer; then 1 is Fail, 2, 3, 4 or Space
+//! is Pass (ADR 0081); E edits the card at any time; S suspends it and
+//! Delete deletes it (after a question), both at once out of the session
+//! with an Undo toast (ADR 0037); R plays the card's audio from its start (ADR 0056,
 //! [`replay_target`]); Ctrl+Z (and the header's Undo button)
 //! takes back the last answer, repeatedly down to the session's first, also
 //! from the summary (ADR 0030). The focus rests on the card between answers.
@@ -76,7 +76,7 @@ mod imp {
     use crate::ui::toast::ErrorSlot;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/review_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/review_page.ui")]
     pub struct ReviewPage {
         #[template_child]
         pub window_title: TemplateChild<adw::WindowTitle>,
@@ -159,6 +159,10 @@ mod imp {
         pub back_cut: Cell<bool>,
         /// When the current card's front was shown.
         pub shown_at: Cell<Option<Instant>>,
+        /// S suspends one card per press, not one per repeat (ADR 0081).
+        pub suspend_key: crate::ui::keys::OnePress,
+        /// The hardware keycode of the last key press (`setup_keys`).
+        pub pressed_code: Cell<u32>,
         pub revealed: Cell<bool>,
         /// When the back was shown.
         pub revealed_at: Cell<Option<Instant>>,
@@ -374,7 +378,7 @@ enum Key {
 
 /// The page's keys (`setup_keys`). The Keyboard Shortcuts dialog and the
 /// Card Menu's hints list them; tests check both.
-const KEYS: [(&str, Key); 18] = [
+const KEYS: [(&str, Key); 22] = [
     ("space", Key::Space),
     ("Return", Key::Enter),
     ("KP_Enter", Key::Enter),
@@ -382,6 +386,11 @@ const KEYS: [(&str, Key); 18] = [
     ("KP_1", Key::Fail),
     ("2", Key::Pass),
     ("KP_2", Key::Pass),
+    // Anki's Good and Easy also mean Pass (ADR 0081).
+    ("3", Key::Pass),
+    ("KP_3", Key::Pass),
+    ("4", Key::Pass),
+    ("KP_4", Key::Pass),
     ("e", Key::Edit),
     ("<Shift>e", Key::Edit),
     ("i", Key::Info),
@@ -477,7 +486,9 @@ enum Side {
 /// Whether S may suspend a card that has been on screen for `shown_for`.
 /// After the first S the next card is on screen, and key repeat would
 /// suspend it too: a card must be shown for [`KEY_SETTLE`] first. Clicking
-/// the menu item is not delayed.
+/// the menu item is not delayed. A held S also repeats every 30 ms or so
+/// long after that, so the page also needs S to have been released since
+/// its last press (`suspend_key`, [`keys::OnePress`], ADR 0081).
 fn suspend_allowed(shown_for: Option<Duration>) -> bool {
     shown_for.is_some_and(|t| t >= KEY_SETTLE)
 }
@@ -507,6 +518,19 @@ impl ReviewPage {
             deck,
             from: StartedFrom::DeckPage,
         };
+        Self::study(state, studied, on_saved)
+    }
+
+    /// A session over `studied`, a deck started from wherever `studied`
+    /// says (the deck list's S key starts one without its page, ADR 0081).
+    ///
+    /// # Errors
+    /// If what to study cannot be read.
+    pub fn study(
+        state: AppState,
+        studied: Studied,
+        on_saved: impl Fn(Saved) + 'static,
+    ) -> rappel_core::Result<Self> {
         Self::start(state, studied, Mode::Study, on_saved)
     }
 
@@ -661,6 +685,47 @@ impl ReviewPage {
             ));
         }
         self.add_controller(shortcuts);
+        // Presses and releases, by hardware keycode, so that S suspends one
+        // card per press (`suspend_key`, `keys::OnePress`). Capture phase:
+        // a press is seen here before the shortcuts above (bubble) act on
+        // it, and a release before any child could claim it. The
+        // `key-pressed` handler returns Proceed, so this controller claims
+        // neither the press nor its release
+        // (`gtk_event_controller_key_handle_event` returns TRUE for a
+        // release only when it handled the press, gtkeventcontrollerkey.c),
+        // and shortcut triggers match presses only (gtkshortcuttrigger.c).
+        let codes = gtk::EventControllerKey::new();
+        codes.set_propagation_phase(gtk::PropagationPhase::Capture);
+        codes.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, _, code, _| {
+                page.imp().pressed_code.set(code);
+                glib::Propagation::Proceed
+            }
+        ));
+        codes.connect_key_released(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_, _, code, _| page.key_released(code)
+        ));
+        self.add_controller(codes);
+        // A release elsewhere (in the editor, after the page was left) is
+        // not seen here: the next S acts.
+        keys::when_left(self, |page| {
+            if let Some(page) = page.downcast_ref::<Self>() {
+                page.imp().suspend_key.reset();
+            }
+        });
+    }
+
+    /// The key with hardware keycode `code` went up: when it is the S that
+    /// suspended, the next S suspends again. By keycode, as any layout
+    /// gives the same one for the key marked S.
+    fn key_released(&self, code: u32) {
+        self.imp().suspend_key.release(code);
     }
 
     /// Gives Show Answer, Fail and Pass their key in the tooltip (#105),
@@ -714,7 +779,10 @@ impl ReviewPage {
             Some(Act::Edit) => self.edit(),
             Some(Act::Info) => self.card_info(),
             Some(Act::Suspend) => {
-                if suspend_allowed(imp.shown_at.get().map(|t| t.elapsed())) {
+                // Every press counts as one, even one too early: a held S
+                // never suspends, however long it repeats.
+                let first = imp.suspend_key.press(imp.pressed_code.get());
+                if first && suspend_allowed(imp.shown_at.get().map(|t| t.elapsed())) {
                     self.remove_current(Removal::Suspend);
                 }
             }
@@ -2311,11 +2379,20 @@ mod tests {
         assert!(suspend_allowed(Some(KEY_SETTLE)));
     }
 
+    /// The hardware keycodes the tests press and release: X11's for S and
+    /// A on a PC keyboard. The page sees only keycodes on a release, so the
+    /// key marked S re-arms Suspend under any layout (a Cyrillic layout
+    /// gives `Cyrillic_yeru` for it, which the Suspend shortcut still
+    /// matches by keycode).
+    const S_CODE: u32 = 39;
+    const A_CODE: u32 = 38;
+
     #[test]
-    fn holding_s_suspends_one_card_not_a_run() {
+    fn s_waits_for_the_next_card_to_settle() {
         crate::testing::with_widgets(|| {
             let (_tmp, state, page, ids) = page_of(3);
             let _window = in_window(&page);
+            page.imp().pressed_code.set(S_CODE);
             let first = current(&page).unwrap();
             assert!(
                 page.imp().shown_at.get().is_some(),
@@ -2329,17 +2406,171 @@ mod tests {
             assert_eq!(current(&page).as_deref(), Some(first.as_str()));
             assert!(!state.card(&first).unwrap().suspended);
             // Shown a moment: the first S suspends, the repeat finds a new card.
+            // (Released in between, so only the settle time is tested here;
+            // `a_held_s_suspends_one_card_until_released` tests the repeats.)
+            page.key_released(S_CODE);
             page.imp()
                 .shown_at
                 .set(Instant::now().checked_sub(Duration::from_secs(1)));
             page.key(Key::Suspend);
+            page.key_released(S_CODE);
             page.key(Key::Suspend);
+            page.key_released(S_CODE);
             page.key(Key::Suspend);
             let suspended = ids
                 .iter()
                 .filter(|id| state.card(id).unwrap().suspended)
                 .count();
             assert_eq!(suspended, 1);
+        });
+    }
+
+    /// The keycode of a press is recorded before the Suspend shortcut acts
+    /// on it (carry-over G, ADR 0084): the controller that records it is
+    /// in the capture phase, which GTK runs from the window down to the
+    /// target before any bubble-phase controller runs back up
+    /// (`gtk_propagate_event_internal`, gtk/gtkmain.c), and the page's
+    /// shortcuts are in the bubble phase; recording returns Proceed, so the
+    /// shortcut still gets the press. GTK 4 has no public way to inject a
+    /// key event, so the controllers are found on the page and the
+    /// recorder's `key-pressed` is emitted as GTK emits it.
+    #[test]
+    fn the_keycode_is_recorded_before_the_shortcut_acts() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, _ids) = page_of(2);
+            let _window = in_window(&page);
+            let controllers: Vec<gtk::EventController> = page
+                .observe_controllers()
+                .iter::<glib::Object>()
+                .filter_map(|c| c.ok()?.downcast().ok())
+                .collect();
+            let shortcuts: Vec<&gtk::EventController> = controllers
+                .iter()
+                .filter(|c| c.is::<gtk::ShortcutController>())
+                .filter(|c| c.propagation_phase() == gtk::PropagationPhase::Bubble)
+                .collect();
+            assert!(
+                !shortcuts.is_empty(),
+                "the shortcuts are in the bubble phase"
+            );
+            assert!(
+                controllers
+                    .iter()
+                    .filter(|c| c.is::<gtk::ShortcutController>())
+                    .all(|c| c.propagation_phase() != gtk::PropagationPhase::Capture),
+                "no shortcut acts in the capture phase"
+            );
+            let recorders: Vec<&gtk::EventController> = controllers
+                .iter()
+                .filter(|c| c.is::<gtk::EventControllerKey>())
+                .filter(|c| c.propagation_phase() == gtk::PropagationPhase::Capture)
+                .collect();
+            page.imp().pressed_code.set(0);
+            let mut proceeds = true;
+            for recorder in &recorders {
+                let stop: bool = recorder.emit_by_name(
+                    "key-pressed",
+                    &[&gtk::gdk::Key::s, &S_CODE, &gtk::gdk::ModifierType::empty()],
+                );
+                proceeds &= !stop;
+            }
+            assert_eq!(
+                page.imp().pressed_code.get(),
+                S_CODE,
+                "recorded in the capture phase"
+            );
+            assert!(proceeds, "the press goes on to the shortcuts");
+        });
+    }
+
+    /// A held S repeats long after the settle time: only a press that
+    /// follows a release suspends (ADR 0081), one card per press.
+    #[test]
+    fn a_held_s_suspends_one_card_until_released() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, ids) = page_of(4);
+            let _window = in_window(&page);
+            page.imp().pressed_code.set(S_CODE);
+            let suspended = || {
+                ids.iter()
+                    .filter(|id| state.card(id).unwrap().suspended)
+                    .count()
+            };
+            let long_ago = || {
+                page.imp()
+                    .shown_at
+                    .set(Instant::now().checked_sub(Duration::from_secs(1)));
+            };
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 1);
+            // The repeats, each after the next card has been shown a while.
+            for _ in 0..5 {
+                long_ago();
+                page.key(Key::Suspend);
+            }
+            assert_eq!(suspended(), 1);
+            // Released (another key's release changes nothing), pressed
+            // again: one more.
+            page.key_released(A_CODE);
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 1);
+            page.key_released(S_CODE);
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 2);
+            // Whatever the key's value on its release (Shift+S gives S, a
+            // Cyrillic layout `Cyrillic_yeru`), its keycode re-arms.
+            page.key_released(S_CODE);
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 3);
+            // A press too early still counts as the press: its repeats do
+            // not suspend once the card has been shown long enough.
+            page.key_released(S_CODE);
+            page.imp().shown_at.set(Some(Instant::now()));
+            page.key(Key::Suspend);
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 3);
+        });
+    }
+
+    /// S released while another page was shown is not seen here: leaving
+    /// the page (`keys::when_left`, here its hiding) lets the next S act.
+    #[test]
+    fn leaving_the_page_lets_the_next_s_suspend() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, ids) = page_of(4);
+            let view = adw::NavigationView::new();
+            let window = gtk::Window::builder().child(&view).build();
+            window.present();
+            view.push(&page);
+            crate::testing::settle();
+            page.imp().pressed_code.set(S_CODE);
+            let suspended = || {
+                ids.iter()
+                    .filter(|id| state.card(id).unwrap().suspended)
+                    .count()
+            };
+            let long_ago = || {
+                page.imp()
+                    .shown_at
+                    .set(Instant::now().checked_sub(Duration::from_secs(1)));
+            };
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 1);
+            // Another page over it, then back: no release was seen.
+            view.push(&adw::NavigationPage::new(&gtk::Label::new(None), "Other"));
+            crate::testing::settle();
+            view.pop();
+            crate::testing::settle();
+            long_ago();
+            page.key(Key::Suspend);
+            assert_eq!(suspended(), 2);
+            window.destroy();
         });
     }
 
@@ -2914,6 +3145,28 @@ mod tests {
         // Nothing under or beside the buttons any more.
         let blueprint = include_str!("../../data/review_page.blp");
         assert!(!blueprint.contains("_hint"));
+    }
+
+    /// 3 and 4 pass as 2 does (ADR 0081), keypad included: the same key,
+    /// so the same settle guard and the same "nothing before the answer".
+    #[test]
+    fn three_and_four_pass_like_two() {
+        for trigger in ["2", "KP_2", "3", "KP_3", "4", "KP_4"] {
+            let (_, key) = KEYS.iter().find(|(t, _)| *t == trigger).unwrap();
+            assert_eq!(*key, Key::Pass, "{trigger}");
+        }
+        for trigger in ["1", "KP_1"] {
+            let (_, key) = KEYS.iter().find(|(t, _)| *t == trigger).unwrap();
+            assert_eq!(*key, Key::Fail, "{trigger}");
+        }
+        // No other digit is bound.
+        assert!(!KEYS.iter().any(|(t, _)| ["0", "5", "KP_5"].contains(t)));
+        assert_eq!(key_action(Key::Pass, false, true), None);
+        assert_eq!(key_action(Key::Pass, true, false), None);
+        assert_eq!(
+            key_action(Key::Pass, true, true),
+            Some(Act::Grade(Grade::Pass))
+        );
     }
 
     /// GTK has no public getter for an accessible description, so the

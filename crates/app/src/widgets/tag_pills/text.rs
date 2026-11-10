@@ -63,9 +63,7 @@ pub fn spoken(names: &[String]) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn names(list: &[&str]) -> Vec<String> {
-        list.iter().map(|&n| n.to_owned()).collect()
-    }
+    use crate::testing::strings as names;
 
     #[test]
     fn a_long_name_is_cut_and_gets_a_tooltip() {

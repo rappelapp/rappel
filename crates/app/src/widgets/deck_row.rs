@@ -25,7 +25,7 @@ mod imp {
     use gtk::glib;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/deck_row.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/deck_row.ui")]
     pub struct DeckRow {
         #[template_child]
         pub name_label: TemplateChild<gtk::Label>,
@@ -139,6 +139,18 @@ impl DeckRow {
     /// The id of the deck this row shows.
     pub fn deck_id(&self) -> String {
         self.imp().deck_id.borrow().clone()
+    }
+
+    /// The deck's name as shown, for tests.
+    #[cfg(test)]
+    pub(crate) fn name(&self) -> String {
+        self.imp().name_label.label().to_string()
+    }
+
+    /// Gives the row's menu button the keyboard focus, for tests.
+    #[cfg(test)]
+    pub(crate) fn focus_menu_button(&self) {
+        self.imp().menu_button.grab_focus();
     }
 
     fn forward(&self, action: &str) {

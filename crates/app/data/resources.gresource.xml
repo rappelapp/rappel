@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
-  <gresource prefix="/io/github/rsmirke/Rappel">
+  <gresource prefix="/io/github/rappelapp/Rappel">
     <!-- Compiled from data/*.blp by build.rs into $OUT_DIR/ui. -->
     <file preprocess="xml-stripblanks">window.ui</file>
     <file preprocess="xml-stripblanks">recovery_page.ui</file>
@@ -13,6 +13,8 @@
     <file preprocess="xml-stripblanks">archived_page.ui</file>
     <file preprocess="xml-stripblanks">deck_name_dialog.ui</file>
     <file preprocess="xml-stripblanks">deck_page.ui</file>
+    <file preprocess="xml-stripblanks">card_group_header.ui</file>
+    <file preprocess="xml-stripblanks">card_list_header.ui</file>
     <file preprocess="xml-stripblanks">card_row.ui</file>
     <file preprocess="xml-stripblanks">tag_pills.ui</file>
     <file preprocess="xml-stripblanks">tag_entry.ui</file>
@@ -32,7 +34,6 @@
     <file preprocess="xml-stripblanks">preferences_dialog.ui</file>
     <file preprocess="xml-stripblanks">retention_dialog.ui</file>
     <file preprocess="xml-stripblanks">clean_up_media_dialog.ui</file>
-    <file preprocess="xml-stripblanks">chart_card.ui</file>
     <file preprocess="xml-stripblanks">stats_page.ui</file>
     <file preprocess="xml-stripblanks">card_info_dialog.ui</file>
     <file preprocess="xml-stripblanks">history_row.ui</file>

@@ -93,7 +93,9 @@ pub fn local_day_start_ms(now_ms: i64, hour: u8) -> i64 {
     day_start_ms(now_ms, &glib::TimeZone::local(), hour).unwrap_or_else(|err| {
         tracing::warn!("cannot compute the local day start, using UTC: {err}");
         let offset = i64::from(hour) * HOUR_MS;
-        now_ms - (now_ms - offset).rem_euclid(DAY_MS)
+        // Saturating: a clock at the ends of `i64` must not overflow
+        // (ADR 0084).
+        now_ms.saturating_sub(now_ms.saturating_sub(offset).rem_euclid(DAY_MS))
     })
 }
 
@@ -102,7 +104,7 @@ pub fn local_day_start_ms(now_ms: i64, hour: u8) -> i64 {
 pub fn local_next_day_start_ms(now_ms: i64, hour: u8) -> i64 {
     next_day_start_ms(now_ms, &glib::TimeZone::local(), hour).unwrap_or_else(|err| {
         tracing::warn!("cannot compute the next local day start: {err}");
-        local_day_start_ms(now_ms, hour) + DAY_MS
+        local_day_start_ms(now_ms, hour).saturating_add(DAY_MS)
     })
 }
 

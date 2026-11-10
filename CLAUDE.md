@@ -3,10 +3,10 @@
 `SPEC.md` is the source of truth for what to build. `ARCHITECTURE.md` describes how the code is organised. Read both before any task. If a request conflicts with them, say so before coding.
 
 ## Project facts
-- App name **Rappel**, app ID `io.github.rsmirke.Rappel`, licence GPL-3.0-or-later.
+- App name **Rappel**, app ID `io.github.rappelapp.Rappel`, licence GPL-3.0-or-later.
 - Crates: `rappel-core` in `crates/core` (no UI), `rappel` in `crates/app` (GTK binary).
 - Data dir `~/.local/share/rappel/`; debug builds use `~/.local/share/rappel-dev/`. `RAPPEL_DATA_DIR` overrides both. Never point development at the real data dir.
-- Status: v0 released as 0.1.0 (decks, plain-text cards, studying with FSRS); 0.2.0-beta.1 and 0.3.0-beta.1 are tagged, neither released as stable; Phase 3a (ending in 0.4.0) is done, and 0.4.0-beta.1 is prepared, not tagged. What is done, the build order and the scope are in `SPEC.md` (its status line, then §4).
+- Status: v0 released as 0.1.0 (decks, plain-text cards, studying with FSRS); 0.2.0-beta.1, 0.3.0-beta.1 and 0.4.0-beta.1 are tagged, none released as stable; Phase 3a is done; Phase 3b (polish and the first Snap) is done except the Snap, which stopped at the image sandbox (`docs/adr/0082-snap-feasibility.md`, `docs/briefs/QUESTIONS.md`); 0.4.0 is prepared, not tagged. What is done, the build order and the scope are in `SPEC.md` (its status line, then §4).
 
 ## About me
 - Strong in maths and algorithms, not a Rust or GTK developer, and I do **not** read most diffs. You are responsible for quality. The automated gate and the reviewer agent are how quality is checked, so never weaken them to make a task pass.
@@ -57,7 +57,7 @@ Spend CI time only where it checks something.
 - No stacked PRs. Base every PR on `main`. If a slice needs an unmerged one, wait for that merge or ask me. If you stack anyway, never let a PR merge into another feature branch: once its base is squash-merged, rebase onto `main` and retarget the PR to `main`. (#18 was based on `feat/decks-ui` and merged into that branch, so it never reached `main` by itself.)
 
 ## Batch mode
-Active while a phase brief is being worked through. **Current brief: `docs/briefs/phase-3a.md`. Current integration branch: `phase-3a`.** (Phase 1 used `docs/briefs/phase-1-finish.md` and `phase-1`.) A new phase changes only these two names. Where batch mode conflicts with the rules above, batch mode wins.
+Active while a phase brief is being worked through. **Current brief: `docs/briefs/phase-3b.md`. Current integration branch: `phase-3b`.** (Phase 1 used `docs/briefs/phase-1-finish.md` and `phase-1`; Phase 3a used `docs/briefs/phase-3a.md` and `phase-3a`.) A new phase changes only these two names. Where batch mode conflicts with the rules above, batch mode wins.
 - In batch mode, slice branches start from the current integration branch and PRs target it (`gh pr create --base <integration branch>`). You may merge your own PR into the integration branch (squash) only when `scripts/check.sh` passes, CI is green (wait for `gh pr checks` to pass; a ruleset on the `phase-*` branches requires the `check` status), and the reviewer agent has no blocking findings. Never merge into, push to, or target `main`.
 - Never stop to ask. Take the most sensible, robust, HIG-compliant default, and record it in the PR description under "Decisions".
 - Stop conditions instead: a new migration, an export-format change, a new dependency with a licence not already allowed, or anything that deletes user data, unless the current brief pre-approves it. Write the question in `docs/briefs/QUESTIONS.md`, skip to the next independent slice, and continue.

@@ -17,7 +17,7 @@ mod imp {
 
     #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::SelectionHeader)]
-    #[template(resource = "/io/github/rsmirke/Rappel/selection_header.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/selection_header.ui")]
     pub struct SelectionHeader {
         #[template_child]
         pub title: TemplateChild<adw::WindowTitle>,

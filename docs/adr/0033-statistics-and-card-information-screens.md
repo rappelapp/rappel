@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-17
 - Amends: SPEC §4.7 (the pages are done; the chart days can be stepped through with the keyboard)
-- Amended by: ADR 0046 (Statistics' empty state)
+- Amended by: ADR 0046 (Statistics' empty state), ADR 0078 (the statistics page redesigned: one card, a month at a time)
 - Refers to: ADR 0032 (the figures), #39 (card information)
 
 ## Context

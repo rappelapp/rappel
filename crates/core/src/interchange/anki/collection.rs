@@ -190,7 +190,7 @@ impl Collection {
         limits: &AnkiLimits,
         interrupt: &Arc<AtomicBool>,
     ) -> Result<Self, AnkiProblem> {
-        let conn = Connection::open_with_flags(
+        let mut conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )

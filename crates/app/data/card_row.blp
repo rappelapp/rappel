@@ -1,22 +1,27 @@
 using Gtk 4.0;
 
-// One card in a list of cards (ADR 0042, 0044): the front as the title, the
-// back and the tags as the line under it, an icon when the card is
-// suspended and a menu. On All Cards a third line says the deck and the
-// status, and a check button shows while cards are being chosen. Laid out
-// like an action row through the classes libadwaita styles in any row
-// (`row > box.header > box.title`, `.title`, `row label.subtitle`), as the
-// deck rows are (ADR 0041). The texts are set
-// in widgets/card_row.rs; card content and tag names are untrusted, so no
-// label here parses markup.
+// One card in a list of cards (ADR 0042, 0044, 0077, 0079): the front on
+// one line and, if the card has a back, the back dimmed under it (on All
+// Cards, the deck and then the back); the card's own tags as pills (none
+// on a deck page whose cards are grouped by their tags); an icon when the
+// card is suspended; a short dimmed word for when it is due ("Today" in
+// the accent colour); and a menu. A check button shows while cards are
+// being chosen. Laid out like an action row through the classes libadwaita
+// styles in any row (`row > box.header > box.title`, `.title`, `row
+// label.subtitle`), as the deck rows are (ADR 0041); the list has no
+// background of its own and thin lines between rows (`separators`,
+// `listview.card-list` in data/style.css). The texts are set in
+// widgets/card_row.rs; card content and tag names are untrusted, so
+// nothing here parses markup.
 template $RappelCardRow: Gtk.Box {
   styles [
     "header",
     "card-row",
   ]
 
-  // All Cards, while cards are being chosen. It only shows the state: the
-  // row itself is what is activated (a click, Enter or Space).
+  // All Cards and the deck page, while cards are being chosen. It only
+  // shows the state: the row itself is what is activated (a click, Enter
+  // or Space).
   Gtk.CheckButton check {
     visible: false;
     can-target: false;
@@ -33,56 +38,51 @@ template $RappelCardRow: Gtk.Box {
       "title",
     ]
 
-    // The front, on one line: its plain summary, never markup.
-    Gtk.Label front_label {
-      use-markup: false;
-      single-line-mode: true;
-      ellipsize: end;
-      xalign: 0;
-
+    // The front, on one line, its formulas drawn (render/math_line.rs);
+    // never markup. Dimmed while the card is suspended.
+    $RappelMathLine front_line {
       styles [
         "title",
       ]
     }
 
-    // The back, dimmed and smaller (libadwaita's `row label.subtitle`), and
-    // the tags at the end of the line. The back gives way first: the pills
-    // keep their width, and the back ends in "…".
+    // The second line: on All Cards the deck, then the back (only the
+    // deck on a narrow window); on the deck page the back alone, and no
+    // line at all without a back. Dimmed and smaller (libadwaita's `row
+    // label.subtitle`); each ends in "…" when the line is too short.
     Gtk.Box detail_box {
-      spacing: 12;
+      spacing: 6;
 
-      Gtk.Label back_label {
+      // All Cards only: "Maths ·", plain text.
+      Gtk.Label caption_label {
+        visible: false;
         use-markup: false;
         single-line-mode: true;
         ellipsize: end;
         xalign: 0;
-        hexpand: true;
 
         styles [
           "subtitle",
         ]
       }
 
-      // Not focusable: the row's accessible label says the tags.
-      $RappelTagPills tag_pills {
-        single-line: true;
-        valign: center;
+      $RappelMathLine back_line {
+        hexpand: true;
+
+        styles [
+          "subtitle",
+        ]
       }
     }
+  }
 
-    // All Cards only: "Maths · Due in 3 days", plain text.
-    Gtk.Label caption_label {
-      visible: false;
-      use-markup: false;
-      single-line-mode: true;
-      ellipsize: end;
-      xalign: 0;
-
-      styles [
-        "caption",
-        "dimmed",
-      ]
-    }
+  // The tags this card has and not every listed card (those are said once
+  // above the list), at the row's end; hidden on a deck page whose cards
+  // are grouped (the group's header names them). Not focusable: the row's
+  // accessible label says every tag.
+  $RappelTagPills tag_pills {
+    single-line: true;
+    valign: center;
   }
 
   // A suspended card is not studied (ADR 0035). The icon has the word as
@@ -99,6 +99,23 @@ template $RappelCardRow: Gtk.Box {
 
     styles [
       "dimmed",
+    ]
+  }
+
+  // When the card is due: "Today" (in the accent colour, `.accent`),
+  // "In 10 min", "Tomorrow", "In 3 days", "New", "Suspended"
+  // (`card_row::text::due_word`). Dimmed and small like the second line;
+  // never cut. The row's accessible label says it too.
+  Gtk.Label due_label {
+    use-markup: false;
+    single-line-mode: true;
+    valign: center;
+    xalign: 1;
+
+    styles [
+      "subtitle",
+      "card-due",
+      "numeric",
     ]
   }
 

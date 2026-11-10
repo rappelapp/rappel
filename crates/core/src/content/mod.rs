@@ -1,6 +1,7 @@
 //! Card content: Markdown parsed into a [`Document`], a block and inline
 //! tree that knows nothing about any UI (ADR 0019). The app turns it into
-//! widgets; [`plain_text`] and [`plain_summary`] turn it into text.
+//! widgets; [`plain_text`] and [`plain_summary`] turn it into text, and
+//! [`summary`] into one line whose formulas a list row draws.
 //!
 //! Card text is untrusted. Raw HTML is kept as literal text, never
 //! interpreted, and nothing here touches the network or the filesystem.
@@ -9,6 +10,7 @@
 
 mod parse;
 mod plain;
+mod summary;
 
 use crate::media::MediaRef;
 
@@ -16,6 +18,7 @@ pub use parse::parse;
 #[cfg(test)]
 use plain::PREVIEW_CHARS;
 pub use plain::{one_line_summary, plain_summary, plain_text, search_text};
+pub use summary::{Summary, SummaryPiece, summary};
 
 /// How deep containers (block quotes, lists, emphasis, links…) nest at
 /// most. Deeper content is flattened into the deepest container, so no

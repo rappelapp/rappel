@@ -6,8 +6,33 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-10
+
+The first stable release since 0.1.0. It gathers the betas (Markdown cards with formulas, images and sound, tags, search and All Cards, statistics, export and import also from Anki, Undo, a phone-sized layout and French) and phase 3b's polish: card lists grouped by tag, Statistics a month at a time, backups to a folder you choose, S to start studying, a newer SQLite, and the new app ID `io.github.rappelapp.Rappel`. Your data stays where it was. There is no Snap: the feasibility check found that glycin's image sandbox cannot run under strict confinement, and packaging waits on a decision (ADR 0082).
+
+### Added
+- **S starts studying, and 3 and 4 pass.** On a deck's page, S does what the Study button does; on the deck list, S on a focused deck starts studying that deck without opening it. The session starts when S is let go, so holding it never suspends cards; and while studying, holding S suspends one card, not one after another. While studying or practising, 3 and 4 (and the keypad's) pass like 2 does, as Anki's Good and Easy. None of them acts in a text field or with Ctrl, Alt or Shift. The Study button's tooltip says "Study (S)", and Keyboard Shortcuts lists Start Studying and Pass: 2, 3, 4 (ADR 0081).
+- **Automatic backups to a folder you choose.** In Preferences, under Automatic Backups, choose a folder (a synced folder or a USB disk, say). Each day Rappel closes after a change, it saves a normal export there, named `Rappel backup 2026-11-09.rappel`, and keeps the 14 newest; it never touches any other file in the folder. The window closes at once and the backup finishes in the background (at most five minutes). If it fails (the folder is gone, the disk is full), closing is not held up, nothing is lost, the next close tries again, and the next start says what went wrong. Off by default (ADR 0080, #127).
+
 ### Changed
+- **A new Statistics page, a month at a time.** One card with a switch for Reviews, Time and Forecast shows 30 days of bars with grid values on the right and a date under each week, and the numbers of the selected day (today at first) and of the 30 days above it, as in GNOME Wellbeing. Failed reviews stand on the passed ones in a lighter shade of the same colour, and the screen-reader text gives their count. Round buttons page back and forth 30 days at a time, back as far as your first review. The forecast now covers the next 30 days, from tomorrow. Retention, pass rate and time studied are a Memory list under the card. A day can be selected with the arrow keys or by pressing anywhere on the chart (ADR 0078).
+- **Tidier card lists** on a deck's page and on All Cards. The cards sit on the page with thin lines between them, as in Files and Contacts: the front, and the back dimmed under it when the card has one (a card without a back takes one line). At the end of each row a short word says when the card is due: "Today" in the accent colour, "In 10 min", "Tomorrow", "In 3 days", "New" or "Suspended". The tags that every listed card has are said once above the list ("On every card: …"). On a deck's page, cards with the same other tags are grouped under a header ("Only the shared tags", or "Also" and those tags, with how many cards), so no row needs a tag; a deck with many different sets of tags shows plain rows with their own tags instead, with "+N" past three (one on a phone). All Cards is not grouped, since its filters do that; its rows show their tags and the deck's name on the second line, before the back. A suspended card's front is dimmed besides its pause icon (ADR 0077, 0079, #129).
+- **Formulas are drawn in the card lists**: "Mesure σ-finie", not "Mesure \sigma-finie", on one line at the size of the text; invalid LaTeX shows as its text (ADR 0077, #128).
+- **The app ID is now `io.github.rappelapp.Rappel`** (was `io.github.rsmirke.Rappel`), and every link points to `https://github.com/rappelapp/rappel`. The developer is shown as "The Rappel Project" in About and the metainfo. The data directory does **not** change: it stays `~/.local/share/rappel/` (ADR 0075, #130).
+- **Phase 3b is planned**: its brief and two mockups are in `docs/briefs/`, SPEC.md splits the old phase 3b into 3b (polish and the first Snap, ends in 0.4.0) and 3c (Flatpak bundle, translation workflow, hardening, ends in 1.0), and the maintainer's answers to the phase 3a questions are recorded.
+- **Snap feasibility checked, packaging stopped**: strict confinement stops glycin's image sandbox, so the first Snap is not part of 0.4.0 and waits on the maintainer's decision (ADR 0082, #139).
 - **Rappel has its real icon**: a white index card and a red one on a ring, drawn by the maintainer in GNOME's style, and a matching symbolic icon. They replace the placeholders in `data/icons/` (ADR 0074).
+- **The store listing is ready for 0.4.0**: two new store screenshots (the deck page grouped by tag, and All Cards) and five retaken (review, the deck list, the Statistics card, the editor and a phone-sized one), all from scratch data, their URLs in the metainfo pinned to the `v0.4.0` tag, and the release notes for 0.4.0 (ADR 0083).
+
+### Fixed
+- **Automatic backups, hardened** (round 5 of the hardening, ADR 0084): a full disk during a backup is now reported as "the disk is full" (it said "something unexpected happened"); a hidden partial file left by a backup that was cut off by a shutdown or a crash is removed, once it is a day old, by the next backup that succeeds (before, such files could pile up, each as large as a backup); only Rappel's own partial files are removed, never a link, a folder or any other file (this extends the backup's deletion rule and awaits the maintainer's confirmation, `docs/briefs/QUESTIONS.md`); a backup folder inside Rappel's data folder is refused when the backup runs too, not only when it is chosen; and choosing such a folder now shows "Folder not allowed" with the reason behind Details, instead of "Something went wrong".
+- **After a bulk action on a deck page grouped by tag**, the first group's header stays in view above the first card (it was scrolled just out of sight) (ADR 0084).
+- **The statistics chart grows with a larger text size set by a theme**, not only by the system font settings (ADR 0084).
+- Export… names its own file, not a media file, when writing fails part-way (ADR 0084).
+- **No more stray light dots around a card's text.** Moving to the next card, revealing the answer or editing in the preview could leave a pixel of the previous text (often of an accent, as above "Tribu engendrée"), or cut the top pixel off a new one. GTK repaints only what changed, measured on the letters without hinting, but draws them hinted, which can reach one pixel further; each card side now has GTK repaint a margin around everything it draws whenever it changes (ADR 0076, #120).
+
+### Security
+- The bundled SQLite is now 3.54.1 (`rusqlite` 0.41, `libsqlite3-sys` 0.39.1), which fixes CVE-2026-119375 (RUSTSEC-2026-0459): an older SQLite could return stale memory when opening a database together with a crafted `-wal` file of another page size. The gate's advisory check refused the old version.
 
 ## [0.4.0-beta.1] — 2026-11-03
 
@@ -348,9 +373,10 @@ The beta of phase 2, media and mobile. Cards can show images and play audio, and
 ### Removed
 - `Store::due_cards` and `Store::new_cards` in `cards-core`: unused since `Store::study_input`.
 
-[Unreleased]: https://github.com/rsmirke/rappel/compare/v0.4.0-beta.1...HEAD
-[0.4.0-beta.1]: https://github.com/rsmirke/rappel/compare/v0.3.0-beta.1...v0.4.0-beta.1
-[0.3.0-beta.1]: https://github.com/rsmirke/rappel/compare/v0.2.0-beta.1...v0.3.0-beta.1
-[0.2.0-beta.1]: https://github.com/rsmirke/rappel/compare/v0.2.0-alpha.3...v0.2.0-beta.1
-[0.2.0-alpha.3]: https://github.com/rsmirke/rappel/compare/v0.2.0-alpha.1...v0.2.0-alpha.3
-[0.1.0]: https://github.com/rsmirke/rappel/releases/tag/v0.1.0
+[Unreleased]: https://github.com/rappelapp/rappel/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rappelapp/rappel/compare/v0.4.0-beta.1...v0.4.0
+[0.4.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.3.0-beta.1...v0.4.0-beta.1
+[0.3.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.2.0-beta.1...v0.3.0-beta.1
+[0.2.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.2.0-alpha.3...v0.2.0-beta.1
+[0.2.0-alpha.3]: https://github.com/rappelapp/rappel/compare/v0.2.0-alpha.1...v0.2.0-alpha.3
+[0.1.0]: https://github.com/rappelapp/rappel/releases/tag/v0.1.0

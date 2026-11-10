@@ -1,0 +1,31 @@
+using Gtk 4.0;
+
+// Above a list of cards (the deck page, All Cards; ADR 0077): the tags
+// every listed card has, said once instead of on every row. The pills wrap
+// onto more lines when the width runs out; tag names are untrusted, so
+// nothing parses markup (widgets/tag_pills.rs). Hidden while no tag is
+// shared. On the deck page a group's header (18 px above it) follows;
+// otherwise the first row.
+template $RappelCardListHeader: Gtk.Box {
+  spacing: 6;
+  margin-top: 12;
+  margin-bottom: 6;
+  margin-start: 14;
+  margin-end: 14;
+
+  Gtk.Label shared_label {
+    label: _("On every card:");
+    valign: start;
+    xalign: 0;
+
+    styles [
+      "caption",
+      "dimmed",
+    ]
+  }
+
+  $RappelTagPills shared_pills {
+    hexpand: true;
+    valign: start;
+  }
+}

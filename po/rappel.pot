@@ -4,7 +4,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: rappel\n"
-"Report-Msgid-Bugs-To: https://github.com/rsmirke/rappel/issues\n"
+"Report-Msgid-Bugs-To: https://github.com/rappelapp/rappel/issues\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -89,8 +89,10 @@ msgstr ""
 msgid "Any State"
 msgstr ""
 
+#. Translators: at the end of a card's row: a card never studied.
 #: crates/app/data/browser_page.blp
 #: crates/app/src/pages/browser_page/text.rs
+#: crates/app/src/widgets/card_row/text.rs
 msgid "New"
 msgstr ""
 
@@ -106,6 +108,7 @@ msgstr ""
 #: crates/app/data/browser_page.blp
 #: crates/app/data/card_row.blp
 #: crates/app/src/pages/browser_page/text.rs
+#: crates/app/src/widgets/card_row/text.rs
 msgid "Suspended"
 msgstr ""
 
@@ -205,6 +208,7 @@ msgstr ""
 
 #: crates/app/data/card_info_dialog.blp
 #: crates/app/data/preferences_dialog.blp
+#: crates/app/data/stats_page.blp
 msgid "Memory"
 msgstr ""
 
@@ -248,6 +252,10 @@ msgstr ""
 msgid "History"
 msgstr ""
 
+#: crates/app/data/card_list_header.blp
+msgid "On every card:"
+msgstr ""
+
 #: crates/app/data/card_row.blp
 msgid "Card Actions"
 msgstr ""
@@ -282,16 +290,6 @@ msgstr ""
 #: crates/app/data/deck_row.blp
 #: crates/app/data/delete_card_dialog.blp
 msgid "_Delete"
-msgstr ""
-
-#: crates/app/data/chart_card.blp
-#: crates/app/src/dialogs/card_info/text.rs
-msgid "Passed"
-msgstr ""
-
-#: crates/app/data/chart_card.blp
-#: crates/app/src/dialogs/card_info/text.rs
-msgid "Failed"
 msgstr ""
 
 #: crates/app/data/clean_up_media_dialog.blp
@@ -337,6 +335,7 @@ msgid "_Add Card"
 msgstr ""
 
 #: crates/app/data/deck_page.blp
+#: crates/app/src/pages/deck_page.rs
 msgid "Study"
 msgstr ""
 
@@ -371,8 +370,8 @@ msgstr ""
 
 #: crates/app/data/decks_page.blp
 #: crates/app/data/window.blp
-#: data/io.github.rsmirke.Rappel.desktop.in
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.desktop.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Rappel"
 msgstr ""
 
@@ -525,6 +524,38 @@ msgstr ""
 
 #: crates/app/data/preferences_dialog.blp
 msgid "Open Backup Folder"
+msgstr ""
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Automatic Backups"
+msgstr ""
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Each day Rappel closes after a change, it saves an export to this folder and keeps the 14 newest"
+msgstr ""
+
+#. Translators: the folder automatic backups go to.
+#: crates/app/data/preferences_dialog.blp
+msgctxt "automatic backups"
+msgid "Folder"
+msgstr ""
+
+#: crates/app/data/preferences_dialog.blp
+#: crates/app/src/auto_backup.rs
+msgctxt "automatic backups"
+msgid "Off"
+msgstr ""
+
+#: crates/app/data/preferences_dialog.blp
+msgid "_Choose…"
+msgstr ""
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Choose the folder for automatic backups"
+msgstr ""
+
+#: crates/app/data/preferences_dialog.blp
+msgid "Turn Off Automatic Backups"
 msgstr ""
 
 #: crates/app/data/preferences_dialog.blp
@@ -755,6 +786,14 @@ msgid "Studying"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
+msgid "Start Studying"
+msgstr ""
+
+#: crates/app/data/shortcuts-dialog.blp
+msgid "On a deck or the deck list"
+msgstr ""
+
+#: crates/app/data/shortcuts-dialog.blp
 #: crates/app/src/pages/review_page.rs
 msgid "Show Answer"
 msgstr ""
@@ -924,6 +963,42 @@ msgstr ""
 msgid "Study some cards to see your progress here"
 msgstr ""
 
+#: crates/app/data/stats_page.blp
+msgid "Chart View"
+msgstr ""
+
+#: crates/app/data/stats_page.blp
+msgid "_Reviews"
+msgstr ""
+
+#: crates/app/data/stats_page.blp
+msgid "_Time"
+msgstr ""
+
+#: crates/app/data/stats_page.blp
+msgid "_Forecast"
+msgstr ""
+
+#: crates/app/data/stats_page.blp
+msgctxt "chart legend"
+msgid "Passed"
+msgstr ""
+
+#: crates/app/data/stats_page.blp
+msgctxt "chart legend"
+msgid "Failed"
+msgstr ""
+
+#: crates/app/data/stats_page.blp
+msgctxt "paging button"
+msgid "Previous 30 Days"
+msgstr ""
+
+#: crates/app/data/stats_page.blp
+msgctxt "paging button"
+msgid "Next 30 Days"
+msgstr ""
+
 #: crates/app/data/tag_suggestions.blp
 msgid "Tag suggestions"
 msgstr ""
@@ -934,6 +1009,69 @@ msgstr ""
 
 #: crates/app/data/window.blp
 msgid "Rappel Could Not Start"
+msgstr ""
+
+#. Translators: a toast at the start: what is before ":" is its title (at most 24 characters), the rest is behind Details.
+#: crates/app/src/auto_backup.rs
+msgid "Automatic backups off: their setting could not be read. Choose the folder again in Preferences."
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title (at most 24 characters), the rest is behind Details.
+#: crates/app/src/auto_backup.rs
+msgid "Folder not allowed: a backup inside Rappel’s data folder would be lost with it. Choose a folder outside it."
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder was not found; is its disk connected?"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is not a folder any more; choose it again in Preferences"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder was replaced by a link; choose it again in Preferences"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "the disk is full"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is read-only"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "Rappel may not write to the backup folder"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup would be larger than an import reads; use Export… without media instead"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "something that is not a backup has today’s backup’s name in the backup folder"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder is inside Rappel’s data folder, where a backup would be lost with the data; choose another one in Preferences"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "something unexpected happened"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "it took too long and was stopped"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "Rappel was stopped before it finished"
+msgstr ""
+
+#. Translators: a toast at the start: what is before ":" is its title, the rest is behind Details. {reason} is why.
+#: crates/app/src/auto_backup.rs
+msgid "Automatic backup failed: {reason}"
 msgstr ""
 
 #: crates/app/src/dialogs/about.rs
@@ -1158,6 +1296,14 @@ msgstr ""
 msgid "New card"
 msgstr ""
 
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Passed"
+msgstr ""
+
+#: crates/app/src/dialogs/card_info/text.rs
+msgid "Failed"
+msgstr ""
+
 #. Translators: a review in a card's history: {date} is when, {time} how long the answer took ("4 s"), {interval} when the card came due again ("3 days").
 #: crates/app/src/dialogs/card_info/text.rs
 msgid "{date} · {time} · next in {interval}"
@@ -1349,6 +1495,19 @@ msgid "The setting was not saved: {error}"
 msgstr ""
 
 #: crates/app/src/dialogs/preferences.rs
+msgid "Choose Backup Folder"
+msgstr ""
+
+#. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+#: crates/app/src/dialogs/preferences.rs
+msgid "The folder chooser failed: {error}"
+msgstr ""
+
+#: crates/app/src/dialogs/preferences.rs
+msgid "Choose a folder on this computer"
+msgstr ""
+
+#: crates/app/src/dialogs/preferences.rs
 msgid "Recalculating…"
 msgstr ""
 
@@ -1395,20 +1554,6 @@ msgstr ""
 #: crates/app/src/pages/archived_page/text.rs
 msgid "Create a deck, or unarchive one to study it again"
 msgstr ""
-
-#: crates/app/src/pages/archived_page/text.rs
-#: crates/app/src/pages/browser_page/text.rs
-msgid "No cards"
-msgstr ""
-
-#. Translators: {count} is a number of cards.
-#: crates/app/src/pages/archived_page/text.rs
-#: crates/app/src/pages/browser_page/text.rs
-#: crates/app/src/ui/text.rs
-msgid "{count} card"
-msgid_plural "{count} cards"
-msgstr[0] ""
-msgstr[1] ""
 
 #: crates/app/src/pages/archived_page/text.rs
 msgid "Unarchive"
@@ -1468,9 +1613,9 @@ msgstr ""
 msgid "Due {when}"
 msgstr ""
 
-#. Translators: under a card in All Cards: {deck} is its deck's name, {status} "Due in 3 days".
+#. Translators: the start of the line under a card in All Cards, before the card's back: {deck} is its deck's name.
 #: crates/app/src/pages/browser_page/text.rs
-msgid "{deck} · {status}"
+msgid "{deck} ·"
 msgstr ""
 
 #. Translators: what a screen reader says for a card in All Cards: {card} is the card ("2 + 2, back: 4"), {deck} its deck's name, {status} "Due in 3 days".
@@ -1550,6 +1695,7 @@ msgstr ""
 #. Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
 #: crates/app/src/pages/deck_page.rs
 #: crates/app/src/pages/decks_page.rs
+#: crates/app/src/pages/stats_page.rs
 msgid "The statistics could not be read: {error}"
 msgstr ""
 
@@ -1836,9 +1982,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. Translators: what a screen reader says for a headline figure: {caption} is "Pass rate", {value} "91%".
-#. Translators: what a screen reader says for a headline figure: {caption} is "Pass rate, last 30 days", {value} "91%".
 #: crates/app/src/pages/review_page.rs
-#: crates/app/src/pages/stats_page/text.rs
 msgid "{caption}: {value}"
 msgstr ""
 
@@ -1857,14 +2001,6 @@ msgstr ""
 
 #: crates/app/src/pages/setting_page.rs
 msgid "Resetting the setting stopped unexpectedly"
-msgstr ""
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Time Studied per Day"
-msgstr ""
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Due Forecast"
 msgstr ""
 
 #: crates/app/src/pages/stats_page/text.rs
@@ -1887,6 +2023,35 @@ msgstr ""
 msgid "Time studied, last 30 days"
 msgstr ""
 
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Time Studied per Day"
+msgstr ""
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Due Forecast"
+msgstr ""
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Today"
+msgstr ""
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Tomorrow"
+msgstr ""
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Next 30 Days"
+msgstr ""
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Last 30 Days"
+msgstr ""
+
+#. Translators: a period of the statistics; {first} and {last} are its first and last days, as "8 Sep" (or "8 Sep 2025" in another year).
+#: crates/app/src/pages/stats_page/text.rs
+msgid "{first} – {last}"
+msgstr ""
+
 #. Translators: {count} is a number of reviews (answers given to cards).
 #: crates/app/src/pages/stats_page/text.rs
 #: crates/app/src/ui/text.rs
@@ -1895,10 +2060,28 @@ msgid_plural "{count} reviews"
 msgstr[0] ""
 msgstr[1] ""
 
-#. Translators: the top of a chart's scale; {value} is a number.
+#. Translators: {count} is a number of failed reviews on a day ("3 failed"), under its number of reviews.
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Up to {value}"
-msgstr ""
+msgid "{count} failed"
+msgid_plural "{count} failed"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: {count} is a number of cards falling due ("12 cards").
+#. Translators: {count} is a number of cards.
+#: crates/app/src/pages/stats_page/text.rs
+#: crates/app/src/ui/text.rs
+msgid "{count} card"
+msgid_plural "{count} cards"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: {count} is a number of cards due on a day.
+#: crates/app/src/pages/stats_page/text.rs
+msgid "{count} card due"
+msgid_plural "{count} cards due"
+msgstr[0] ""
+msgstr[1] ""
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
@@ -1910,21 +2093,14 @@ msgstr ""
 msgid "{day}: {reviews}, {passed} passed, {failed} failed"
 msgstr ""
 
+#. Translators: a chart's summary for screen readers; {period} is "Last 30 Days" or "8 Sep – 7 Oct".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: no reviews."
+msgid "{period}: no reviews."
 msgstr ""
 
-#. Translators: a chart's summary for screen readers: {reviews} is "120 reviews", {passed} a number, {day} "14 October", {most} a number of reviews.
+#. Translators: a chart's summary for screen readers: {period} is "Last 30 Days" or "8 Sep – 7 Oct", {reviews} "120 reviews", {passed} and {failed} numbers, {day} "14 October", {most} a number of reviews.
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: {reviews}, {passed} passed, busiest day {day} with {most}."
-msgstr ""
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Today"
-msgstr ""
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "No reviews in the last 30 days"
+msgid "{period}: {reviews}, {passed} passed, {failed} failed, busiest day {day} with {most}."
 msgstr ""
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
@@ -1937,39 +2113,19 @@ msgstr ""
 msgid "{day}: {time} studied"
 msgstr ""
 
+#. Translators: a chart's summary for screen readers; {period} is "Last 30 Days" or "8 Sep – 7 Oct".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: no time studied."
+msgid "{period}: no time studied."
 msgstr ""
 
-#. Translators: a chart's summary for screen readers: {time} is "3 h 12 min", {day} "14 October", {most} "25 min".
+#. Translators: a chart's summary for screen readers: {period} is "Last 30 Days" or "8 Sep – 7 Oct", {time} "3 h 12 min", {day} "14 October", {most} "25 min".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Last 30 days: {time} studied, longest day {day} with {most}."
+msgid "{period}: {time} studied, longest day {day} with {most}."
 msgstr ""
-
-#. Translators: the top of a chart's scale; {value} is a number of minutes.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Up to {value} min"
-msgstr ""
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "No time studied in the last 30 days"
-msgstr ""
-
-#. Translators: {count} is a number of cards due on a day.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "{count} card due"
-msgid_plural "{count} cards due"
-msgstr[0] ""
-msgstr[1] ""
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{day}: nothing due"
-msgstr ""
-
-#. Translators: a chart's day; {day} is "Today", {cards} "12 cards due", {overdue} a number.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "{day}: {cards}, {overdue} of them overdue"
 msgstr ""
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct", {cards} "12 cards due".
@@ -1977,34 +2133,20 @@ msgstr ""
 msgid "{day}: {cards}"
 msgstr ""
 
+#. Translators: a chart's summary for screen readers; {period} is "Next 30 Days".
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Next 14 days: nothing due."
+msgid "{period}: nothing due."
 msgstr ""
 
 #: crates/app/src/pages/stats_page/text.rs
-msgid "today"
+#: crates/app/src/widgets/deck_row/text.rs
+msgid "tomorrow"
 msgstr ""
 
-#. Translators: a chart's summary for screen readers: {cards} is "40 cards due", {overdue} a number, {day} "today" or "14 October", {most} a number of cards.
+#. Translators: a chart's summary for screen readers: {period} is "Next 30 Days", {cards} "40 cards due", {day} "tomorrow" or "14 October", {most} a number of cards.
 #: crates/app/src/pages/stats_page/text.rs
-msgid "Next 14 days: {cards}, {overdue} of them overdue, busiest day {day} with {most}."
+msgid "{period}: {cards}, busiest day {day} with {most}."
 msgstr ""
-
-#. Translators: a chart's summary for screen readers: {cards} is "40 cards due", {day} "today" or "14 October", {most} a number of cards.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Next 14 days: {cards}, busiest day {day} with {most}."
-msgstr ""
-
-#: crates/app/src/pages/stats_page/text.rs
-msgid "Nothing due in the next 14 days"
-msgstr ""
-
-#. Translators: under the forecast chart; {count} is a number of cards.
-#: crates/app/src/pages/stats_page/text.rs
-msgid "{count} overdue card is counted under Today"
-msgid_plural "{count} overdue cards are counted under Today"
-msgstr[0] ""
-msgstr[1] ""
 
 #: crates/app/src/render/audio.rs
 msgid "Play"
@@ -2942,6 +3084,10 @@ msgstr ""
 msgid "“{name}” could not be restored: {error}"
 msgstr ""
 
+#: crates/app/src/ui/text.rs
+msgid "No cards"
+msgstr ""
+
 #. Translators: {count} is a number of cards to review now ("12 due"), shown under a deck's name.
 #: crates/app/src/ui/text.rs
 msgid "{count} due"
@@ -2974,6 +3120,11 @@ msgstr ""
 #. Translators: a time in hours and minutes ("3 h 12 min").
 #: crates/app/src/ui/text.rs
 msgid "{hours} h {minutes} min"
+msgstr ""
+
+#. Translators: a whole number of hours ("3 h"), on a chart's scale.
+#: crates/app/src/ui/text.rs
+msgid "{hours} h"
 msgstr ""
 
 #. Translators: a time in minutes ("12 min").
@@ -3039,6 +3190,12 @@ msgctxt "date format"
 msgid "%-d %b"
 msgstr ""
 
+#. Translators: a day of another year in a period of the statistics, for g_date_time_format(): %-d is the day of the month, %b the short month name, %Y the year ("17 Sep 2025").
+#: crates/app/src/ui/time.rs
+msgctxt "date format"
+msgid "%-d %b %Y"
+msgstr ""
+
 #. Translators: a day in a chart's summary, for g_date_time_format(): %-d is the day of the month, %B the month name ("14 October").
 #: crates/app/src/ui/time.rs
 msgctxt "date format"
@@ -3096,6 +3253,45 @@ msgstr ""
 msgid "Restore backup from {when}"
 msgstr ""
 
+#. Translators: a header in a deck's list of cards, before tag pills: the cards under it have these tags too, besides those on every card.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "Also"
+msgstr ""
+
+#. Translators: a header in a deck's list of cards, before tag pills, when no tag is on every card of the deck.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "Tagged"
+msgstr ""
+
+#. Translators: a header in a deck's list of cards: the cards under it have no tag but those on every card.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "Only the shared tags"
+msgstr ""
+
+#. Translators: a header in a deck's list of cards: the cards under it have no tag.
+#: crates/app/src/widgets/card_groups/text.rs
+msgctxt "group header"
+msgid "No tags"
+msgstr ""
+
+#. Translators: what a screen reader says for a group of cards: {title} is "Only the shared tags" or "No tags", {count} "14 cards".
+#: crates/app/src/widgets/card_groups/text.rs
+msgid "{title}, {count}"
+msgstr ""
+
+#. Translators: what a screen reader says for a group of cards that have these tags besides the shared ones: {tags} is "Analyse, MAT3101", {count} "7 cards".
+#: crates/app/src/widgets/card_groups/text.rs
+msgid "Also tagged {tags}, {count}"
+msgstr ""
+
+#. Translators: the same, when no tag is on every card.
+#: crates/app/src/widgets/card_groups/text.rs
+msgid "Tagged {tags}, {count}"
+msgstr ""
+
 #: crates/app/src/widgets/card_row/text.rs
 msgid "empty front"
 msgstr ""
@@ -3108,6 +3304,64 @@ msgstr ""
 #: crates/app/src/widgets/card_row/text.rs
 msgid "suspended"
 msgstr ""
+
+#. Translators: what a screen reader says for a card never studied, at the end of its row's label.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "new"
+msgstr ""
+
+#. Translators: at the end of a card's row: the card is due now.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "Today"
+msgstr ""
+
+#. Translators: what a screen reader says for a card due now.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due today"
+msgstr ""
+
+#. Translators: at the end of a card's row: when it is due again, later today; {interval} is "10 min" or "5 h".
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "In {interval}"
+msgstr ""
+
+#. Translators: the same for a screen reader.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due in {interval}"
+msgstr ""
+
+#. Translators: at the end of a card's row: due in the next study day.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "Tomorrow"
+msgstr ""
+
+#. Translators: the same for a screen reader.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due tomorrow"
+msgstr ""
+
+#. Translators: at the end of a card's row: due in {count} days (2 or more).
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "In {count} day"
+msgid_plural "In {count} days"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Translators: the same for a screen reader.
+#: crates/app/src/widgets/card_row/text.rs
+msgctxt "card due"
+msgid "due in {count} day"
+msgid_plural "due in {count} days"
+msgstr[0] ""
+msgstr[1] ""
 
 #. Translators: starts a study session over the cards that carry a tag, in every deck; {tag} is the tag's name.
 #: crates/app/src/widgets/card_row/text.rs
@@ -3130,10 +3384,6 @@ msgid "{count} More Tag in All Cards…"
 msgid_plural "{count} More Tags in All Cards…"
 msgstr[0] ""
 msgstr[1] ""
-
-#: crates/app/src/widgets/chart_card.rs
-msgid "Select a day to see its values"
-msgstr ""
 
 #. Translators: a deck row for screen readers: {name} is the deck's name, {line} "12 due, 5 new".
 #: crates/app/src/widgets/deck_row/text.rs
@@ -3191,10 +3441,6 @@ msgid "{count} hour"
 msgid_plural "{count} hours"
 msgstr[0] ""
 msgstr[1] ""
-
-#: crates/app/src/widgets/deck_row/text.rs
-msgid "tomorrow"
-msgstr ""
 
 #: crates/app/src/widgets/tag_entry.rs
 msgid "Add a tag"
@@ -3278,74 +3524,82 @@ msgid "{message}. The copy an earlier restore left waiting was kept as {path}"
 msgstr ""
 
 #. Translators: A short name for what the app is, shown next to its name in some menus.
-#: data/io.github.rsmirke.Rappel.desktop.in
+#: data/io.github.rappelapp.Rappel.desktop.in
 msgid "Flashcards"
 msgstr ""
 
 #. Translators: A tooltip in the menus; the same text as the summary in the app's store listing.
 #. Translators: The app's summary in software stores, at most 35 characters.
-#: data/io.github.rsmirke.Rappel.desktop.in
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.desktop.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Memorize with flashcards"
 msgstr ""
 
 #. Translators: Search terms to find this app. Do NOT translate or localize the semicolons, and end the list with one. Add words people would search for in your language.
-#: data/io.github.rsmirke.Rappel.desktop.in
+#: data/io.github.rappelapp.Rappel.desktop.in
 msgid "flashcards;spaced repetition;memorize;learn;study;cards;"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Rappel shows each card again just before you would forget it, so a few minutes a day are enough to remember what you learn. After each card you only say whether you knew it: Fail or Pass."
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Cards are written in Markdown, with formulas, images and sound. Everything stays on your computer: Rappel never goes online and needs no account."
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Two answers only, scheduled by FSRS, a modern model of memory"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Formulas drawn as in LaTeX"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures and sound on cards"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Search, tags and statistics"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Automatic backups, and export to a single file"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Import from Anki, with your review history"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Works on phones and with the keyboard alone"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Study a card, then say whether you knew it"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Your decks with the cards due today"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "A deck's cards, grouped by their tags"
+msgstr ""
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "Find any card by words, tags or state"
+msgstr ""
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
+msgid "See how much you studied, a month at a time"
+msgstr ""
+
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Write cards in Markdown with a live preview"
 msgstr ""
 
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
-msgid "See how much you studied and how well you remember"
-msgstr ""
-
-#: data/io.github.rsmirke.Rappel.metainfo.xml.in
+#: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr ""

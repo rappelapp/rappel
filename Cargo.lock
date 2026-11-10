@@ -1433,9 +1433,9 @@ checksum = "60276e2d41bbb68b323e566047a1bfbf952050b157d8b5cdc74c07c1bf4ca3b6"
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.38.2"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -1926,7 +1926,7 @@ dependencies = [
 
 [[package]]
 name = "rappel"
-version = "0.4.0-beta.1"
+version = "0.4.0"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "rappel-core"
-version = "0.4.0-beta.1"
+version = "0.4.0"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -1961,6 +1961,7 @@ dependencies = [
  "pulldown-cmark",
  "ratex-parser",
  "rusqlite",
+ "rustix",
  "ruzstd",
  "serde",
  "serde_json",
@@ -2167,9 +2168,9 @@ checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rusqlite"
-version = "0.40.2"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",

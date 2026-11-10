@@ -44,7 +44,7 @@ mod imp {
     use crate::state::AppState;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/window.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/window.ui")]
     pub struct RappelWindow {
         #[template_child]
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,
@@ -175,6 +175,7 @@ mod imp {
             let window = self.obj();
             let Some(editor) = window.unsaved_editor() else {
                 window.save_state();
+                window.start_auto_backup();
                 return self.parent_close_request();
             };
             glib::spawn_future_local(glib::clone!(
@@ -262,6 +263,10 @@ impl RappelWindow {
         tracing::debug!("showing the main page");
         imp.stack.set_visible_child_name("main");
         self.tidy_media_trash();
+        if let Some(state) = imp.state.get() {
+            // A failed automatic backup is said at the next start (ADR 0080).
+            crate::auto_backup::report_at_start(self, state.data_dir());
+        }
         // Only at startup, before the window is shown; not after a restore.
         if !self.is_mapped() {
             self.restore_state();
@@ -372,6 +377,23 @@ impl RappelWindow {
         window_state::save(state.data_dir(), &saved);
     }
 
+    /// Starts the automatic backup if it is due (ADR 0080), as the window
+    /// closes. Only from the main page, like `save_state`: a recovery or
+    /// error page has no database to back up. The application is held
+    /// until it ends, so the window closes at once.
+    fn start_auto_backup(&self) {
+        let imp = self.imp();
+        let Some(state) = imp.state.get() else {
+            return;
+        };
+        if imp.stack.visible_child_name().as_deref() != Some("main") {
+            return;
+        }
+        if let Some(app) = self.application() {
+            crate::auto_backup::start_at_close(&app, state.data_dir());
+        }
+    }
+
     /// Runs an export or import unless one is already running. Its actions
     /// are disabled meanwhile. `transfer` holds the application around
     /// each worker (`ui::worker`), so closing the window lets the work finish.
@@ -456,7 +478,7 @@ impl RappelWindow {
         for page in self.pages() {
             if let Some(deck) = page.downcast_ref::<DeckPage>() {
                 deck.update_study();
-                deck.refresh_new_flags();
+                deck.refresh_standings();
             } else if let Some(browser) = page.downcast_ref::<BrowserPage>() {
                 // A deck page's Undo (suspend, reset) changed cards it lists.
                 browser.requery();
