@@ -23,6 +23,8 @@ Pre-approved (not stop conditions):
 Any other migration, format change, licence or deletion is a stop condition.
 
 ## Slices, in order
+
+*Note for the record (added in Phase 3b slice 0): #117 (removing the "Ctrl ⏎ to save" hint) was folded into slice 7 (#121), and slice 7b (#119, the duplicate-front note in the card editor) was added during the run (#122). Neither is listed below.*
 0. Housekeeping (docs only). SPEC: status line and §4/§5 roadmap — Phase 3a
    (this brief) ends in 0.4.0, Phase 3b (publishing: Snap, self-hosted Flatpak,
    finished metainfo, icon) ends in 1.0; 0.2.0 and 0.3.0 are not released as

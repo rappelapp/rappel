@@ -1,0 +1,504 @@
+<title>Rappel statistics propositions</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Literata:opsz,wght@7..72,500;7..72,650&display=swap">
+<style>
+/* Layout: a review sheet. Prose column on the left edge, then each proposition
+   as a desktop window and a 360 px phone side by side (scrolls sideways when narrow). */
+:root {
+  --bg: #f3f3f1; --fg: #26262a; --muted: #67676f; --line: #dcdcd8; --panel: #ffffff; --mark: #1c71d8;
+  --f-display: "Literata", Georgia, serif;
+  --f-body: "Inter", "Adwaita Sans", "Cantarell", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #19191c; --fg: #ececee; --muted: #a2a2aa; --line: #34343a; --panel: #232327; --mark: #78aeed; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #19191c; --fg: #ececee; --muted: #a2a2aa; --line: #34343a; --panel: #232327; --mark: #78aeed; color-scheme: dark }
+
+/* Adwaita stand-in tokens for the mockups only (libadwaita 1.6+ defaults). */
+.mocks { --w-bg:#fafafb; --view:#ffffff; --hb:#ffffff; --card:#ffffff; --t:rgba(0,0,6,.8); --dim:rgba(0,0,6,.55);
+  --bd:rgba(0,0,6,.08); --pill:rgba(0,0,6,.07); --acc:#3584e4; --acc-t:#0461be; --ok:#1b8553; --warn:#9c6e03;
+  --shadow:0 0 0 1px rgba(0,0,6,.03),0 1px 3px 1px rgba(0,0,6,.07),0 2px 6px 2px rgba(0,0,6,.03); --frame:rgba(0,0,6,.18); }
+.mocks.dark { --w-bg:#222226; --view:#1d1d20; --hb:#2e2e32; --card:#303034; --t:#ffffff; --dim:rgba(255,255,255,.55);
+  --bd:rgba(0,0,6,.36); --pill:rgba(255,255,255,.1); --acc:#3584e4; --acc-t:#81d0ff; --ok:#78e9ab; --warn:#ffc252;
+  --shadow:0 0 0 1px rgba(0,0,6,.25),0 1px 3px 1px rgba(0,0,6,.1); --frame:rgba(0,0,0,.6); }
+
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--f-body); }
+.wrap { max-width: 1340px; margin: 0 auto; padding-block: 40px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2 { font-family: var(--f-display); font-weight: 650; text-wrap: balance; letter-spacing: -.01em; }
+h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.15; margin: 0 0 14px; }
+h2 { font-size: 26px; margin: 0; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 17px; max-width: 64ch; }
+.lede + .lede { margin-top: 10px; }
+.eyebrow { color: var(--mark); font-weight: 600; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 8px; }
+.problems { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 26px 0 0; padding: 0; list-style: none; }
+.problems li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.problems b { display: block; margin-bottom: 2px; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 34px 0 6px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--panel); }
+.seg button { font: inherit; font-size: 14px; border: 0; background: none; color: var(--fg); padding: 6px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.seg button:focus-visible { outline: 2px solid var(--mark); outline-offset: -2px; }
+.note { color: var(--muted); font-size: 13px; }
+
+section.prop { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 28px; }
+.prop-head { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; }
+.badge { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--mark); color: var(--mark); }
+.prop > p { margin-top: 10px; }
+.stage { overflow-x: auto; margin: 22px 0 0; padding: 4px 2px 18px; }
+.stage-row { display: flex; gap: 28px; align-items: flex-start; width: max-content; }
+.cap { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 28px; margin-top: 10px; }
+.facts ul { margin: 0; padding-left: 18px; }
+.facts li { margin: 3px 0; }
+
+.rec { margin-top: 56px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; }
+.rec h2 { font-size: 22px; margin-bottom: 8px; }
+.rec p + p { margin-top: 8px; }
+
+/* ---------- Mockup chrome: libadwaita look-alike ---------- */
+.win { font-family: "Inter", "Adwaita Sans", system-ui, sans-serif; font-size: 14.5px; line-height: 1.35; color: var(--t);
+  background: var(--w-bg); border-radius: 12px; overflow: hidden; box-shadow: 0 0 0 1px var(--frame), 0 8px 28px rgba(0,0,0,.18);
+  display: flex; flex-direction: column; }
+.win.desk { width: 900px; height: 640px; }
+.win.phone { width: 360px; height: 700px; border-radius: 22px; }
+.hb { background: var(--hb); min-height: 47px; display: flex; align-items: center; gap: 6px; padding: 0 6px; box-shadow: inset 0 -1px var(--bd); flex: none; }
+.hb .ttl { flex: 1; text-align: center; min-width: 0; }
+.hb .ttl b { display: block; font-weight: 700; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb .ttl span { display: block; font-size: 12px; color: var(--dim); }
+.ib { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: var(--t); flex: none; }
+.ib svg { width: 16px; height: 16px; fill: currentColor; }
+.ib.hov { background: var(--pill); }
+.btn-s { background: var(--acc); color: #fff; font-weight: 700; padding: 7px 16px; border-radius: 8px; font-size: 14px; flex: none; }
+.wbtn { width: 24px; height: 24px; border-radius: 50%; background: var(--pill); display: grid; place-items: center; margin-left: 4px; }
+.wbtn svg { width: 10px; height: 10px; fill: var(--t); }
+.body { flex: 1; overflow: auto; background: var(--w-bg); }
+.clamp { margin: 0 auto; padding: 18px 12px 28px; }
+.ab { flex: none; background: var(--hb); box-shadow: inset 0 1px var(--bd); padding: 8px 8px 10px; display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; }
+.ab .mid { text-align: center; }
+.ab .pill-s { display: inline-block; background: var(--acc); color: #fff; font-weight: 700; padding: 9px 30px; border-radius: 999px; }
+.ab small { display: block; font-size: 12px; color: var(--dim); margin-top: 4px; }
+
+/* boxed list, rows */
+.grp-h { display: flex; align-items: baseline; justify-content: space-between; margin: 22px 2px 8px; }
+.grp-h:first-child { margin-top: 0; }
+.grp-h b { font-weight: 700; font-size: 14.5px; }
+.grp-h span { font-size: 13px; color: var(--dim); }
+.boxed { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.row { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 7px 6px 7px 14px; }
+.row + .row { box-shadow: inset 0 1px var(--bd); }
+.row .tx { flex: 1; min-width: 0; }
+.row .f { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .b { font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.row .end { display: flex; align-items: center; gap: 6px; flex: none; }
+.row .when { font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.row .when.due { color: var(--acc-t); font-weight: 600; }
+.row.susp .tx { opacity: .55; }
+.tp { font-size: 12px; padding: 2px 7px; border-radius: 6px; background: var(--pill); white-space: nowrap; }
+.m { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "Times New Roman", serif; font-style: italic; font-size: 1.08em; }
+.mu { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "Times New Roman", serif; font-size: 1.06em; }
+.shared { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); margin: 0 2px 14px; }
+.chev { width: 16px; height: 16px; fill: var(--dim); flex: none; }
+.expander { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 14px; }
+.expander .tx { flex: 1; }
+.search { display: flex; align-items: center; gap: 8px; background: var(--pill); border-radius: 8px; padding: 7px 10px; color: var(--dim); font-size: 14px; margin-bottom: 16px; }
+.search svg { width: 15px; height: 15px; fill: currentColor; }
+
+/* Statistics mockups */
+.sgrp { margin: 22px 2px 8px; font-weight: 700; }
+.sgrp:first-child { margin-top: 0; }
+.scard { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 16px 12px; }
+.heads { display: flex; flex-wrap: wrap; gap: 6px 36px; align-items: flex-start; margin-bottom: 10px; }
+.hd .k { font-size: 13.5px; }
+.hd .v { font-size: 26px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.hd .s { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin-top: 2px; }
+.hd .s b { display: block; font-size: 13px; letter-spacing: 0; text-transform: none; color: var(--t); font-weight: 500; }
+.heads .sp { flex: 1; }
+.legend { display: flex; gap: 14px; font-size: 12.5px; color: var(--dim); align-items: center; align-self: flex-start; margin-top: 4px; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; }
+.lg-p { background: var(--acc); }
+.lg-t { background: var(--acc); opacity: .38; }
+.lg-o { box-shadow: inset 0 0 0 1.5px var(--acc); }
+svg.ch { display: block; overflow: visible; }
+.ch .bar { fill: var(--acc); }
+.ch .bar.soft { fill: var(--acc); opacity: .38; }
+.ch .bar.hollow { fill: none; stroke: var(--acc); stroke-width: 1.5; }
+.ch .bar.dim { fill: var(--acc); opacity: .55; }
+.ch .grid { stroke: var(--bd); stroke-width: 1; }
+.ch .axis { stroke: var(--dim); stroke-width: 1; opacity: .5; }
+.ch .avg { stroke: var(--t); stroke-width: 1.2; stroke-dasharray: 5 4; opacity: .55; }
+.ch text { fill: var(--dim); font-size: 11px; font-family: inherit; font-variant-numeric: tabular-nums; }
+.ch text.day { font-size: 12.5px; fill: var(--t); }
+.ch .sel { fill: var(--pill); }
+.navs { display: flex; justify-content: center; gap: 10px; margin-top: 8px; }
+.navs span { width: 30px; height: 30px; border-radius: 50%; background: var(--pill); display: grid; place-items: center; }
+.navs svg { width: 14px; height: 14px; fill: var(--t); }
+.navs span.off { opacity: .4; }
+.tg { display: flex; background: var(--pill); border-radius: 9px; padding: 3px; gap: 2px; margin-bottom: 14px; }
+.tg button { flex: 1; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--t); background: none; border: 0; padding: 5px 8px; border-radius: 7px; cursor: pointer; }
+.tg button.on { background: var(--card); box-shadow: 0 1px 2px rgba(0,0,6,.15); }
+.mocks.dark .tg button.on { background: rgba(255,255,255,.15); }
+.tg button:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; }
+.rows .row { min-height: 50px; }
+.rows .val { font-weight: 600; font-variant-numeric: tabular-nums; padding-right: 8px; }
+.sum3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.phone .sum3 { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.phone .sum3 .hd { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; }
+.phone .sum3 .hd + .hd { box-shadow: inset 0 1px var(--bd); }
+.phone .sum3 .hd .v { font-size: 20px; order: 2; }
+.phone .sum3 .hd .s { display: none; }
+.ringrow { display: flex; gap: 18px; align-items: center; }
+.ringrow .tx { flex: 1; min-width: 0; }
+.ring circle { fill: none; stroke-width: 9; }
+.ring .bg { stroke: var(--pill); }
+.ring .fg { stroke: var(--acc); stroke-linecap: round; }
+.ring text { fill: var(--t); font-weight: 800; font-size: 20px; font-family: inherit; }
+.ratio { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px; margin: 8px 0 6px; }
+.ratio .p { background: var(--acc); }
+.ratio .f { background: var(--dim); opacity: .45; }
+.ratio-l { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--dim); }
+.ratio-l b { color: var(--t); font-variant-numeric: tabular-nums; }
+.heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 1fr); gap: 3px; }
+.heat i { aspect-ratio: 1; border-radius: 3px; background: var(--pill); }
+.heat i.l1 { background: var(--acc); opacity: .3; } .heat i.l2 { background: var(--acc); opacity: .55; }
+.heat i.l3 { background: var(--acc); opacity: .8; } .heat i.l4 { background: var(--acc); }
+.heat i.today { outline: 2px solid var(--t); outline-offset: 1px; }
+.heat-l { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--dim); margin-top: 8px; }
+.heat-l .k { display: inline-flex; gap: 3px; align-items: center; }
+.heat-l .k i { width: 10px; height: 10px; border-radius: 2px; background: var(--pill); display: inline-block; }
+.lvl { flex: 0 0 38%; height: 6px; border-radius: 3px; background: var(--pill); overflow: hidden; }
+.lvl b { display: block; height: 100%; background: var(--acc); border-radius: 3px; }
+.phone .lvl { flex-basis: 30%; }
+.fail-demo { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 22px; }
+.fail-demo > div:not(.intro) { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.fail-demo .win { box-shadow: none; border-radius: 8px; height: auto; padding: 10px; margin: 8px 0; }
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Rappel · UI designer · mockups, no code</div>
+  <h1>Three ways to make the Statistics page nicer</h1>
+  <p class="lede">Max, here are three propositions for Statistics, drawn as GNOME windows at desktop size and at 360&nbsp;px. Like Wellbeing, they put each chart and its numbers in one rounded card, add soft grid lines, and get rid of the hatched grey. Use the switch to see them in dark mode.</p>
+  <p class="lede">The deck is your SIC&nbsp;3101 deck. The numbers are invented so the charts have something to show.</p>
+
+  <ul class="problems">
+    <li><b>Hatched grey for Failed</b>It looks like a rendering glitch, especially on a thin bar.</li>
+    <li><b>Charts float on the page</b>A dashed rule and a bare axis, with nothing holding them together.</li>
+    <li><b>Hard to read the values</b>“Up to 50” is the only scale, and you have to select a bar to see any number.</li>
+    <li><b>Same weight for everything</b>Three charts of the same size, one after another.</li>
+  </ul>
+
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="Mockup theme">
+      <button type="button" id="th-light" aria-pressed="true">Light</button>
+      <button type="button" id="th-dark" aria-pressed="false">Dark</button>
+    </div>
+    <span class="note">Windows scroll inside, like the app. On a phone, swipe sideways to see the second window.</span>
+  </div>
+
+  <div class="fail-demo" id="fails"></div>
+
+  <section class="prop" id="d">
+    <div class="prop-head"><h2>D · One week, softer Failed</h2><span class="badge">Second round · in between A and B</span></div>
+    <p>B's layout: one card with a Reviews, Time and Forecast switch, today and this week at the top, seven bars with day letters, and arrows to go back a week. Failed is drawn the A way, in the same blue made lighter and set on top with a small gap, so there is no outline. There is no average line. Because colour alone is not enough for everyone, the screen-reader text and a tap on a day give the failed count. The three summary numbers stay a plain list underneath. Try the switch.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="D" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="D" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>From B</h3><ul><li>One week at a time, a short page.</li><li>The switch and the week arrows.</li><li>The summary as a list.</li></ul></div>
+      <div><h3>From A</h3><ul><li>Failed as a lighter blue with a gap, no outline and no hatching.</li><li>Grid lines with values and a dashed average line.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="prop" id="d-month">
+    <div class="prop-head"><h2>D · A month at a time</h2><span class="badge">To compare with the week</span></div>
+    <p>The same card, but showing 30 days, with a date under each week. The arrows go back 30 days at a time. Today's bar has a light background behind it. Tap a day to see its numbers, as you can today. Forecast shows the next 30 days.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="E" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="E" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Week</h3><ul><li>Wide bars with day letters, easy to read and tap, even on a phone.</li><li>A short span, so a single day stands out.</li></ul></div>
+      <div><h3>Month</h3><ul><li>Shows your habit over time, as today's page does.</li><li>Thin bars on a phone (about 7 px), so tapping one day is fiddly there.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="prop" id="a">
+    <div class="prop-head"><h2>A · Wellbeing cards</h2><span class="badge">First round</span></div>
+    <p>The same three charts, each in a card of its own with its headline numbers at the top, as in Wellbeing: the day you selected (today to start with) and the 30-day total. Grid lines with values on the right replace “Up to 50”, and a dashed line marks your daily average. A failed review is the same blue made lighter, sitting on top of the passed part with a small gap.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="A" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="A" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Good</h3><ul><li>Closest to GNOME's own look; calm.</li><li>Every chart says its key number without a click.</li><li>Keeps all of today's content, so nothing is lost.</li></ul></div>
+      <div><h3>Less good</h3><ul><li>Still a long page with three charts.</li><li>The lighter blue alone can be hard to see for some people, so the gap and the numbers in the header do the rest of the work.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="prop" id="b">
+    <div class="prop-head"><h2>B · One chart, three views</h2><span class="badge">Most like Wellbeing</span></div>
+    <p>One card, exactly like Screen Time: a switch for Reviews, Time and Forecast, the numbers for today and this week, a week of bars with day letters, and arrows to go back a week. A failed review is an outlined segment, so it is shown by its shape and not only its colour. The three summary numbers become a plain list underneath. Try the switch in the mockup.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="B" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="B" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Good</h3><ul><li>Short page, fits one screen, even on a phone.</li><li>Seven wide bars are easy to tap and read.</li></ul></div>
+      <div><h3>Less good</h3><ul><li>You see one week at a time instead of a month.</li><li>A switch and week arrows to build and to make work with the keyboard.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="prop" id="c">
+    <div class="prop-head"><h2>C · Calm summary</h2><span class="badge">Fewest charts</span></div>
+    <p>Fewer bars, more plain words. A ring for expected retention, one bar split into Passed and Failed with each count written under it, a calendar of the last 12 weeks where darker squares mean more reviews, and the forecast as a list of days with small level bars.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="C" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="C" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Good</h3><ul><li>Easy to read at a glance; the calendar shows your study habit nicely.</li><li>Failed is a labelled number, which works for everyone.</li></ul></div>
+      <div><h3>Less good</h3><ul><li>Time studied per day disappears (only the total stays).</li><li>The furthest from today's page, so the most work.</li></ul></div>
+    </div>
+  </section>
+
+  <div class="rec">
+    <h2>Chosen direction: D</h2>
+    <p>After A, B and C, Max asked for something in between: B's calm, one-week layout, with A's lighter blue for Failed. That is D, at the top of this page.</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  const I = {
+    back: '<path d="M10.5 2.5 5 8l5.5 5.5 1-1L7 8l4.5-4.5z"/>',
+    fwd: '<path d="M5.5 2.5 11 8l-5.5 5.5-1-1L9 8 4.5 3.5z"/>',
+    more: '<circle cx="8" cy="3" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="8" cy="13" r="1.4"/>',
+    min: '<rect x="2" y="6" width="8" height="1.6"/>',
+    max: '<path d="M2 2h8v8H2zm1.5 1.5v5h5v-5z"/>',
+    close: '<path d="M2.6 1.5 6 4.9l3.4-3.4 1.1 1.1L7.1 6l3.4 3.4-1.1 1.1L6 7.1 2.6 10.5 1.5 9.4 4.9 6 1.5 2.6z"/>',
+    chev: '<path d="M5.5 2.5 11 8l-5.5 5.5-1-1L9 8 4.5 3.5z"/>'
+  };
+  const svg = n => '<svg viewBox="0 0 16 16" aria-hidden="true">' + I[n] + '</svg>';
+  const wsvg = n => '<svg viewBox="0 0 12 12" aria-hidden="true">' + I[n] + '</svg>';
+
+  // Invented data. 30 days, 7 Oct .. 5 Nov (today). Deterministic.
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const rev = Array.from({ length: 30 }, (_, i) => {
+    if (i < 3 || rnd() < 0.18) return { p: 0, f: 0 };
+    const p = Math.round(8 + rnd() * 30 + i * 0.4); return { p, f: Math.round(rnd() * 4) };
+  });
+  rev[29] = { p: 23, f: 2 }; rev[28] = { p: 31, f: 1 };
+  const mins = rev.map(d => Math.round((d.p + d.f) * 0.42));
+  const fc = [0, 4, 6, 3, 8, 0, 5, 9, 2, 4, 7, 1, 3, 6];
+  const sumP = rev.reduce((a, d) => a + d.p, 0), sumF = rev.reduce((a, d) => a + d.f, 0);
+  const sumMin = mins.reduce((a, b) => a + b, 0);
+  const active = rev.filter(d => d.p + d.f > 0).length;
+  const avgRev = Math.round((sumP + sumF) / 30), avgMin = Math.round(sumMin / 30);
+  const hm = m => m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min';
+  const passRate = Math.round(100 * sumP / (sumP + sumF));
+
+  function header(w) {
+    const t = '<div class="ttl"><b>Statistics</b><span>SIC 3101 – Probabilités</span></div>';
+    if (w === 'phone') return '<div class="hb"><span class="ib">' + svg('back') + '</span>' + t + '<span class="ib" style="visibility:hidden"></span></div>';
+    return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib" style="visibility:hidden"></span><span class="ib" style="visibility:hidden"></span>' + t +
+      '<span class="ib" style="visibility:hidden"></span><span class="wbtn">' + wsvg('min') + '</span><span class="wbtn">' + wsvg('max') + '</span><span class="wbtn">' + wsvg('close') + '</span></div>';
+  }
+
+  // Bar chart. vals: [{a, b}] with a the main part and b the stacked failed part.
+  function chart(vals, o) {
+    const W = o.w, H = o.h || 150, padR = o.padR ?? 34, padB = o.padB ?? 20, top = 6;
+    const cw = W - padR, ch = H - padB - top;
+    const max = o.max, step = o.step;
+    const y = v => top + ch - (v / max) * ch;
+    let s = '<svg class="ch" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + o.label + '">';
+    for (let v = 0; v <= max; v += step) {
+      s += '<line class="' + (v === 0 ? 'axis' : 'grid') + '" x1="0" x2="' + cw + '" y1="' + y(v) + '" y2="' + y(v) + '"/>';
+      s += '<text x="' + (cw + 6) + '" y="' + (y(v) + 4) + '">' + (o.fmt ? o.fmt(v) : v) + '</text>';
+    }
+    const n = vals.length, slot = cw / n, bw = Math.max(3, slot * (o.fill || 0.62)), r = Math.min(4, bw / 2);
+    vals.forEach((d, i) => {
+      const x = i * slot + (slot - bw) / 2;
+      if (o.sel === i) s += '<rect class="sel" x="' + (i * slot + 1) + '" y="' + top + '" width="' + (slot - 2) + '" height="' + ch + '" rx="6"/>';
+      if (d.a > 0) {
+        const h = (d.a / max) * ch;
+        s += '<path class="bar" d="' + roundTop(x, y(d.a), bw, h, d.b > 0 && o.fail !== 'none' ? 0 : r) + '"/>';
+      }
+      if (d.b > 0 && o.fail !== 'none') {
+        const gap = 2, h = Math.max(3, (d.b / max) * ch), y0 = y(d.a) - gap - h;
+        const cls = o.fail === 'hollow' ? 'bar hollow' : 'bar soft';
+        const inset = o.fail === 'hollow' ? 0.75 : 0;
+        s += '<path class="' + cls + '" d="' + roundTop(x + inset, y0 + inset, bw - 2 * inset, h - inset, r) + '"/>';
+      }
+    });
+    if (o.avg) s += '<line class="avg" x1="0" x2="' + cw + '" y1="' + y(o.avg) + '" y2="' + y(o.avg) + '"/>';
+    if (o.days) o.days.forEach((t, i) => { s += '<text class="' + (o.dayCls ?? 'day') + '" text-anchor="middle" x="' + (i * slot + slot / 2) + '" y="' + (H - 3) + '">' + t + '</text>'; });
+    if (o.ends) { s += '<text x="0" y="' + (H - 4) + '">' + o.ends[0] + '</text><text text-anchor="end" x="' + cw + '" y="' + (H - 4) + '">' + o.ends[1] + '</text>'; }
+    return s + '</svg>';
+  }
+  function roundTop(x, y, w, h, r) {
+    r = Math.min(r, h, w / 2);
+    return 'M' + x + ',' + (y + h) + 'V' + (y + r) + 'Q' + x + ',' + y + ' ' + (x + r) + ',' + y + 'H' + (x + w - r) + 'Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + r) + 'V' + (y + h) + 'Z';
+  }
+  const hd = (k, v, s, sb) => '<div class="hd"><div class="k">' + k + '</div><div class="v">' + v + '</div>' + (s ? '<div class="s">' + s + (sb ? '<b>' + sb + '</b>' : '') + '</div>' : '') + '</div>';
+
+  function A(w) {
+    const ph = w === 'phone', cw = ph ? 300 : 560;
+    const today = rev[29];
+    let h = '<div class="scard"><div class="sum3">' +
+      hd('Expected retention', '94%', 'Your target', '90%') +
+      hd('Pass rate', passRate + '%', 'Last 30 days', sumP + ' passed, ' + sumF + ' failed') +
+      hd('Time studied', hm(sumMin), 'Last 30 days', hm(avgMin) + ' a day on average') + '</div></div>';
+    h += '<div class="sgrp">Reviews per Day</div><div class="scard"><div class="heads">' +
+      hd('Today', (today.p + today.f) + ' reviews', today.f + ' failed') + (ph ? '' : hd('Last 30 Days', sumP + sumF, 'Average ' + avgRev + ' a day')) +
+      '<span class="sp"></span><div class="legend"><span><i class="lg-p"></i>Passed</span><span><i class="lg-t"></i>Failed</span></div></div>' +
+      chart(rev.map(d => ({ a: d.p, b: d.f })), { w: cw, max: 50, step: 10, fail: 'tint', avg: avgRev, sel: 29, ends: ['7 Oct', 'Today'], label: 'Reviews per day, last 30 days' }) + '</div>';
+    h += '<div class="sgrp">Time Studied per Day</div><div class="scard"><div class="heads">' +
+      hd('Today', mins[29] + ' min', 'Average', hm(avgMin)) + '</div>' +
+      chart(mins.map(m => ({ a: m, b: 0 })), { w: cw, max: 25, step: 5, avg: avgMin, sel: 29, fmt: v => v + 'm', ends: ['7 Oct', 'Today'], label: 'Minutes studied per day, last 30 days' }) + '</div>';
+    h += '<div class="sgrp">Due Forecast</div><div class="scard"><div class="heads">' +
+      hd('Tomorrow', fc[1] + ' cards') + hd('Next 7 Days', fc.slice(1, 8).reduce((a, b) => a + b, 0) + ' cards') + '</div>' +
+      chart(fc.map(v => ({ a: v, b: 0 })), { w: cw, max: 10, step: 5, sel: 1, ends: ['Today', '18 Nov'], label: 'Cards due per day, next 2 weeks' }) + '</div>';
+    return header(w) + '<div class="body"><div class="clamp" style="max-width:620px">' + h + '</div></div>';
+  }
+
+  const week = rev.slice(23, 30); // Thu 30 Oct .. Wed 5 Nov
+  const wdays = ['T', 'F', 'S', 'S', 'M', 'T', 'W'];
+  function B(w, view, mode) {
+    view = view || 'rev'; const tint = mode === 'tint';
+    const ph = w === 'phone', cw = ph ? 300 : 560;
+    const tabs = [['rev', 'Reviews'], ['time', 'Time'], ['fc', 'Forecast']];
+    let h = '<div class="scard"><div class="tg" role="group" aria-label="Chart">' + tabs.map(t => '<button type="button" data-v="' + t[0] + '" class="' + (t[0] === view ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</div>';
+    if (view === 'rev') {
+      const wk = week.reduce((a, d) => a + d.p + d.f, 0), wf = week.reduce((a, d) => a + d.f, 0);
+      h += '<div class="heads">' + hd('Today', week[6].p + week[6].f, 'Average Wednesday', '19') + hd('This Week', wk, 'Average week', '142') +
+        '<span class="sp"></span><div class="legend"><span><i class="lg-p"></i>Passed</span><span><i class="' + (tint ? 'lg-t' : 'lg-o') + '"></i>Failed</span></div></div>';
+      h += chart(week.map(d => ({ a: d.p, b: d.f })), { w: cw, h: 190, max: 50, step: 10, fill: 0.55, fail: tint ? 'tint' : 'hollow', avg: tint ? 0 : 20, days: wdays, padB: 22, label: 'Reviews per day this week: ' + wk + ', of which ' + wf + ' failed' });
+    } else if (view === 'time') {
+      const wm = mins.slice(23).reduce((a, b) => a + b, 0);
+      h += '<div class="heads">' + hd('Today', mins[29] + ' min', 'Average Wednesday', '8 min') + hd('This Week', hm(wm), 'Average week', '1 h 02 min') + '</div>';
+      h += chart(mins.slice(23).map(m => ({ a: m, b: 0 })), { w: cw, h: 190, max: 25, step: 5, fill: 0.55, avg: tint ? 0 : avgMin, days: wdays, padB: 22, fmt: v => v + 'm', label: 'Minutes studied per day this week' });
+    } else {
+      h += '<div class="heads">' + hd('Tomorrow', fc[1] + ' cards') + hd('Next 7 Days', fc.slice(1, 8).reduce((a, b) => a + b, 0) + ' cards') + '</div>';
+      h += chart(fc.slice(1, 8).map(v => ({ a: v, b: 0 })), { w: cw, h: 190, max: 10, step: 2, fill: 0.55, days: ['T', 'F', 'S', 'S', 'M', 'T', 'W'], padB: 22, label: 'Cards due per day, next 7 days' });
+    }
+    h += '<div class="navs"><span>' + svg('back') + '</span><span class="off">' + svg('fwd') + '</span></div></div>';
+    h += '<div class="sgrp">Memory</div><div class="boxed rows">' +
+      [['Expected retention', '94%'], ['Pass rate, last 30 days', passRate + '%'], ['Time studied, last 30 days', hm(sumMin)]]
+        .map(r => '<div class="row"><div class="tx"><div class="f">' + r[0] + '</div></div><span class="val">' + r[1] + '</span></div>').join('') + '</div>';
+    return header(w) + '<div class="body"><div class="clamp" style="max-width:620px">' + h + '</div></div>';
+  }
+
+  function C(w) {
+    const ph = w === 'phone';
+    const R = 34, L = 2 * Math.PI * R;
+    let h = '<div class="scard"><div class="ringrow"><svg class="ring" width="84" height="84" viewBox="0 0 84 84" role="img" aria-label="Expected retention 94%">' +
+      '<circle class="bg" cx="42" cy="42" r="' + R + '"/><circle class="fg" cx="42" cy="42" r="' + R + '" stroke-dasharray="' + (L * 0.94) + ' ' + L + '" transform="rotate(-90 42 42)"/>' +
+      '<text x="42" y="49" text-anchor="middle">94%</text></svg><div class="tx"><div style="font-weight:700">Expected retention</div>' +
+      '<div style="font-size:13px;color:var(--dim)">You should remember 94% of this deck today. Your target is 90%.</div></div></div></div>';
+    h += '<div class="sgrp">Last 30 Days</div><div class="scard"><div class="heads">' + hd('Pass rate', passRate + '%') + hd('Time studied', hm(sumMin)) + (ph ? '' : hd('Days studied', active + ' of 30')) + '</div>' +
+      '<div class="ratio" role="img" aria-label="' + sumP + ' passed, ' + sumF + ' failed"><span class="p" style="flex:' + sumP + '"></span><span class="f" style="flex:' + Math.max(sumF, sumP * 0.025) + '"></span></div>' +
+      '<div class="ratio-l"><span><b>' + sumP + '</b> passed</span><span><b>' + sumF + '</b> failed</span></div></div>';
+    // heatmap: 12 weeks, columns are weeks, rows Mon..Sun. Today is a Wednesday.
+    let s2 = 99; const r2 = () => (s2 = (s2 * 48271) % 2147483647) / 2147483647;
+    const cells = [];
+    const totalDays = 12 * 7, todayIdx = 11 * 7 + 2;
+    for (let i = 0; i < totalDays; i++) {
+      if (i > todayIdx) { cells.push('<i style="visibility:hidden"></i>'); continue; }
+      const back = todayIdx - i; let v;
+      if (back < 30) v = rev[29 - back].p + rev[29 - back].f; else v = r2() < 0.45 ? 0 : Math.round(r2() * 40);
+      const l = v === 0 ? '' : v < 10 ? 'l1' : v < 20 ? 'l2' : v < 30 ? 'l3' : 'l4';
+      cells.push('<i class="' + l + (i === todayIdx ? ' today' : '') + '"></i>');
+    }
+    h += '<div class="sgrp">Activity</div><div class="scard"><div class="heat" role="img" aria-label="Reviews per day over the last 12 weeks" style="max-width:' + (ph ? 300 : 360) + 'px">' + cells.join('') + '</div>' +
+      '<div class="heat-l"><span>12 weeks ago</span><span class="k">Less <i></i><i style="background:var(--acc);opacity:.3"></i><i style="background:var(--acc);opacity:.55"></i><i style="background:var(--acc);opacity:.8"></i><i style="background:var(--acc)"></i> More</span></div></div>';
+    const fdays = ['Tomorrow', 'Friday', 'Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday'];
+    h += '<div class="sgrp">Coming Up</div><div class="boxed rows">' + fdays.map((d, i) => {
+      const v = fc[i + 1];
+      return '<div class="row"><div class="tx"><div class="f">' + d + '</div></div><span class="lvl"><b style="width:' + (v * 10) + '%"></b></span><span class="val" style="min-width:64px;text-align:right">' + (v === 0 ? 'None' : v + (v === 1 ? ' card' : ' cards')) + '</span></div>';
+    }).join('') + '</div>';
+    return header(w) + '<div class="body"><div class="clamp" style="max-width:620px">' + h + '</div></div>';
+  }
+
+
+  // D, a month at a time: the last 30 days, 7 Oct .. 5 Nov, with a label each week.
+  const mdays = Array.from({ length: 30 }, (_, i) => ({ 0: '7 Oct', 7: '14', 14: '21', 21: '28', 28: '4 Nov' })[i] || '');
+  const fdays30 = Array.from({ length: 30 }, (_, i) => ({ 0: '6 Nov', 7: '13', 14: '20', 21: '27', 28: '4 Dec' })[i] || '');
+  let s3 = 31; const r3 = () => (s3 = (s3 * 16807) % 2147483647) / 2147483647;
+  const fc30 = Array.from({ length: 30 }, (_, i) => i < 13 ? fc[i + 1] : Math.round(r3() * (i < 20 ? 7 : 4)));
+  function E(w, view) {
+    view = view || 'rev';
+    const ph = w === 'phone', cw = ph ? 300 : 560;
+    const tabs = [['rev', 'Reviews'], ['time', 'Time'], ['fc', 'Forecast']];
+    const base = { w: cw, h: 190, fill: 0.6, padB: 22, days: mdays, dayCls: '' };
+    let h = '<div class="scard"><div class="tg" role="group" aria-label="Chart">' + tabs.map(t => '<button type="button" data-v="' + t[0] + '" class="' + (t[0] === view ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</div>';
+    if (view === 'rev') {
+      h += '<div class="heads">' + hd('Today', rev[29].p + rev[29].f, rev[29].f + ' failed') + hd('Last 30 Days', sumP + sumF, 'Average 30 days', '690') +
+        '<span class="sp"></span><div class="legend"><span><i class="lg-p"></i>Passed</span><span><i class="lg-t"></i>Failed</span></div></div>';
+      h += chart(rev.map(d => ({ a: d.p, b: d.f })), Object.assign({}, base, { max: 50, step: 10, fail: 'tint', sel: 29, label: 'Reviews per day, last 30 days: ' + (sumP + sumF) + ', of which ' + sumF + ' failed' }));
+    } else if (view === 'time') {
+      h += '<div class="heads">' + hd('Today', mins[29] + ' min', 'Average day', avgMin + ' min') + hd('Last 30 Days', hm(sumMin), 'Average 30 days', '4 h 40 min') + '</div>';
+      h += chart(mins.map(m => ({ a: m, b: 0 })), Object.assign({}, base, { max: 25, step: 5, sel: 29, fmt: v => v + 'm', label: 'Minutes studied per day, last 30 days' }));
+    } else {
+      h += '<div class="heads">' + hd('Tomorrow', fc30[0] + ' cards') + hd('Next 30 Days', fc30.reduce((a, b) => a + b, 0) + ' cards') + '</div>';
+      h += chart(fc30.map(v => ({ a: v, b: 0 })), Object.assign({}, base, { max: 10, step: 2, days: fdays30, sel: 0, label: 'Cards due per day, next 30 days' }));
+    }
+    h += '<div class="navs"><span>' + svg('back') + '</span><span class="off">' + svg('fwd') + '</span></div></div>';
+    h += '<div class="sgrp">Memory</div><div class="boxed rows">' +
+      [['Expected retention', '94%'], ['Pass rate, last 30 days', passRate + '%'], ['Time studied, last 30 days', hm(sumMin)]]
+        .map(r => '<div class="row"><div class="tx"><div class="f">' + r[0] + '</div></div><span class="val">' + r[1] + '</span></div>').join('') + '</div>';
+    return header(w) + '<div class="body"><div class="clamp" style="max-width:620px">' + h + '</div></div>';
+  }
+  const D = w => B(w, 'rev', 'tint');
+  const RS = { A, B, C, D, E };
+  document.querySelectorAll('.mocks[data-m]').forEach(el => { el.innerHTML = RS[el.dataset.m](el.dataset.w); });
+  document.addEventListener('click', e => {
+    const b = e.target.closest('.tg button'); if (!b) return;
+    const win = b.closest('.mocks'); const body = win.querySelector('.body'); const st = body.scrollTop;
+    win.innerHTML = win.dataset.m === 'E' ? E(win.dataset.w, b.dataset.v) : B(win.dataset.w, b.dataset.v, win.dataset.m === 'D' ? 'tint' : ''); win.querySelector('.body').scrollTop = st;
+    const nb = win.querySelector('.tg button[data-v="' + b.dataset.v + '"]'); if (nb) nb.focus();
+  });
+
+  // The three ways to show Failed, side by side.
+  const sample = [{ a: 18, b: 3 }, { a: 26, b: 1 }, { a: 0, b: 0 }, { a: 31, b: 5 }, { a: 22, b: 2 }, { a: 14, b: 0 }, { a: 23, b: 2 }];
+  const demos = [
+    ['Today', 'hatch', 'Hatched grey stacked on top.'],
+    ['A: lighter tint', 'tint', 'The same blue, lighter, with a 2 px gap. The header gives the count.'],
+    ['B: outline', 'hollow', 'An outlined segment: the shape tells it apart, even in greyscale.'],
+    ['C: own bar, own number', 'ratio', 'Passed and Failed as two labelled parts of one bar.']
+  ];
+  document.getElementById('fails').innerHTML = '<div class="intro" style="grid-column:1/-1"><h3>Showing Failed without hatching</h3><p class="note" style="max-width:70ch">Failed must stay readable without colour (colour blindness, greyscale). Each proposition uses a different answer; they can be swapped.</p></div>' +
+    demos.map(d => {
+      let pic;
+      if (d[1] === 'ratio') pic = '<div class="ratio"><span class="p" style="flex:154"></span><span class="f" style="flex:13"></span></div><div class="ratio-l"><span><b>154</b> passed</span><span><b>13</b> failed</span></div>';
+      else if (d[1] === 'hatch') pic = hatch(sample);
+      else pic = chart(sample, { w: 190, h: 90, max: 40, step: 20, fill: 0.55, fail: d[1], padR: 18, padB: 4, label: d[0] });
+      return '<div><b>' + d[0] + '</b><div class="mocks win" style="min-height:96px">' + pic + '</div><p class="note">' + d[2] + '</p></div>';
+    }).join('');
+  function hatch(vals) {
+    const W = 190, H = 90, cw = 172, ch = 80, top = 6, max = 40, slot = cw / vals.length, bw = slot * 0.55;
+    const y = v => top + ch - (v / max) * ch;
+    let s = '<svg class="ch" width="' + W + '" height="' + H + '"><defs><pattern id="hp" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="var(--card)"/><line x1="0" y1="0" x2="0" y2="4" stroke="var(--dim)" stroke-width="2"/></pattern></defs>';
+    s += '<line class="axis" x1="0" x2="' + cw + '" y1="' + y(0) + '" y2="' + y(0) + '"/>';
+    vals.forEach((d, i) => { const x = i * slot + (slot - bw) / 2;
+      if (d.a) s += '<rect class="bar" x="' + x + '" y="' + y(d.a) + '" width="' + bw + '" height="' + (d.a / max * ch) + '"/>';
+      if (d.b) s += '<rect fill="url(#hp)" x="' + x + '" y="' + (y(d.a) - d.b / max * ch) + '" width="' + bw + '" height="' + (d.b / max * ch) + '"/>'; });
+    return s + '</svg>';
+  }
+
+  const setTheme = dark => {
+    document.querySelectorAll('.mocks').forEach(el => el.classList.toggle('dark', dark));
+    document.getElementById('th-dark').setAttribute('aria-pressed', String(dark));
+    document.getElementById('th-light').setAttribute('aria-pressed', String(!dark));
+    try { localStorage.setItem('mockTheme', dark ? 'dark' : 'light'); } catch (e) {}
+  };
+  let start = false;
+  try { const s = localStorage.getItem('mockTheme'); start = s ? s === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {}
+  setTheme(start);
+  document.getElementById('th-light').onclick = () => setTheme(false);
+  document.getElementById('th-dark').onclick = () => setTheme(true);
+})();
+</script>

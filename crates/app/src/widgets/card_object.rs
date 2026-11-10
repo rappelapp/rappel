@@ -11,14 +11,15 @@ use std::cell::{Cell, OnceCell, Ref, RefCell};
 
 use gtk::glib;
 use gtk::subclass::prelude::*;
-use rappel_core::content::plain_summary;
+use rappel_core::content::{Summary, summary};
 use rappel_core::domain::{Card, Tag, TaggedCard};
+use rappel_core::storage::{CardStanding, CardStatus};
 
 use super::card_row::text::row_label;
 use crate::ui::text::one_line;
 
 mod imp {
-    use super::{Card, Cell, OnceCell, RefCell, Tag};
+    use super::{Card, CardStatus, Cell, OnceCell, RefCell, Summary, Tag};
     use gtk::glib;
     use gtk::glib::prelude::*;
     use gtk::subclass::prelude::*;
@@ -34,9 +35,11 @@ mod imp {
         /// Chosen in selection mode.
         #[property(get, set)]
         pub selected: Cell<bool>,
-        pub front: OnceCell<String>,
-        pub back: OnceCell<String>,
+        pub front: OnceCell<Summary>,
+        pub back: OnceCell<Summary>,
         pub is_new: Cell<bool>,
+        /// Where the card stands, for the due word at the row's end.
+        pub status: Cell<CardStatus>,
     }
 
     /// `GObject` needs a default; [`super::CardObject::new`], the only
@@ -59,6 +62,7 @@ mod imp {
                 front: OnceCell::new(),
                 back: OnceCell::new(),
                 is_new: Cell::new(false),
+                status: Cell::new(CardStatus::New),
             }
         }
     }
@@ -96,23 +100,40 @@ impl CardObject {
 
     /// Whether the card is new: no surviving review since it was created or
     /// last reset. Decides whether its row offers Reset Progress. A card
-    /// starts as not new; the page sets it when it puts the card in the
-    /// list, and replaces the object when it changes, so the row rebinds.
+    /// starts as not new (Reset Progress offered, which the core refuses
+    /// for a new card); the page sets where it stands when it puts the card
+    /// in the list, and replaces the object when that
+    /// changes, so the row rebinds.
     pub fn is_new(&self) -> bool {
         self.imp().is_new.get()
     }
 
-    /// Marks the card new or not, before the object is put in the list.
+    /// Where the card stands (the due word at its row's end).
+    pub fn status(&self) -> CardStatus {
+        self.imp().status.get()
+    }
+
+    /// Where the card stands and whether it is new, as the page read them.
+    pub fn standing(&self) -> CardStanding {
+        CardStanding {
+            status: self.status(),
+            is_new: self.is_new(),
+        }
+    }
+
+    /// Sets where the card stands and whether it is new, before the object
+    /// is put in the list.
     #[must_use]
-    pub fn with_new(self, is_new: bool) -> Self {
-        self.imp().is_new.set(is_new);
+    pub fn with_standing(self, standing: CardStanding) -> Self {
+        self.imp().is_new.set(standing.is_new);
+        self.imp().status.set(standing.status);
         self
     }
 
-    /// A copy of this item, new or not: a new object, so the list rebinds
-    /// its row. The previews already made, and whether it is chosen, are
-    /// kept.
-    pub fn copy_with_new(&self, is_new: bool) -> Self {
+    /// A copy of this item standing as `standing`: a new object, so the
+    /// list rebinds its row. The previews already made, and whether it is
+    /// chosen, are kept.
+    pub fn copy_with(&self, standing: CardStanding) -> Self {
         let imp = self.imp();
         let obj: Self = glib::Object::new();
         let copy = obj.imp();
@@ -125,24 +146,35 @@ impl CardObject {
                 to.get_or_init(|| text.clone());
             }
         }
-        copy.is_new.set(is_new);
+        copy.is_new.set(standing.is_new);
+        copy.status.set(standing.status);
         obj
     }
 
-    /// The front on one line, without Markdown syntax (see
-    /// [`plain_summary`]).
-    pub fn front_preview(&self) -> &str {
+    /// The front on one line, without Markdown syntax, its formulas apart
+    /// (see [`summary`]).
+    pub fn front_summary(&self) -> &Summary {
         self.imp()
             .front
-            .get_or_init(|| plain_summary(&self.imp().card.borrow().front_md))
+            .get_or_init(|| summary(&self.imp().card.borrow().front_md))
     }
 
-    /// The back on one line, without Markdown syntax; empty for an empty
-    /// back.
-    pub fn back_preview(&self) -> &str {
+    /// The back on one line, as [`Self::front_summary`]; empty for an
+    /// empty back.
+    pub fn back_summary(&self) -> &Summary {
         self.imp()
             .back
-            .get_or_init(|| plain_summary(&self.imp().card.borrow().back_md))
+            .get_or_init(|| summary(&self.imp().card.borrow().back_md))
+    }
+
+    /// The front on one line as plain text, formulas as their source.
+    pub fn front_preview(&self) -> &str {
+        &self.front_summary().text
+    }
+
+    /// The back on one line as plain text; empty for an empty back.
+    pub fn back_preview(&self) -> &str {
+        &self.back_summary().text
     }
 
     /// The tag names, each on one line (`ui::text::one_line`).

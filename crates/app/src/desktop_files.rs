@@ -39,9 +39,9 @@ fn read(path: &Path) -> String {
 const BINARY: &str = env!("CARGO_BIN_NAME");
 
 /// Where the store finds the committed screenshots: the raw files of the
-/// repository's `main` branch.
+/// repository at the `v0.4.0` tag (ADR 0083; the tag is made at release).
 const SCREENSHOT_URL: &str =
-    "https://raw.githubusercontent.com/rsmirke/rappel/main/data/screenshots/";
+    "https://raw.githubusercontent.com/rappelapp/rappel/v0.4.0/data/screenshots/";
 
 /// Flathub's largest window for a screenshot, in logical pixels (its
 /// quality guidelines: "1000x700 pixels or smaller").
@@ -52,7 +52,7 @@ const MAX_SCREENSHOT_BYTES: u64 = 300 * 1024;
 
 /// The issue `appstreamcli --pedantic` raises that Rappel keeps on
 /// purpose: the component id has capitals, because it is the app id
-/// (`io.github.rsmirke.Rappel`, fixed since ADR 0020).
+/// (`io.github.rappelapp.Rappel`, since ADR 0075).
 const ACCEPTED_APPSTREAM_ISSUES: [&str; 1] = ["cid-contains-uppercase-letter"];
 
 fn desktop_source() -> String {
@@ -187,6 +187,17 @@ fn the_metainfo_is_valid_in_english_and_french() {
     assert_eq!(
         between(&src, "<name>", "</name>"),
         Some(rappel_core::APP_NAME)
+    );
+    // The developer is About's (ADR 0075): the store and the app name the
+    // same one, under the app id's reverse domain.
+    let developer = between(&src, "<developer id=\"", "</developer>").expect("a developer");
+    let (id, name) = developer
+        .split_once("\">")
+        .expect("the developer's id is quoted");
+    assert_eq!(Some(id), APP_ID.rsplit_once('.').map(|(domain, _)| domain));
+    assert_eq!(
+        between(name, "<name translate=\"no\">", "</name>"),
+        Some(crate::dialogs::about::DEVELOPER)
     );
     let summary = between(&src, "<summary>", "</summary>").expect("a summary");
     assert!(
@@ -372,6 +383,14 @@ fn the_screenshots_are_committed_and_within_flathub_s_size() {
         assert!(
             !caption.ends_with('.') && !caption.starts_with(|c: char| c.is_ascii_digit()),
             "Flathub: a caption has no full stop and does not start with a number: {caption:?}"
+        );
+    }
+    // A release build pins the screenshots to its own tag (ADR 0083).
+    let built = env!("CARGO_PKG_VERSION");
+    if !built.contains('-') {
+        assert!(
+            SCREENSHOT_URL.contains(&format!("/v{built}/")),
+            "the crate is released as {built}: SCREENSHOT_URL must name the tag v{built}"
         );
     }
     let folder = repo().join("data/screenshots");

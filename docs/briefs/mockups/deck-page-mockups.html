@@ -1,0 +1,330 @@
+<title>Rappel deck page propositions</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Literata:opsz,wght@7..72,500;7..72,650&display=swap">
+<style>
+/* Layout: a review sheet. Prose column on the left edge, then each proposition
+   as a desktop window and a 360 px phone side by side (scrolls sideways when narrow). */
+:root {
+  --bg: #f3f3f1; --fg: #26262a; --muted: #67676f; --line: #dcdcd8; --panel: #ffffff; --mark: #1c71d8;
+  --f-display: "Literata", Georgia, serif;
+  --f-body: "Inter", "Adwaita Sans", "Cantarell", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #19191c; --fg: #ececee; --muted: #a2a2aa; --line: #34343a; --panel: #232327; --mark: #78aeed; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #19191c; --fg: #ececee; --muted: #a2a2aa; --line: #34343a; --panel: #232327; --mark: #78aeed; color-scheme: dark }
+
+/* Adwaita stand-in tokens for the mockups only (libadwaita 1.6+ defaults). */
+.mocks { --w-bg:#fafafb; --view:#ffffff; --hb:#ffffff; --card:#ffffff; --t:rgba(0,0,6,.8); --dim:rgba(0,0,6,.55);
+  --bd:rgba(0,0,6,.08); --pill:rgba(0,0,6,.07); --acc:#3584e4; --acc-t:#0461be; --ok:#1b8553; --warn:#9c6e03;
+  --shadow:0 0 0 1px rgba(0,0,6,.03),0 1px 3px 1px rgba(0,0,6,.07),0 2px 6px 2px rgba(0,0,6,.03); --frame:rgba(0,0,6,.18); }
+.mocks.dark { --w-bg:#222226; --view:#1d1d20; --hb:#2e2e32; --card:#303034; --t:#ffffff; --dim:rgba(255,255,255,.55);
+  --bd:rgba(0,0,6,.36); --pill:rgba(255,255,255,.1); --acc:#3584e4; --acc-t:#81d0ff; --ok:#78e9ab; --warn:#ffc252;
+  --shadow:0 0 0 1px rgba(0,0,6,.25),0 1px 3px 1px rgba(0,0,6,.1); --frame:rgba(0,0,0,.6); }
+
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--f-body); }
+.wrap { max-width: 1340px; margin: 0 auto; padding-block: 40px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2 { font-family: var(--f-display); font-weight: 650; text-wrap: balance; letter-spacing: -.01em; }
+h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.15; margin: 0 0 14px; }
+h2 { font-size: 26px; margin: 0; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 17px; max-width: 64ch; }
+.lede + .lede { margin-top: 10px; }
+.eyebrow { color: var(--mark); font-weight: 600; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 8px; }
+.problems { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 26px 0 0; padding: 0; list-style: none; }
+.problems li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.problems b { display: block; margin-bottom: 2px; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 34px 0 6px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--panel); }
+.seg button { font: inherit; font-size: 14px; border: 0; background: none; color: var(--fg); padding: 6px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.seg button:focus-visible { outline: 2px solid var(--mark); outline-offset: -2px; }
+.note { color: var(--muted); font-size: 13px; }
+
+section.prop { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 28px; }
+.prop-head { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; }
+.badge { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--mark); color: var(--mark); }
+.prop > p { margin-top: 10px; }
+.stage { overflow-x: auto; margin: 22px 0 0; padding: 4px 2px 18px; }
+.stage-row { display: flex; gap: 28px; align-items: flex-start; width: max-content; }
+.cap { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 28px; margin-top: 10px; }
+.facts ul { margin: 0; padding-left: 18px; }
+.facts li { margin: 3px 0; }
+
+.rec { margin-top: 56px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; }
+.rec h2 { font-size: 22px; margin-bottom: 8px; }
+.rec p + p { margin-top: 8px; }
+
+/* ---------- Mockup chrome: libadwaita look-alike ---------- */
+.win { font-family: "Inter", "Adwaita Sans", system-ui, sans-serif; font-size: 14.5px; line-height: 1.35; color: var(--t);
+  background: var(--w-bg); border-radius: 12px; overflow: hidden; box-shadow: 0 0 0 1px var(--frame), 0 8px 28px rgba(0,0,0,.18);
+  display: flex; flex-direction: column; }
+.win.desk { width: 900px; height: 640px; }
+.win.phone { width: 360px; height: 700px; border-radius: 22px; }
+.hb { background: var(--hb); min-height: 47px; display: flex; align-items: center; gap: 6px; padding: 0 6px; box-shadow: inset 0 -1px var(--bd); flex: none; }
+.hb .ttl { flex: 1; text-align: center; min-width: 0; }
+.hb .ttl b { display: block; font-weight: 700; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb .ttl span { display: block; font-size: 12px; color: var(--dim); }
+.ib { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: var(--t); flex: none; }
+.ib svg { width: 16px; height: 16px; fill: currentColor; }
+.ib.hov { background: var(--pill); }
+.btn-s { background: var(--acc); color: #fff; font-weight: 700; padding: 7px 16px; border-radius: 8px; font-size: 14px; flex: none; }
+.wbtn { width: 24px; height: 24px; border-radius: 50%; background: var(--pill); display: grid; place-items: center; margin-left: 4px; }
+.wbtn svg { width: 10px; height: 10px; fill: var(--t); }
+.body { flex: 1; overflow: auto; background: var(--w-bg); }
+.clamp { margin: 0 auto; padding: 18px 12px 28px; }
+.ab { flex: none; background: var(--hb); box-shadow: inset 0 1px var(--bd); padding: 8px 8px 10px; display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; }
+.ab .mid { text-align: center; }
+.ab .pill-s { display: inline-block; background: var(--acc); color: #fff; font-weight: 700; padding: 9px 30px; border-radius: 999px; }
+.ab small { display: block; font-size: 12px; color: var(--dim); margin-top: 4px; }
+
+/* boxed list, rows */
+.grp-h { display: flex; align-items: baseline; justify-content: space-between; margin: 22px 2px 8px; }
+.grp-h:first-child { margin-top: 0; }
+.grp-h b { font-weight: 700; font-size: 14.5px; }
+.grp-h span { font-size: 13px; color: var(--dim); }
+.boxed { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.row { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 7px 6px 7px 14px; }
+.row + .row { box-shadow: inset 0 1px var(--bd); }
+.row .tx { flex: 1; min-width: 0; }
+.row .f { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .b { font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.row .end { display: flex; align-items: center; gap: 6px; flex: none; }
+.row .when { font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.row .when.due { color: var(--acc-t); font-weight: 600; }
+.row.susp .tx { opacity: .55; }
+.tp { font-size: 12px; padding: 2px 7px; border-radius: 6px; background: var(--pill); white-space: nowrap; }
+.m { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "Times New Roman", serif; font-style: italic; font-size: 1.08em; }
+.mu { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "Times New Roman", serif; font-size: 1.06em; }
+.shared { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); margin: 0 2px 14px; }
+.chev { width: 16px; height: 16px; fill: var(--dim); flex: none; }
+.expander { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 14px; }
+.expander .tx { flex: 1; }
+.search { display: flex; align-items: center; gap: 8px; background: var(--pill); border-radius: 8px; padding: 7px 10px; color: var(--dim); font-size: 14px; margin-bottom: 16px; }
+.search svg { width: 15px; height: 15px; fill: currentColor; }
+
+/* B: summary */
+.sum { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); padding: 16px 18px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.sum div { text-align: center; }
+.sum b { display: block; font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.sum span { font-size: 12.5px; color: var(--dim); }
+.sum .accent b { color: var(--acc-t); }
+.sum .good b { color: var(--ok); }
+.phone .sum { grid-template-columns: repeat(2, 1fr); row-gap: 14px; padding: 14px; }
+.phone .sum b { font-size: 22px; }
+
+/* C: tiles */
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.tile { min-width: 0; }
+.tile { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); height: 150px; display: flex; flex-direction: column; padding: 12px 12px 10px; position: relative; }
+.tile .f { flex: 1; display: grid; place-items: center; text-align: center; font-size: 17px; font-weight: 600; padding: 0 8px; text-wrap: balance; }
+.tile .b { font-size: 12.5px; color: var(--dim); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 8px; }
+.tile .foot { display: flex; align-items: center; gap: 6px; min-height: 22px; }
+.tile .foot .sp { flex: 1; }
+.tile .ib { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; color: var(--dim); }
+.tile.susp > :not(.ib) { opacity: .55; }
+.chip { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--pill); white-space: nowrap; }
+.chip.due { color: var(--acc-t); }
+.chip.learn { color: var(--warn); }
+.chip.new { color: var(--ok); }
+.strip { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; font-size: 13.5px; color: var(--dim); margin: 0 2px 14px; }
+.strip b { color: var(--t); font-variant-numeric: tabular-nums; }
+.strip .sp { flex: 1; }
+.viewsw { display: inline-flex; background: var(--pill); border-radius: 8px; padding: 2px; }
+.viewsw i { width: 30px; height: 26px; display: grid; place-items: center; border-radius: 6px; }
+.viewsw i.on { background: var(--card); box-shadow: var(--shadow); }
+.viewsw svg { width: 14px; height: 14px; fill: var(--t); }
+
+@media (prefers-reduced-motion: no-preference) { .seg button { transition: background .15s, color .15s; } }
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Rappel · UI designer · mockups, no code</div>
+  <h1>Three ways to make the inside of a deck nicer</h1>
+  <p class="lede">Max, the deck page works but reads like a spreadsheet. Below are three propositions drawn as GNOME windows, each at desktop size and at phone size (360&nbsp;px). They use only libadwaita's own widgets and theme colours, so they follow light and dark mode and the user's accent colour. Use the switch to see them in dark mode.</p>
+  <p class="lede">The cards are your SIC&nbsp;3101 deck. The backs, due dates and counts are invented for the picture.</p>
+
+  <ul class="problems">
+    <li><b>The same tags on every row</b>Four pills repeated 17 times. They say nothing, since every card has them.</li>
+    <li><b>No overview</b>The page does not tell you what is due, new or being learnt, only the header's one line.</li>
+    <li><b>Raw maths</b>A title like <code>Mesure \sigma-finie</code> shows the LaTeX source instead of the formula.</li>
+    <li><b>Empty sides</b>On a big screen the list is a thin column in a wide dark area.</li>
+  </ul>
+
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="Mockup theme">
+      <button type="button" id="th-light" aria-pressed="true">Light</button>
+      <button type="button" id="th-dark" aria-pressed="false">Dark</button>
+    </div>
+    <span class="note">Windows scroll inside, like the app. On a phone, swipe the picture sideways to see the second window.</span>
+  </div>
+
+  <section class="prop" id="a">
+    <div class="prop-head"><h2>A · Tidy list</h2><span class="badge">Small change</span></div>
+    <p>Same page, cleaned up. The tags that every card shares are said once at the top. A row shows the front, the back under it, and only the tags that make this card different. The list becomes a rounded “boxed list”, as in Settings and most GNOME apps, and the maths is drawn.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="A" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="A" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Good</h3><ul><li>Quiet and familiar; nothing new to learn.</li><li>The engineering is mostly a few rules about which tags to show.</li></ul></div>
+      <div><h3>Less good</h3><ul><li>Still no overview of what is due.</li><li>Still a narrow column on a wide screen.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="prop" id="b">
+    <div class="prop-head"><h2>B · Overview, then cards by state</h2><span class="badge">Recommended</span></div>
+    <p>Everything from A, plus a summary at the top (due today, new, learning, how much you remember) and the cards grouped the way you think about them: what is due today, what you are learning, what is new, what comes later. Suspended cards fold away at the bottom. A search field filters the deck. This is close to how GNOME's Settings, Fragments and Health group their content.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="B" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px</p><div class="mocks win phone" data-m="B" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Good</h3><ul><li>Answers “what should I do now?” at a glance.</li><li>Each row can say when the card is next due.</li><li>Works the same on a phone; the summary turns into a 2 × 2 square.</li></ul></div>
+      <div><h3>Less good</h3><ul><li>More work: the list is split in groups, which must stay fast with thousands of cards.</li><li>Order changes as you study, since cards move between groups.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="prop" id="c">
+    <div class="prop-head"><h2>C · Card tiles</h2><span class="badge">Largest change</span></div>
+    <p>Like Mochi, or a photo grid: each card is a small tile with its front drawn large and its back under it. A tile shows its state as a chip. A switch in the top strip goes back to a list, and a narrow window always gets the list. It uses the full width of a big screen.</p>
+    <div class="stage"><div class="stage-row">
+      <div><p class="cap">Desktop, 900 px</p><div class="mocks win desk" data-m="C" data-w="desk"></div></div>
+      <div><p class="cap">Phone, 360 px (falls back to the list)</p><div class="mocks win phone" data-m="C" data-w="phone"></div></div>
+    </div></div>
+    <div class="facts">
+      <div><h3>Good</h3><ul><li>The prettiest; feels like a pack of real cards.</li><li>Fills a wide window.</li></ul></div>
+      <div><h3>Less good</h3><ul><li>Shows about 12 cards per screen instead of 10 to 20; slower to scan long decks.</li><li>Long fronts, images and big formulas need a careful tile design.</li><li>Two layouts to build and test.</li></ul></div>
+    </div>
+  </section>
+
+  <div class="rec">
+    <h2>My recommendation: B</h2>
+    <p>B fixes all four problems except the empty sides on a very wide window, which GNOME apps usually accept for lists (Settings and Fragments do the same). It keeps the page a list, so it stays fast and keyboard-friendly, and selection mode, the row menus and the header stay exactly as they are.</p>
+    <p>A is a good first step if you want something quick: it is a subset of B, so nothing is thrown away. C is the most striking, but I would keep it as an optional “grid view” for later.</p>
+    <p>In all three, the maths in a title needs the formula renderer inside the list, which the Lead engineer will have to check for speed.</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  const I = {
+    back: '<path d="M10.5 2.5 5 8l5.5 5.5 1-1L7 8l4.5-4.5z"/>',
+    plus: '<path d="M7.25 2h1.5v5.25H14v1.5H8.75V14h-1.5V8.75H2v-1.5h5.25z"/>',
+    more: '<circle cx="8" cy="3" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="8" cy="13" r="1.4"/>',
+    sel: '<path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zm2.7 2.9L7.2 8.9 5.3 7 4.2 8.1l3 3 4.6-4.6z"/>',
+    min: '<rect x="2" y="7" width="8" height="1.6" transform="translate(0 -1)"/>',
+    max: '<path d="M2 2h8v8H2zm1.5 1.5v5h5v-5z"/>',
+    close: '<path d="M2.6 1.5 6 4.9l3.4-3.4 1.1 1.1L7.1 6l3.4 3.4-1.1 1.1L6 7.1 2.6 10.5 1.5 9.4 4.9 6 1.5 2.6z"/>',
+    search: '<path d="M6.5 1a5.5 5.5 0 0 1 4.4 8.8l3.6 3.6-1.1 1.1-3.6-3.6A5.5 5.5 0 1 1 6.5 1zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/>',
+    chev: '<path d="M5.5 2.5 11 8l-5.5 5.5-1-1L9 8 4.5 3.5z"/>',
+    grid: '<path d="M1 1h6v6H1zm8 0h6v6H9zM1 9h6v6H1zm8 0h6v6H9z"/>',
+    list: '<path d="M1 2h14v2H1zm0 5h14v2H1zm0 5h14v2H1z"/>'
+  };
+  const svg = (n, cls) => '<svg viewBox="0 0 16 16"' + (cls ? ' class="' + cls + '"' : '') + ' aria-hidden="true">' + I[n] + '</svg>';
+  const wsvg = n => '<svg viewBox="0 0 12 12" aria-hidden="true">' + I[n] + '</svg>';
+  const m = s => '<span class="m">' + s + '</span>';
+  const u = s => '<span class="mu">' + s + '</span>';
+  const X = ['Analyse', 'MAT3101'];
+  // state: due | learn | new | later | susp ; when: shown in B
+  const cards = [
+    ['Expérience aléatoire', 'Expérience dont on ne peut prévoir le résultat avec certitude', [], 'later', 'Tomorrow'],
+    ["Espace d'état", "L'ensemble " + u('Ω') + ' de tous les résultats possibles', [], 'later', 'In 3 days'],
+    ['Événement aléatoire', 'Une partie ' + m('A') + ' de ' + u('Ω') + ' qui appartient à la tribu', [], 'later', 'In 5 days'],
+    ['Équiprobabilité', 'Chaque issue a la même probabilité ' + u('1 / |Ω|'), [], 'learn', 'In 10 min'],
+    ['Probabilité', 'Mesure ' + m('P') + ' sur ' + u('(Ω, 𝒜)') + ' avec ' + m('P') + u('(Ω) = 1'), [], 'later', 'In 2 days'],
+    ['Modèle probabiliste', 'Le triplet ' + u('(Ω, 𝒜, ') + m('P') + u(')'), [], 'new', ''],
+    ['Algèbre de Boole', 'Partie de ' + u('𝒫(Ω)') + ' stable par complémentaire et union finie', [], 'due', 'Today'],
+    ['Tribu', 'Algèbre de Boole stable par union dénombrable', X, 'due', 'Today'],
+    ['Tribu engendrée', 'La plus petite tribu contenant ' + u('𝒞') + ', notée ' + m('σ') + u('(𝒞)'), X, 'learn', 'In 1 h'],
+    ['Tribu borélienne', m('σ') + u('(') + 'ouverts de ' + u('ℝ)') + ', notée ' + u('ℬ(ℝ)'), [], 'new', ''],
+    ['Espace mesurable', 'Un couple ' + u('(Ω, 𝒜)') + ' où ' + u('𝒜') + ' est une tribu', X, 'due', 'Today'],
+    ['Espace mesuré', 'Un triplet ' + u('(Ω, 𝒜, ') + m('μ') + u(')'), X, 'new', ''],
+    ['Mesure', m('μ') + u(' : 𝒜 → [0, +∞]') + ', ' + m('μ') + u('(∅) = 0') + ', ' + m('σ') + '-additive', X, 'new', ''],
+    ['Mesure ' + m('σ') + '-finie', u('Ω = ⋃ ') + m('A') + u('ₙ') + ' avec ' + m('μ') + u('(') + m('A') + u('ₙ) < +∞'), [], 'new', ''],
+    ['Mesure finie', m('μ') + u('(Ω) < +∞'), [], 'susp', ''],
+    ['Événement négligeable', 'Un événement ' + m('A') + ' tel que ' + m('P') + u('(') + m('A') + u(') = 0'), [], 'new', ''],
+    ['Événement presque sûr', 'Un événement ' + m('A') + ' tel que ' + m('P') + u('(') + m('A') + u(') = 1'), [], 'new', '']
+  ];
+  const SHARED = ['Définition', 'Mathématiques', 'Probabilités', 'SIC3101'];
+  const pills = (t) => t.map(x => '<span class="tp">' + x + '</span>').join('');
+
+  function header(w, sub) {
+    if (w === 'phone') return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib">' + svg('plus') + '</span>' +
+      '<div class="ttl"><b>SIC 3101 – Probabilités</b><span>' + sub + '</span></div><span class="ib">' + svg('more') + '</span></div>';
+    return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib">' + svg('plus') + '</span>' +
+      '<div class="ttl"><b>SIC 3101 – Probabilités</b><span>' + sub + '</span></div>' +
+      '<span class="btn-s">Study</span><span class="ib">' + svg('sel') + '</span><span class="ib">' + svg('more') + '</span>' +
+      '<span class="wbtn">' + wsvg('min') + '</span><span class="wbtn">' + wsvg('max') + '</span><span class="wbtn">' + wsvg('close') + '</span></div>';
+  }
+  function bar(w) {
+    return w === 'phone' ? '<div class="ab"><span class="ib">' + svg('sel') + '</span><div class="mid"><span class="pill-s">Study</span><small>3 due · 7 new</small></div><span></span></div>' : '';
+  }
+  function row(c, opts) {
+    const [f, b, extra, st, when] = c;
+    let end = pills(extra);
+    if (opts.when) {
+      const lab = st === 'new' ? '' : st === 'susp' ? 'Suspended' : when;
+      if (lab) end += '<span class="when' + (st === 'due' ? ' due' : '') + '">' + lab + '</span>';
+    }
+    if (opts.narrow && extra.length) end = '<span class="tp">' + extra[0] + '</span><span class="tp">+' + (extra.length - 1) + '</span>' + end.replace(pills(extra), '');
+    return '<div class="row' + (st === 'susp' ? ' susp' : '') + '"><div class="tx"><div class="f">' + f + '</div><div class="b">' + b + '</div></div>' +
+      '<div class="end">' + end + '<span class="ib">' + svg('more') + '</span></div></div>';
+  }
+  const shared = '<div class="shared">On every card:' + pills(SHARED) + '</div>';
+
+  function A(w) {
+    const narrow = w === 'phone';
+    return header(w, '3 due · 7 new') + '<div class="body"><div class="clamp" style="max-width:640px">' + shared +
+      '<div class="boxed">' + cards.map(c => row(c, { narrow })).join('') + '</div></div></div>' + bar(w);
+  }
+  function B(w) {
+    const narrow = w === 'phone';
+    const groups = [['Due Today', 'due'], ['Learning', 'learn'], ['New', 'new'], ['Later', 'later']];
+    let h = '<div class="sum"><div class="accent"><b>3</b><span>Due today</span></div><div><b>2</b><span>Learning</span></div>' +
+      '<div><b>7</b><span>New</span></div><div class="good"><b>91%</b><span>Remembered</span></div></div>';
+    h += '<div style="height:16px"></div><div class="search">' + svg('search') + 'Search in this deck</div>' + shared;
+    for (const [t, s] of groups) {
+      const cs = cards.filter(c => c[3] === s);
+      h += '<div class="grp-h"><b>' + t + '</b><span>' + cs.length + (cs.length === 1 ? ' card' : ' cards') + '</span></div>';
+      h += '<div class="boxed">' + cs.map(c => row(c, { when: true, narrow })).join('') + '</div>';
+    }
+    h += '<div style="height:22px"></div><div class="boxed"><div class="expander"><div class="tx">Suspended<div class="b" style="font-size:13px;color:var(--dim)">1 card, not studied</div></div>' + svg('chev', 'chev') + '</div></div>';
+    return header(w, narrow ? '3 due' : '3 due · 7 new') + '<div class="body"><div class="clamp" style="max-width:680px">' + h + '</div></div>' + bar(w);
+  }
+  function C(w) {
+    if (w === 'phone') return A(w);
+    const chip = c => {
+      const s = c[3];
+      if (s === 'due') return '<span class="chip due">Due</span>';
+      if (s === 'learn') return '<span class="chip learn">Learning</span>';
+      if (s === 'new') return '<span class="chip new">New</span>';
+      if (s === 'susp') return '<span class="chip">Suspended</span>';
+      return '<span class="chip">' + c[4] + '</span>';
+    };
+    let h = '<div class="strip"><span><b>17</b> cards</span><span><b>3</b> due</span><span><b>7</b> new</span><span><b>91%</b> remembered</span><span class="sp"></span>' +
+      '<span class="viewsw"><i class="on">' + svg('grid') + '</i><i>' + svg('list') + '</i></span></div>' + shared;
+    h += '<div class="tiles">' + cards.map(c => '<div class="tile' + (c[3] === 'susp' ? ' susp' : '') + '"><span class="ib">' + svg('more') + '</span><div class="f">' + c[0] + '</div><div class="b">' + c[1] + '</div>' +
+      '<div class="foot">' + chip(c) + '<span class="sp"></span>' + pills(c[2]) + '</div></div>').join('') + '</div>';
+    return header(w, '3 due · 7 new') + '<div class="body"><div class="clamp" style="max-width:none;padding:18px 18px 28px">' + h + '</div></div>';
+  }
+  const R = { A, B, C };
+  document.querySelectorAll('.mocks').forEach(el => { el.innerHTML = R[el.dataset.m](el.dataset.w); });
+
+  const setTheme = dark => {
+    document.querySelectorAll('.mocks').forEach(el => el.classList.toggle('dark', dark));
+    document.getElementById('th-dark').setAttribute('aria-pressed', String(dark));
+    document.getElementById('th-light').setAttribute('aria-pressed', String(!dark));
+    try { localStorage.setItem('mockTheme', dark ? 'dark' : 'light'); } catch (e) {}
+  };
+  let start = false;
+  try { const s = localStorage.getItem('mockTheme'); start = s ? s === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {}
+  setTheme(start);
+  document.getElementById('th-light').onclick = () => setTheme(false);
+  document.getElementById('th-dark').onclick = () => setTheme(true);
+})();
+</script>

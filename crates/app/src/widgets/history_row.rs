@@ -12,7 +12,7 @@ mod imp {
     use gtk::glib;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/history_row.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/history_row.ui")]
     pub struct HistoryRow {
         #[template_child]
         pub icon: TemplateChild<gtk::Image>,

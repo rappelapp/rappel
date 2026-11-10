@@ -29,8 +29,8 @@ use crate::pages::{
 };
 use crate::ui::dialog;
 use crate::widgets::{
-    BackupRow, CardRow, DeckRow, HistoryRow, SelectionBar, SelectionHeader, TagEntry, TagPills,
-    TagSuggestions, chart_card::ChartCard,
+    BackupRow, CardGroupHeader, CardListHeader, CardRow, DeckRow, HistoryRow, SelectionBar,
+    SelectionHeader, TagEntry, TagPills, TagSuggestions,
 };
 use crate::window::RappelWindow;
 
@@ -59,8 +59,15 @@ const CHECKS: &[(&str, Load)] = &[
             loads("card_info_dialog", card_info::Layout::load().err());
         }),
     ),
+    (
+        "card_group_header.blp",
+        Load::Template(template::<CardGroupHeader>),
+    ),
+    (
+        "card_list_header.blp",
+        Load::Template(template::<CardListHeader>),
+    ),
     ("card_row.blp", Load::Template(template::<CardRow>)),
-    ("chart_card.blp", Load::Template(template::<ChartCard>)),
     (
         "deck_name_dialog.blp",
         Load::Plain(|| {

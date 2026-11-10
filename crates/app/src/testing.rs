@@ -194,6 +194,18 @@ pub fn temporary_state() -> (tempfile::TempDir, crate::state::AppState) {
     (tmp, state)
 }
 
+/// `list` as owned strings (tag names, ids), for tests that compare with
+/// what a widget or a pure function returns.
+pub fn strings(list: &[&str]) -> Vec<String> {
+    list.iter().map(|&s| s.to_owned()).collect()
+}
+
+/// The card rows a page or list has built (not one per card: the rows on
+/// screen and GTK's margin around them).
+pub fn card_rows(widget: &gtk::Widget) -> Vec<crate::widgets::CardRow> {
+    descendants(widget)
+}
+
 /// A new database with a deck "Many" of `n` new cards ("Card 0", …), and
 /// their ids in creation order. The cards are written in one transaction
 /// straight into the database file, as an import would write them (rows
@@ -208,6 +220,68 @@ pub fn state_with_many_cards(
     rappel_core::domain::Deck,
     Vec<String>,
 ) {
+    state_with_cards(
+        n,
+        |i| (format!("Card {i}"), "back".to_owned()),
+        &[],
+        |_| Vec::new(),
+    )
+}
+
+/// A card side full of math, number `n` (hardening round 5, ADR 0084):
+/// `kind` 0 gives 32 formulas of four characters ("a^bc") no other side
+/// numbered below about 4,000 has (the most a list row draws,
+/// `MAX_LINE_FORMULAS`, all within a summary's 200 characters), 1 one
+/// formula of about 1 KiB (the longest a summary keeps as a formula), 2
+/// thirty-two pieces of broken LaTeX ("abc^") none of those has.
+pub fn math_side(n: usize, kind: usize) -> String {
+    use std::fmt::Write as _;
+    const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let letter = |k: usize| char::from(LETTERS[k % LETTERS.len()]);
+    let three = |k: usize| format!("{}{}{}", letter(k / 2704), letter(k / 52), letter(k));
+    match kind {
+        0 => (0..32)
+            .map(|j| {
+                let t = three(n * 32 + j);
+                let mut chars = t.chars();
+                let (a, rest) = (chars.next().unwrap_or('a'), chars.as_str());
+                format!("${a}^{rest}$")
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        1 => {
+            let mut source = String::from("$");
+            let mut k = 0;
+            while source.len() < 1000 {
+                // Writing to a String cannot fail.
+                let _ = write!(source, "\\frac{{x_{{{k}}}}}{{y^{{{n}}}}}+");
+                k += 1;
+            }
+            source.push_str("z$");
+            source
+        }
+        _ => (0..32)
+            .map(|j| format!("${}^$", three(n * 32 + j)))
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
+}
+
+/// [`state_with_many_cards`] with card `i`'s sides from `sides` (ASCII
+/// text: the search index holds it lower-cased), and the tags `tags`
+/// (ASCII names) of which card `i` has those at the indices `tags_of(i)`
+/// (ADR 0084: 10,000 cards full of math, grouped or not).
+pub fn state_with_cards(
+    n: usize,
+    sides: impl Fn(usize) -> (String, String),
+    tags: &[&str],
+    tags_of: impl Fn(usize) -> Vec<usize>,
+) -> (
+    tempfile::TempDir,
+    crate::state::AppState,
+    rappel_core::domain::Deck,
+    Vec<String>,
+) {
     let (tmp, state) = temporary_state();
     let deck = state.create_deck("Many").expect("a deck is created");
     let mut conn = rusqlite::Connection::open(state.data_dir().join("rappel.sqlite3"))
@@ -216,23 +290,40 @@ pub fn state_with_many_cards(
     let now = rappel_core::time::now_ms();
     let mut ids = Vec::with_capacity(n);
     {
+        let tag_id = |t: usize| format!("0ffe0000-0000-7000-8000-{t:012x}");
+        let mut insert_tag = tx
+            .prepare("INSERT INTO tags (id, name, name_key) VALUES (?1, ?2, ?3)")
+            .expect("the insert is prepared");
+        for (t, name) in tags.iter().enumerate() {
+            insert_tag
+                .execute(rusqlite::params![tag_id(t), name, name.to_lowercase()])
+                .expect("a tag is inserted");
+        }
         let mut insert = tx
             .prepare(
                 "INSERT INTO cards (id, deck_id, front_md, back_md, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'back', ?4, ?4)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
             )
+            .expect("the insert is prepared");
+        let mut link = tx
+            .prepare("INSERT INTO card_tags (card_id, tag_id) VALUES (?1, ?2)")
             .expect("the insert is prepared");
         for i in 0..n {
             // A lowercase UUIDv7 after every id the store issued so far.
             let id = format!("0fff0000-0000-7000-8000-{i:012x}");
             let at = now - i64::try_from(n - i).unwrap_or(i64::MAX);
+            let (front, back) = sides(i);
             insert
-                .execute(rusqlite::params![id, deck.id, format!("Card {i}"), at])
+                .execute(rusqlite::params![id, deck.id, front, back, at])
                 .expect("a card is inserted");
+            for t in tags_of(i) {
+                link.execute(rusqlite::params![id, tag_id(t)])
+                    .expect("a tag is linked");
+            }
             ids.push(id);
         }
     }
-    // The fronts are plain ASCII: lower case is their folded text.
+    // The sides are ASCII: lower case is their folded text.
     tx.execute(
         "INSERT INTO cards_fts (rowid, front, back)
          SELECT seq, lower(front_md), lower(back_md) FROM cards WHERE deck_id = ?1",

@@ -10,8 +10,9 @@ use crate::i18n::gettext;
 /// The repository, from the workspace's `[package] repository`.
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
-/// The person shown as the developer and copyright holder.
-const DEVELOPER: &str = "Robert Smirke";
+/// The name shown as the developer and copyright holder; the metainfo's
+/// `<developer>` names the same (checked by `desktop_files.rs`).
+pub(crate) const DEVELOPER: &str = "The Rappel Project";
 
 /// The libraries Rappel is built on, credited by name.
 const LIBRARIES: [&str; 9] = [
@@ -104,8 +105,8 @@ mod tests {
 
     #[test]
     fn links_point_at_the_repository() {
-        assert_eq!(REPOSITORY, "https://github.com/rsmirke/rappel");
-        assert_eq!(issue_url(), "https://github.com/rsmirke/rappel/issues");
+        assert_eq!(REPOSITORY, "https://github.com/rappelapp/rappel");
+        assert_eq!(issue_url(), "https://github.com/rappelapp/rappel/issues");
     }
 
     #[test]

@@ -30,7 +30,7 @@ mod imp {
     use super::OnChosen;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/tag_suggestions.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/tag_suggestions.ui")]
     pub struct TagSuggestions {
         #[template_child]
         pub list: TemplateChild<gtk::ListBox>,

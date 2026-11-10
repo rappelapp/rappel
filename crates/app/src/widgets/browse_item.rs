@@ -9,14 +9,14 @@ use std::cell::{Cell, OnceCell, Ref, RefCell};
 
 use gtk::glib;
 use gtk::subclass::prelude::*;
-use rappel_core::content::plain_summary;
+use rappel_core::content::{Summary, summary};
 use rappel_core::domain::Card;
 use rappel_core::storage::{BrowseRow, CardStatus};
 
 use crate::ui::text::one_line;
 
 mod imp {
-    use super::{BrowseRow, Card, CardStatus, Cell, OnceCell, RefCell};
+    use super::{BrowseRow, Card, CardStatus, Cell, OnceCell, RefCell, Summary};
     use gtk::glib;
     use gtk::glib::prelude::*;
     use gtk::subclass::prelude::*;
@@ -25,8 +25,8 @@ mod imp {
     #[properties(wrapper_type = super::BrowseItem)]
     pub struct BrowseItem {
         pub row: RefCell<BrowseRow>,
-        pub front: OnceCell<String>,
-        pub back: OnceCell<String>,
+        pub front: OnceCell<Summary>,
+        pub back: OnceCell<Summary>,
         /// The tag names, each on one line, for the pills.
         pub tags: RefCell<Vec<String>>,
         /// Chosen in selection mode.
@@ -105,18 +105,29 @@ impl BrowseItem {
         self.imp().row.borrow().is_new
     }
 
-    /// The front on one line, without Markdown syntax.
-    pub fn front_preview(&self) -> &str {
+    /// The front on one line, without Markdown syntax, its formulas apart
+    /// (see [`summary`]).
+    pub fn front_summary(&self) -> &Summary {
         self.imp()
             .front
-            .get_or_init(|| plain_summary(&self.imp().row.borrow().card.front_md))
+            .get_or_init(|| summary(&self.imp().row.borrow().card.front_md))
     }
 
-    /// The back on one line, without Markdown syntax.
-    pub fn back_preview(&self) -> &str {
+    /// The back on one line, as [`Self::front_summary`].
+    pub fn back_summary(&self) -> &Summary {
         self.imp()
             .back
-            .get_or_init(|| plain_summary(&self.imp().row.borrow().card.back_md))
+            .get_or_init(|| summary(&self.imp().row.borrow().card.back_md))
+    }
+
+    /// The front on one line as plain text, formulas as their source.
+    pub fn front_preview(&self) -> &str {
+        &self.front_summary().text
+    }
+
+    /// The back on one line as plain text.
+    pub fn back_preview(&self) -> &str {
+        &self.back_summary().text
     }
 
     /// The tag names, each on one line (`ui::text::one_line`).

@@ -1,14 +1,19 @@
-//! One row of a list of cards (ADR 0042, 0044): the front as the title,
-//! the back dimmed under it with the tags as pills at the end of that line,
-//! an icon when the card is suspended, and a menu with Edit, Card
-//! Information, Study Cards Tagged “…” for each of its tags (a submenu
+//! One row of a list of cards (ADR 0042, 0044, 0077, 0079): the front on
+//! one line with the back dimmed under it if the card has one, each with
+//! its formulas drawn (`render::MathLine`), the card's own tags as pills at
+//! the row's end (not those every listed card shares, which the list says
+//! once above its rows: the `shared-tags` property, `text::other_tags`; and
+//! none on a deck page that groups its cards by their tags, `grouped`, whose
+//! group headers name them), an icon when the card is suspended, a short
+//! word for when the card is due (`text::due_word`), and a menu with Edit,
+//! Card Information, Study Cards Tagged “…” for each of its tags (a submenu
 //! when there are more than three, ADR 0069), Suspend or Unsuspend, Reset
-//! Progress, Move to Deck… and Delete. The deck
-//! page and All Cards use the same row, so both lists look and cost the
-//! same; on All Cards ([`CardRow::for_browser`]) a third line says the deck
-//! and the status. On both, a check button shows while cards are being
-//! chosen (`ui::selection`, ADR 0065), and a long press on a touch screen
-//! starts choosing with the row's card.
+//! Progress, Move to Deck… and Delete. The deck page and All Cards use the
+//! same row, so both lists look and cost the same; on All Cards
+//! ([`CardRow::for_browser`]) the second line starts with the deck. On
+//! both, a check button shows while cards are being chosen
+//! (`ui::selection`, ADR 0065), and a long press on a touch screen starts
+//! choosing with the row's card.
 //! Layout in `data/card_row.blp`; what a screen reader says in `text.rs`
 //! (and `pages::browser_text` for All Cards).
 //!
@@ -16,12 +21,15 @@
 //! [`CardRow::bind_browse`] point a row at another card, reusing its pill
 //! labels. The `compact` property (bound to the page's, a narrow window)
 //! shows fewer pills; `selecting` shows the check button instead of the
-//! menu. As in `DeckRow`, the menu items activate the row's
-//! own `row.edit` / `row.info` / `row.suspend` / `row.unsuspend` /
-//! `row.reset` / `row.move` / `row.delete` actions, which forward to the
-//! page's `edit-card` / `card-info` / `suspend-card` / `unsuspend-card` /
-//! `reset-card` / `move-card` / `delete-card` actions (in the `deck.` or `browser.`
-//! group) with the bound card's id, and a long press to `select-card`;
+//! menu; `shared-tags` (the ids of the tags every listed card has) leaves
+//! those out of the pills; `now` and `next-day` (the page's clock and the
+//! start of the next study day) set the due word. As in `DeckRow`, the
+//! menu items activate the row's own `row.edit` / `row.info` /
+//! `row.suspend` / `row.unsuspend` / `row.reset` / `row.move` /
+//! `row.delete` actions, which forward to the page's `edit-card` /
+//! `card-info` / `suspend-card` / `unsuspend-card` / `reset-card` /
+//! `move-card` / `delete-card` actions (in the `deck.` or `browser.` group)
+//! with the bound card's id, and a long press to `select-card`;
 //! `row.study-tag`, whose target is a tag's id, forwards it to the page's
 //! `study-tag`.
 
@@ -35,6 +43,7 @@ use super::{BrowseItem, CardObject};
 use crate::pages::browser_text;
 use crate::ui::rows;
 use crate::ui::selection::text::with_selected;
+use rappel_core::content::Summary;
 use text::TagMenu;
 
 pub mod text;
@@ -46,26 +55,29 @@ mod imp {
     use adw::subclass::prelude::*;
     use gtk::{gio, glib};
 
+    use crate::render::MathLine;
     use crate::widgets::TagPills;
 
     #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::CardRow)]
-    #[template(resource = "/io/github/rsmirke/Rappel/card_row.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/card_row.ui")]
     pub struct CardRow {
         #[template_child]
         pub check: TemplateChild<gtk::CheckButton>,
         #[template_child]
-        pub front_label: TemplateChild<gtk::Label>,
+        pub front_line: TemplateChild<MathLine>,
         #[template_child]
         pub detail_box: TemplateChild<gtk::Box>,
         #[template_child]
-        pub back_label: TemplateChild<gtk::Label>,
+        pub back_line: TemplateChild<MathLine>,
         #[template_child]
         pub tag_pills: TemplateChild<TagPills>,
         #[template_child]
         pub caption_label: TemplateChild<gtk::Label>,
         #[template_child]
         pub suspended_icon: TemplateChild<gtk::Image>,
+        #[template_child]
+        pub due_label: TemplateChild<gtk::Label>,
         /// A narrow row: fewer pills, so the back keeps some room.
         #[property(get, set)]
         pub compact: Cell<bool>,
@@ -73,6 +85,25 @@ mod imp {
         /// not.
         #[property(get, set)]
         pub selecting: Cell<bool>,
+        /// The ids of the tags every card of the list has, which the page
+        /// says once above it (`text::shared_tags`): the pills leave them
+        /// out.
+        #[property(get, set)]
+        pub shared_tags: RefCell<Vec<String>>,
+        /// The page groups its cards by their tags (ADR 0079): the group
+        /// headers name the tags, so the row shows no pills.
+        #[property(get, set)]
+        pub grouped: Cell<bool>,
+        /// The page's clock (UTC milliseconds) for the due word; 0 for
+        /// the time of each bind.
+        #[property(get, set)]
+        pub now: Cell<i64>,
+        /// When the next study day begins (UTC milliseconds), for
+        /// "Tomorrow" and "In 3 days"; 0 for a day after `now`.
+        #[property(get, set)]
+        pub next_day: Cell<i64>,
+        /// Where the bound card stands, for the due word.
+        pub status: Cell<Option<rappel_core::storage::CardStatus>>,
         /// Another deck exists to move the card to (the page's, from
         /// `dialogs::move_card::offered`): Move to Deck… is enabled.
         #[property(get, set)]
@@ -91,6 +122,9 @@ mod imp {
         pub browsing: Cell<bool>,
         /// The bound card, empty while unbound.
         pub card_id: RefCell<String>,
+        /// The item shown (a `BrowseItem` or a `CardObject`), whose tags
+        /// the pills show again when `shared-tags` changes.
+        pub shown: RefCell<Option<glib::Object>>,
         /// The bound item (a `BrowseItem` or a `CardObject`), whose
         /// `selected` the row follows, and the list item whose accessible
         /// label says it.
@@ -111,6 +145,7 @@ mod imp {
 
         fn class_init(klass: &mut Self::Class) {
             TagPills::ensure_type();
+            MathLine::ensure_type();
             klass.bind_template();
             klass.install_action("row.edit", None, |row, _, _| {
                 row.forward("edit-card");
@@ -162,8 +197,14 @@ mod imp {
             crate::ui::rows::menu_on_demand(&self.menu_button, &self.card_menu);
             let row = self.obj();
             row.connect_compact_notify(super::CardRow::update_pill_count);
+            row.connect_compact_notify(super::CardRow::update_subtitle);
             row.update_pill_count();
             row.connect_selecting_notify(super::CardRow::update_selection);
+            row.connect_shared_tags_notify(super::CardRow::update_pills);
+            row.connect_grouped_notify(super::CardRow::update_pills);
+            // The word and the row's label, which says it too.
+            row.connect_now_notify(super::CardRow::update_due_and_label);
+            row.connect_next_day_notify(super::CardRow::update_due_and_label);
             row.add_long_press();
             // `gtk_widget_action_set_enabled` (GtkWidget docs): a menu item
             // naming a disabled action is insensitive.
@@ -189,8 +230,8 @@ impl Default for CardRow {
 }
 
 impl CardRow {
-    /// A row of All Cards: its menu acts through `browser.*`, and it shows
-    /// the deck and status line.
+    /// A row of All Cards: its menu acts through `browser.*`, and its
+    /// second line starts with the status and the deck.
     pub fn for_browser() -> Self {
         let row = Self::default();
         let imp = row.imp();
@@ -231,14 +272,16 @@ impl CardRow {
     pub fn bind(&self, item: &CardObject) {
         let card = item.card();
         self.show(&RowParts {
-            front: item.front_preview(),
-            back: item.back_preview(),
+            front: item.front_summary(),
+            back: item.back_summary(),
             pill_names: &item.tags(),
             tags: &item.tag_list(),
             suspended: card.suspended,
             is_new: item.is_new(),
+            status: item.status(),
             id: &card.id,
         });
+        self.imp().shown.replace(Some(item.clone().upcast()));
     }
 
     /// Shows an All Cards `item` in this row: the card, its deck and status,
@@ -249,19 +292,20 @@ impl CardRow {
         let imp = self.imp();
         {
             let row = item.row();
+            let back = item.back_summary();
             self.show(&RowParts {
-                front: item.front_preview(),
-                back: item.back_preview(),
+                front: item.front_summary(),
+                back,
                 pill_names: &item.tags(),
                 tags: &row.tags,
                 suspended: row.card.suspended,
                 is_new: row.is_new,
+                status: row.status,
                 id: &row.card.id,
             });
-            let status = browser_text::status_text(row.status, rappel_core::time::now_ms());
-            imp.caption_label
-                .set_label(&browser_text::caption(&row.deck_name, &status));
         }
+        imp.shown.replace(Some(item.clone().upcast()));
+        self.update_subtitle();
         self.follow(item.upcast_ref(), list_item);
     }
 
@@ -297,19 +341,28 @@ impl CardRow {
             tags,
             suspended,
             is_new,
+            status,
             id,
         } = parts;
         let imp = self.imp();
-        imp.front_label.set_label(front);
-        imp.back_label.set_label(back);
-        imp.tag_pills.set_tags(pill_names);
+        imp.front_line.set_summary(front);
+        imp.back_line.set_summary(back);
+        imp.back_line.set_visible(!back.text.is_empty());
+        self.show_pills(pill_names, tags);
         self.set_tag_menu(tags);
-        imp.tag_pills.set_visible(!pill_names.is_empty());
-        // Without a back or tags, the line is left out.
+        // Without a back (and, on the deck page, nothing else to say), the
+        // line is left out.
         imp.detail_box
-            .set_visible(!back.is_empty() || !pill_names.is_empty());
-        rows::label_menu_button(&imp.menu_button, &text::spoken_front(front));
+            .set_visible(!back.text.is_empty() || imp.browsing.get());
+        rows::label_menu_button(&imp.menu_button, &text::spoken_front(&front.text));
         imp.suspended_icon.set_visible(suspended);
+        // As the mockup's suspended rows: the front dimmed too, besides the
+        // icon (the back is dimmed already).
+        if suspended {
+            imp.front_line.add_css_class("dimmed");
+        } else {
+            imp.front_line.remove_css_class("dimmed");
+        }
         // Rows are recycled, so this is set on every bind. The `row.*`
         // actions are widget actions installed in `class_init`;
         // `gtk_widget_action_set_enabled` (GtkWidget docs) disables one, and
@@ -318,6 +371,85 @@ impl CardRow {
             self.action_set_enabled(action, enabled);
         }
         imp.card_id.replace(id.to_owned());
+        imp.status.set(Some(status));
+        self.update_due();
+    }
+
+    /// The due word at the row's end, for the bound card at the page's
+    /// clock (`text::due_word`), with the accent colour when the card is
+    /// due now.
+    fn update_due(&self) {
+        let imp = self.imp();
+        let Some(status) = imp.status.get() else {
+            return;
+        };
+        let word = self.due_word(status);
+        imp.due_label.set_label(&word.text);
+        if word.accent {
+            imp.due_label.add_css_class("accent");
+        } else {
+            imp.due_label.remove_css_class("accent");
+        }
+    }
+
+    /// The due word and the accessible label, after the page's clock
+    /// moved.
+    fn update_due_and_label(&self) {
+        self.update_due();
+        self.update_selection();
+    }
+
+    /// The due word of a card in `status` at the page's clock.
+    fn due_word(&self, status: rappel_core::storage::CardStatus) -> text::DueWord {
+        let now = match self.now() {
+            0 => rappel_core::time::now_ms(),
+            now => now,
+        };
+        let next_day = match self.next_day() {
+            day if day > now => day,
+            _ => now.saturating_add(crate::ui::time::DAY_MS),
+        };
+        text::due_word(status, now, next_day)
+    }
+
+    /// The pills for a card with `names` and `tags`: the ones the list does
+    /// not say above it (`text::other_tags`).
+    fn show_pills(&self, names: &[String], tags: &[Tag]) {
+        let imp = self.imp();
+        let shared = imp.shared_tags.borrow();
+        if self.grouped() {
+            imp.tag_pills.set_visible(false);
+            return;
+        }
+        let others = text::other_tags(names, tags, &shared);
+        imp.tag_pills.set_tags(&others);
+        imp.tag_pills.set_visible(!others.is_empty());
+    }
+
+    /// An All Cards row's second line: the deck, then the back, except on
+    /// a narrow row, which has room for the deck only
+    /// (`browser_text::subtitle`). Follows `compact`. When the card is
+    /// due is the word at the row's end.
+    fn update_subtitle(&self) {
+        let imp = self.imp();
+        let shown = imp.shown.borrow().clone();
+        let Some(item) = shown.as_ref().and_then(|o| o.downcast_ref::<BrowseItem>()) else {
+            return;
+        };
+        let with_back = !item.back_preview().is_empty() && !self.compact();
+        imp.caption_label
+            .set_label(&browser_text::subtitle(&item.row().deck_name, with_back));
+        imp.back_line.set_visible(with_back);
+    }
+
+    /// The pills again, after `shared-tags` changed.
+    fn update_pills(&self) {
+        let shown = self.imp().shown.borrow().clone();
+        if let Some(item) = shown.as_ref().and_then(|o| o.downcast_ref::<CardObject>()) {
+            self.show_pills(&item.tags(), &item.tag_list());
+        } else if let Some(item) = shown.as_ref().and_then(|o| o.downcast_ref::<BrowseItem>()) {
+            self.show_pills(&item.tags(), &item.row().tags);
+        }
     }
 
     /// Fills the row menu's tag section for `tags` ([`text::tag_menu`]),
@@ -382,7 +514,12 @@ impl CardRow {
         let chosen = selecting.then_some(selected);
         if let Some(item) = item.downcast_ref::<BrowseItem>() {
             let row = item.row();
-            let status = browser_text::status_text(row.status, rappel_core::time::now_ms());
+            // At the page's clock, as the due word.
+            let now = match self.now() {
+                0 => rappel_core::time::now_ms(),
+                now => now,
+            };
+            let status = browser_text::status_text(row.status, now);
             list_item.set_accessible_label(&browser_text::row_label(
                 &text::row_label(
                     item.front_preview(),
@@ -395,9 +532,14 @@ impl CardRow {
                 chosen,
             ));
         } else if let Some(item) = item.downcast_ref::<CardObject>() {
-            // Screen readers read the front, the back and the tags, not
-            // "row" (`card_row::text::row_label`).
-            list_item.set_accessible_label(&with_selected(item.row_label(), chosen));
+            // Screen readers read the front, the back, the tags and when
+            // the card is due, not "row" (`card_row::text::row_label`).
+            let label = text::with_due(
+                item.row_label(),
+                &self.due_word(item.status()),
+                item.card().suspended,
+            );
+            list_item.set_accessible_label(&with_selected(label, chosen));
         }
     }
 
@@ -414,6 +556,8 @@ impl CardRow {
     pub fn unbind(&self) {
         let imp = self.imp();
         imp.card_id.borrow_mut().clear();
+        imp.shown.replace(None);
+        imp.status.set(None);
         if let (Some(item), Some(handler)) = (imp.item.take(), imp.selected_handler.take()) {
             item.disconnect(handler);
         }
@@ -457,10 +601,10 @@ impl CardRow {
 /// What a row shows of one card, from a deck page's `CardObject` or an All
 /// Cards `BrowseItem`.
 struct RowParts<'a> {
-    /// The front's one-line preview.
-    front: &'a str,
-    /// The back's one-line preview.
-    back: &'a str,
+    /// The front's one-line summary.
+    front: &'a Summary,
+    /// The back's one-line summary.
+    back: &'a Summary,
     /// The tag names on one line each, as the item keeps them for the
     /// pills (made once per item, not per bind).
     pill_names: &'a [String],
@@ -468,13 +612,95 @@ struct RowParts<'a> {
     tags: &'a [Tag],
     suspended: bool,
     is_new: bool,
+    /// Where it stands, for the due word.
+    status: rappel_core::storage::CardStatus,
     /// The card's id.
     id: &'a str,
 }
 
+/// Says on `page` which tags every item of `store` has (each a `T`, whose
+/// tags `tags` reads; `text::shared_tags`): their ids in its
+/// `shared-tags` property, which the rows follow, and their names in its
+/// `shared-tag-names`, which the `CardListHeader` above the
+/// list shows (its `tags` property). A property is set only when it
+/// changes, so the rows are not redrawn for nothing.
+pub fn update_shared_tags<T: IsA<glib::Object>>(
+    page: &impl IsA<glib::Object>,
+    store: &gio::ListStore,
+    tags: for<'a> fn(&'a T) -> std::cell::Ref<'a, [Tag]>,
+) {
+    // One item at a time, its tags borrowed only while they are added,
+    // stopping once no tag is shared.
+    let mut acc = text::SharedTags::default();
+    for position in 0..store.n_items() {
+        let Some(item) = store.item(position).and_downcast::<T>() else {
+            continue;
+        };
+        if !acc.add(&tags(&item)) {
+            break;
+        }
+    }
+    set_shared_tags(page, &acc.finish());
+}
+
+/// Says on `page` that every listed card has `shared`: their ids in its
+/// `shared-tags` property, which the rows follow, and their names in its
+/// `shared-tag-names`, which the `CardListHeader` above the list shows. A
+/// property is set only when it changes, so the rows are not redrawn for
+/// nothing.
+pub fn set_shared_tags(page: &impl IsA<glib::Object>, shared: &[Tag]) {
+    let ids: Vec<String> = shared.iter().map(|t| t.id.clone()).collect();
+    let names: Vec<String> = shared
+        .iter()
+        .map(|t| crate::ui::text::one_line(&t.name))
+        .collect();
+    let page = page.upcast_ref::<glib::Object>();
+    if page.property::<Vec<String>>("shared-tags") != ids {
+        page.set_property("shared-tags", ids);
+    }
+    if page.property::<Vec<String>>("shared-tag-names") != names {
+        page.set_property("shared-tag-names", names);
+    }
+}
+
+/// Runs [`update_shared_tags`] once the main loop is idle, once for any
+/// number of list changes before then: a list of 10,000 cards changes one
+/// row at a time (an edit, a bulk action's rows) and must not be read
+/// whole for each (ADR 0073's bound on a row change). The run is at
+/// `G_PRIORITY_HIGH_IDLE`, before GTK lays out and draws the next frame
+/// (`GTK_PRIORITY_RESIZE` and `GDK_PRIORITY_REDRAW` are lower, GTK docs),
+/// so no frame shows the old tags.
+#[derive(Debug, Default)]
+pub struct SharedTagsQueue {
+    pending: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl SharedTagsQueue {
+    pub fn queue<T: IsA<glib::Object>>(
+        &self,
+        page: &impl IsA<glib::Object>,
+        store: &gio::ListStore,
+        tags: for<'a> fn(&'a T) -> std::cell::Ref<'a, [Tag]>,
+    ) {
+        if self.pending.replace(true) {
+            return;
+        }
+        let pending = std::rc::Rc::clone(&self.pending);
+        let page = page.upcast_ref::<glib::Object>().downgrade();
+        let store = store.downgrade();
+        glib::idle_add_local_full(glib::Priority::HIGH_IDLE, move || {
+            pending.set(false);
+            if let (Some(page), Some(store)) = (page.upgrade(), store.upgrade()) {
+                update_shared_tags(&page, &store, tags);
+            }
+            glib::ControlFlow::Break
+        });
+    }
+}
+
 /// A list factory of card rows, for the deck page's list and All Cards':
 /// `make` makes each row, which then follows `page`'s properties named in
-/// `follows` (`compact`, `selecting`); `bind` shows the list item's item, a
+/// `follows` (`compact`, `selecting`, `shared-tags`); `bind` shows the list item's item, a
 /// `T`, in its row; and a row is unbound before it is recycled.
 pub fn factory<T: IsA<glib::Object>>(
     page: &impl IsA<glib::Object>,
@@ -579,8 +805,14 @@ mod tests {
             let item = card(4);
             row.bind(&item);
             let imp = row.imp();
-            assert_eq!(imp.front_label.label(), "Card 4: what is \\frac{4}{2}?");
-            assert_eq!(imp.back_label.label(), "Answer 4, with code and a link");
+            // The formula is drawn (#128): a placeholder in the text.
+            let front = imp.front_line.content();
+            assert_eq!(front.text, "Card 4: what is \u{FFFC}?");
+            assert_eq!(front.formulas, [(16, "\\frac{4}{2}".to_owned())]);
+            assert_eq!(
+                imp.back_line.content().text,
+                "Answer 4, with code and a link"
+            );
             assert_eq!(imp.tag_pills.tags().len(), 4);
             assert!(!imp.suspended_icon.is_visible());
             // The menu is built when it first opens, not with the row.
@@ -605,7 +837,14 @@ mod tests {
             let item = browse_item(4);
             row.bind_browse(&item, &list_item);
             let imp = row.imp();
-            assert_eq!(imp.caption_label.label(), "\u{2068}Maths\u{2069} · New");
+            assert_eq!(imp.caption_label.label(), "\u{2068}Maths\u{2069} ·");
+            assert_eq!(imp.due_label.label(), "New");
+            assert!(imp.back_line.is_visible());
+            // A narrow row: the deck only.
+            row.set_compact(true);
+            assert_eq!(imp.caption_label.label(), "\u{2068}Maths\u{2069}");
+            assert!(!imp.back_line.is_visible());
+            row.set_compact(false);
             assert!(imp.caption_label.is_visible());
             assert!(!imp.check.is_visible() && imp.menu_button.is_visible());
             assert_eq!(imp.tag_pills.tags().len(), 4);
@@ -641,12 +880,10 @@ mod tests {
             other.set_selected(true);
             assert_eq!(imp.selected_seen.get(), seen + 1);
             assert!(imp.check.is_active());
-            assert_eq!(
-                imp.caption_label.label(),
-                "\u{2068}Maths\u{2069} · Suspended"
-            );
+            assert_eq!(imp.caption_label.label(), "\u{2068}Maths\u{2069} ·");
+            assert_eq!(imp.due_label.label(), "Suspended");
             assert!(imp.suspended_icon.is_visible());
-            // A deck page row has no third line.
+            // A deck page row has no deck and status.
             assert!(!CardRow::default().imp().caption_label.is_visible());
         });
     }
@@ -896,6 +1133,107 @@ mod tests {
         });
     }
 
+    /// The tags every listed card has are left out of the pills, and come
+    /// back when the list no longer shares them; the accessible label still
+    /// says every tag.
+    #[test]
+    fn a_row_leaves_out_the_shared_tags() {
+        crate::testing::with_widgets(|| {
+            let row = CardRow::default();
+            let item = card(4);
+            row.bind_card(&item, &glib::Object::new::<gtk::ListItem>());
+            let pills = &row.imp().tag_pills;
+            assert_eq!(pills.tags().len(), 4);
+            row.set_shared_tags(vec!["tag-0".to_owned(), "tag-2".to_owned()]);
+            assert_eq!(pills.tags(), ["tag number 1", "tag number 3"]);
+            assert!(pills.is_visible());
+            row.set_shared_tags((0..4).map(|t| format!("tag-{t}")).collect::<Vec<_>>());
+            assert!(!pills.is_visible());
+            assert!(item.row_label().contains("tag number 0"));
+            row.set_shared_tags(Vec::<String>::new());
+            assert_eq!(pills.tags().len(), 4);
+            // A recycled row follows the list's shared tags for its new card.
+            row.set_shared_tags(vec!["tag-0".to_owned()]);
+            row.bind(&card(2));
+            assert_eq!(pills.tags(), ["tag number 1"]);
+            // An All Cards row too.
+            let browser_row = CardRow::for_browser();
+            browser_row.set_shared_tags(vec!["tag-1".to_owned()]);
+            browser_row.bind_browse(&browse_item(3), &glib::Object::new::<gtk::ListItem>());
+            assert_eq!(
+                browser_row.imp().tag_pills.tags(),
+                ["tag number 0", "tag number 2"]
+            );
+        });
+    }
+
+    /// A deck page row ends with its due word ("Today" in the accent
+    /// colour), follows the page's clock, says it in its label, shows no
+    /// pills while the page groups its cards, and has no second line
+    /// without a back.
+    #[test]
+    fn a_row_says_when_its_card_is_due() {
+        crate::testing::with_widgets(|| {
+            use rappel_core::storage::CardStanding;
+            const NOW: i64 = 1_000_000_000_000;
+            const DAY: i64 = crate::ui::time::DAY_MS;
+            let row = CardRow::default();
+            row.set_now(NOW);
+            row.set_next_day(NOW + DAY / 2);
+            let list_item = glib::Object::new::<gtk::ListItem>();
+            let item = card(4).with_standing(CardStanding {
+                status: CardStatus::Due(NOW - DAY),
+                is_new: false,
+            });
+            row.bind_card(&item, &list_item);
+            let imp = row.imp();
+            assert_eq!(imp.due_label.label(), "Today");
+            assert!(imp.due_label.has_css_class("accent"));
+            assert!(list_item.accessible_label().ends_with(", due today"));
+            // The clock moves on: an hour before it, the card was not due.
+            let later = card(5).with_standing(CardStanding {
+                status: CardStatus::Scheduled(NOW + DAY),
+                is_new: false,
+            });
+            row.bind_card(&later, &list_item);
+            assert_eq!(imp.due_label.label(), "Tomorrow");
+            assert!(!imp.due_label.has_css_class("accent"));
+            row.set_now(NOW + DAY + 1);
+            assert_eq!(imp.due_label.label(), "Today");
+            assert!(list_item.accessible_label().ends_with(", due today"));
+            // Grouped, no pills; the label still says every tag.
+            assert!(imp.tag_pills.is_visible());
+            row.set_grouped(true);
+            assert!(!imp.tag_pills.is_visible());
+            assert!(list_item.accessible_label().contains("tag number 4"));
+            row.set_grouped(false);
+            assert!(imp.tag_pills.is_visible());
+            // No back: one line.
+            let front_only = CardObject::new(rappel_core::domain::TaggedCard {
+                card: Card {
+                    back_md: String::new(),
+                    ..card(1).card().clone()
+                },
+                tags: Vec::new(),
+            });
+            row.bind_card(&front_only, &list_item);
+            assert!(!imp.detail_box.is_visible());
+            row.bind_card(&item, &list_item);
+            assert!(imp.detail_box.is_visible());
+        });
+    }
+
+    #[test]
+    fn a_suspended_card_has_its_front_dimmed() {
+        crate::testing::with_widgets(|| {
+            let row = CardRow::default();
+            row.bind(&card(7));
+            assert!(row.imp().front_line.has_css_class("dimmed"));
+            row.bind(&card(1));
+            assert!(!row.imp().front_line.has_css_class("dimmed"));
+        });
+    }
+
     #[test]
     fn a_narrow_row_shows_fewer_pills() {
         crate::testing::with_widgets(|| {
@@ -935,9 +1273,11 @@ mod tests {
     /// and only the cards bound get their previews made. The CPU time of
     /// the thread (not the wall clock, which grows while the thread waits
     /// for a CPU) is printed with `RAPPEL_TIMINGS=1` and bounded only
-    /// against a large regression: about 100 ms in a debug build (most of
-    /// it making each card's two previews), 380 ms with three busy threads
-    /// per CPU (shared caches slow the thread even while it runs).
+    /// against a large regression: about 100 ms in a debug build before
+    /// the rows drew formulas (#128), about 380 ms since (every card here
+    /// has a formula of its own, so each bind lays one out with `RaTeX`;
+    /// ADR 0077), and 380 ms before that with three busy threads per CPU
+    /// (shared caches slow the thread even while it runs).
     #[test]
     fn binding_a_row_to_thousands_of_cards_makes_no_widgets() {
         crate::testing::with_widgets(|| {
@@ -963,6 +1303,85 @@ mod tests {
             // Over five times the time measured under load; checked on this
             // thread, which did the work (ADR 0049).
             crate::testing::assert_cpu_within(cpu, Duration::from_secs(2), "CardRow::bind");
+        });
+    }
+
+    /// Card `i` whose sides are full of math of `kind`
+    /// (`testing::math_side`), each side its own.
+    fn math_card(i: usize, kind: usize) -> CardObject {
+        let side = |salt: usize| crate::testing::math_side(i * 2 + salt, kind);
+        CardObject::new(TaggedCard {
+            card: Card {
+                id: format!("math-{kind}-{i:05}"),
+                deck_id: "deck".to_owned(),
+                front_md: side(0),
+                back_md: side(1),
+                created_at: 0,
+                updated_at: 0,
+                suspended: false,
+            },
+            tags: Vec::new(),
+        })
+    }
+
+    /// Binding, measuring and drawing a row whose two sides each have 32
+    /// formulas seen nowhere else, a 1 KiB formula, or 32 pieces of broken
+    /// LaTeX, as a list does while it scrolls through 10,000 such cards:
+    /// the formula cache (`math::formula`, 800 entries) cannot hold them,
+    /// so every bind lays each formula out again. Measured in CPU time per
+    /// row (`RAPPEL_TIMINGS=1`) and bounded far above it (ADR 0084).
+    #[test]
+    fn a_row_full_of_math_binds_and_draws_quickly() {
+        use gtk::subclass::prelude::*;
+        crate::testing::with_widgets(|| {
+            let window = gtk::Window::builder().default_width(640).build();
+            let row = CardRow::default();
+            window.set_child(Some(&row));
+            window.present();
+            crate::testing::settle();
+            for (kind, what, rows, per_side) in [
+                (0, "32 unique formulas a side", 120, 32),
+                (1, "a 1 KiB formula a side", 120, 1),
+                (2, "32 broken formulas a side", 120, 32),
+            ] {
+                let items: Vec<CardObject> = (0..rows).map(|i| math_card(i, kind)).collect();
+                let layouts = crate::render::math_layouts_done();
+                let (cpu, drawn) = crate::testing::cpu_time_of(|| {
+                    let mut drawn = 0;
+                    for item in &items {
+                        row.bind(item);
+                        for line in [&row.imp().front_line, &row.imp().back_line] {
+                            let _ = line.measure(gtk::Orientation::Horizontal, -1);
+                            let _ = line.measure(gtk::Orientation::Vertical, -1);
+                            drawn += line
+                                .drawn_at(560)
+                                .iter()
+                                .filter(|(_, shown, _)| *shown)
+                                .count();
+                            let snapshot = gtk::Snapshot::new();
+                            line.imp().snapshot(&snapshot);
+                        }
+                        row.unbind();
+                    }
+                    drawn
+                });
+                // Each formula is laid out once per bind, however full the
+                // cache is: the line keeps its display lists while bound.
+                assert_eq!(
+                    crate::render::math_layouts_done() - layouts,
+                    rows * 2 * per_side,
+                    "{what}"
+                );
+                let per_row = cpu / u32::try_from(rows).unwrap_or(1);
+                crate::testing::print_timing(
+                    &format!("a row with {what} ({drawn} drawn)"),
+                    per_row,
+                );
+                // Far above what was measured: a row in 2 ms of a debug
+                // build at worst (ADR 0084).
+                crate::testing::assert_cpu_within(per_row, Duration::from_millis(40), what);
+            }
+            window.destroy();
         });
     }
 

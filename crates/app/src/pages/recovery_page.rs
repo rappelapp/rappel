@@ -60,7 +60,7 @@ mod imp {
     use crate::ui::callback::Callback;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/recovery_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/recovery_page.ui")]
     pub struct RecoveryPage {
         #[template_child]
         pub status: TemplateChild<adw::StatusPage>,

@@ -41,7 +41,7 @@ mod imp {
     use crate::ui::callback::Callback;
 
     #[derive(Debug, Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/setting_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/setting_page.ui")]
     pub struct SettingPage {
         #[template_child]
         pub short_breakpoint: TemplateChild<adw::Breakpoint>,

@@ -72,7 +72,7 @@ mod imp {
 
     #[derive(Debug, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::TagPills)]
-    #[template(resource = "/io/github/rsmirke/Rappel/tag_pills.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/tag_pills.ui")]
     pub struct TagPills {
         #[template_child]
         pub wrap_box: TemplateChild<adw::WrapBox>,
@@ -471,9 +471,7 @@ fn pill_label(removable: bool) -> gtk::Label {
 mod tests {
     use super::*;
 
-    fn names(list: &[&str]) -> Vec<String> {
-        list.iter().map(|&n| n.to_owned()).collect()
-    }
+    use crate::testing::strings as names;
 
     #[test]
     fn pills_are_reused_and_the_rest_counted() {

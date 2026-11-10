@@ -114,7 +114,7 @@ mod imp {
     use crate::ui::toast::ErrorSlot;
 
     #[derive(Default, gtk::CompositeTemplate)]
-    #[template(resource = "/io/github/rsmirke/Rappel/card_editor.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/card_editor.ui")]
     pub struct CardEditor {
         #[template_child]
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,

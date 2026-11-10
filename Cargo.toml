@@ -5,12 +5,12 @@ members = ["crates/core", "crates/app"]
 exclude = ["third_party"]
 
 [workspace.package]
-version = "0.4.0-beta.1"
+version = "0.4.0"
 edition = "2024"
 # gtk4 0.11 / libadwaita 0.9 / gio 0.22 require Rust 1.92.
 rust-version = "1.92"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/rsmirke/rappel"
+repository = "https://github.com/rappelapp/rappel"
 publish = false
 
 [workspace.dependencies]
@@ -52,7 +52,7 @@ thiserror = "2"
 # `unicase` collation, which its tables cannot be read without, and an
 # untrusted collection is read with lowered length limits. `hooks` (ADR 0063):
 # the progress handler that stops a long statement of a cancelled Anki import.
-rusqlite = { version = "0.40", default-features = false, features = ["bundled", "backup", "collation", "hooks", "limits"] }
+rusqlite = { version = "0.41", default-features = false, features = ["bundled", "backup", "collation", "hooks", "limits"] }
 
 # Scheduling (rappel-core): the reference FSRS implementation (ADR 0006).
 fsrs = "6.6"
@@ -60,6 +60,14 @@ fsrs = "6.6"
 # Ids (rappel-core): random bits for UUIDv7 (ADR 0008). Already in the tree
 # through fsrs -> rand.
 getrandom = "0.4"
+
+# Automatic backups (rappel-core, ADR 0080): `openat`, `renameat2` with
+# RENAME_NOREPLACE, `unlinkat` and `fstatat` without following links,
+# relative to one open handle on the backup folder, so nothing is written or
+# deleted elsewhere when the folder is swapped; std has no `*at` calls and
+# `unsafe` is forbidden. Already in the tree through glycin's async-io.
+# Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT.
+rustix = { version = "1.1", default-features = false, features = ["std", "fs"] }
 
 # Deck name keys (rappel-core): Unicode NFC, which std does not provide
 # (ADR 0010).

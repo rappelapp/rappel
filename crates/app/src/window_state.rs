@@ -8,11 +8,11 @@
 //! This state belongs to one device. A missing or broken file gives the
 //! defaults, and a failed save is only logged: neither may stop the app.
 
-use std::io::Read;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use gtk::glib;
+
+use crate::key_file::{self, Unread};
 
 /// The file name in the data directory.
 const FILE_NAME: &str = "window-state.ini";
@@ -21,9 +21,6 @@ const WIDTH: &str = "width";
 const HEIGHT: &str = "height";
 const MAXIMIZED: &str = "maximized";
 const DECK: &str = "deck";
-/// The file's mode, like the database's: only the user reads it.
-const FILE_MODE_BITS: u32 = 0o600;
-const FILE_MODE: i32 = 0o600;
 
 /// The window's default size, as in `data/window.blp`.
 pub const DEFAULT_WIDTH: i32 = 640;
@@ -102,70 +99,12 @@ fn path(data_dir: &Path) -> PathBuf {
     data_dir.join(FILE_NAME)
 }
 
-/// Why the file was not read.
-#[derive(Debug)]
-enum Unread {
-    /// There is no file (the first run).
-    Missing,
-    /// Something else: logged at debug level.
-    Refused(String),
-}
-
-/// The file's bytes, if it is a regular file of at most
-/// [`MAX_FILE_BYTES`]. The file is untrusted (ADR 0050, row 33). It is
-/// opened with `O_NOFOLLOW`, so a symbolic link is refused (`ELOOP`) rather
-/// than followed, and `O_NONBLOCK`, so opening a pipe returns at once
-/// instead of waiting for a writer (open(2)). What was opened is then
-/// checked on the open file itself, so there is no gap between a check and
-/// the open: anything but a regular file (a pipe, a device, a folder) is
-/// refused before a byte is read, and the read stops one byte past the
-/// limit. `O_NONBLOCK` changes nothing for a regular file.
-fn read_bounded(path: &Path) -> Result<Vec<u8>, Unread> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let refuse = |what: &str| Unread::Refused(what.to_owned());
-    let file = match std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Err(Unread::Missing),
-        Err(err) => return Err(Unread::Refused(err.to_string())),
-    };
-    let meta = file
-        .metadata()
-        .map_err(|err| Unread::Refused(err.to_string()))?;
-    if !meta.file_type().is_file() {
-        return Err(refuse("not a regular file"));
-    }
-    if meta.len() > MAX_FILE_BYTES {
-        return Err(refuse("too large"));
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|err| Unread::Refused(err.to_string()))?;
-    if bytes.len() as u64 > MAX_FILE_BYTES {
-        return Err(refuse("too large"));
-    }
-    Ok(bytes)
-}
-
 /// The state in the file's `bytes`: every missing or bad value takes its
-/// default, and bytes that are not a key file give the defaults. So do
-/// bytes that are not UTF-8 or hold a NUL, which no key file has
-/// (`g_key_file_load_from_data` takes a C string: the binding would panic
-/// on a NUL).
+/// default, and bytes that are not a key file give the defaults
+/// (`key_file::parse`).
 fn parse(bytes: &[u8]) -> WindowState {
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        return WindowState::default();
-    };
-    if text.contains('\0') {
-        return WindowState::default();
-    }
-    let file = glib::KeyFile::new();
-    match file.load_from_data(text, glib::KeyFileFlags::NONE) {
-        Ok(()) => from_key_file(&file),
+    match key_file::parse(bytes) {
+        Ok(file) => from_key_file(&file),
         Err(err) => {
             tracing::debug!("window state not read, using the defaults: {err}");
             WindowState::default()
@@ -176,7 +115,7 @@ fn parse(bytes: &[u8]) -> WindowState {
 /// The state saved in `data_dir`, or the defaults if there is none or it
 /// cannot be read. Never fails, never blocks.
 pub fn load(data_dir: &Path) -> WindowState {
-    match read_bounded(&path(data_dir)) {
+    match key_file::read_bounded(&path(data_dir), MAX_FILE_BYTES) {
         Ok(bytes) => parse(&bytes),
         Err(Unread::Missing) => WindowState::default(),
         Err(Unread::Refused(why)) => {
@@ -203,36 +142,12 @@ pub fn fit_to_monitors(width: i32, height: i32, monitors: &[(i32, i32)]) -> (i32
     )
 }
 
-/// Saves `state` in `data_dir`. `g_file_set_contents_full` with
-/// `G_FILE_SET_CONTENTS_CONSISTENT` writes a temporary file created with
-/// `mode` (less the umask) and renames it over the old one (`GLib` docs), so
-/// a crash leaves the old file or the new one, and a new file is never there
-/// with a wider mode than 0600, like the database. An existing file keeps
-/// its mode (same docs), so a wider one is narrowed to 0600 afterwards, as
-/// the database's files are (`prepare_private_file` in core). A failure is
-/// logged.
+/// Saves `state` in `data_dir`, in one atomic step with mode 0600
+/// (`key_file::write_private`). A failure is logged.
 pub fn save(data_dir: &Path, state: &WindowState) {
-    let path = path(data_dir);
     let data = to_key_file(state).to_data();
-    if let Err(err) = glib::file_set_contents_full(
-        &path,
-        data.as_bytes(),
-        glib::FileSetContentsFlags::CONSISTENT,
-        FILE_MODE,
-    ) {
+    if let Err(err) = key_file::write_private(&path(data_dir), &data) {
         tracing::warn!("the window state could not be saved: {err}");
-        return;
-    }
-    match std::fs::metadata(&path) {
-        Ok(meta) if meta.permissions().mode() & 0o7777 != FILE_MODE_BITS => {
-            if let Err(err) =
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(FILE_MODE_BITS))
-            {
-                tracing::warn!("the window state's permissions could not be set: {err}");
-            }
-        }
-        Ok(_) => {}
-        Err(err) => tracing::warn!("the window state's permissions could not be read: {err}"),
     }
 }
 
@@ -245,6 +160,8 @@ pub fn deck_to_reopen(pages: impl IntoIterator<Item = Option<String>>) -> Option
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
 
     const DECK_ID: &str = "019a0000-0000-7000-8000-000000000001";

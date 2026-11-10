@@ -56,7 +56,7 @@ cargo run -p rappel-core --example fill_scratch_db -- /tmp/rappel-scratch 60 --d
 RAPPEL_DATA_DIR=/tmp/rappel-scratch cargo run -p rappel
 ```
 
-Add `--markdown` for a deck with one card per Markdown construct, and `--math` for a deck with 15 formulas, one per card, plus a card with invalid LaTeX (`… fill_scratch_db -- /tmp/rappel-md 0 --markdown --math` adds only those two decks). `--demo` adds six decks that look like a real collection, with a month of history (the store screenshots use it).
+Add `--markdown` for a deck with one card per Markdown construct, and `--math` for a deck with 15 formulas, one per card, plus a card with invalid LaTeX (`… fill_scratch_db -- /tmp/rappel-md 0 --markdown --math` adds only those two decks). `--demo` adds six decks that look like a real collection, with a month of history (the store screenshots use it). `--probability` adds the deck of the card list mockups: 17 cards that share four tags, some with two more, with formulas on both sides. `--groups` adds a deck whose cards fall into two groups by tag and one with too many tag sets to group (the deck page's groups), and `--history DAYS` a deck reviewed on most of the past DAYS days (to page the statistics back). The other options (`--tags`, `--suspended N`, `--media`, `--unused-media`, `--archived N`, `--anki PACKAGE`) are listed at the top of `crates/core/examples/fill_scratch_db.rs`.
 
 ## Translations
 
@@ -77,21 +77,24 @@ Rappel uses gettext, laid out as GNOME projects are (ADR 0059): `po/LINGUAS` lis
 
 ## Desktop integration
 
-Drafts of the files that make Rappel look like a GNOME app once installed are in [`data/`](data/) (ADR 0060): the desktop entry (`io.github.rsmirke.Rappel.desktop.in`), the AppStream metainfo for software stores (`io.github.rsmirke.Rappel.metainfo.xml.in`: description, releases, content rating, screenshots), the app icon and its symbolic icon in `data/icons/` (ADR 0074), and the store screenshots in `data/screenshots/`. Nothing installs them yet: packaging (a Meson build that merges their translations and installs them, a Snap, and a self-hosted Flatpak with a manifest written by hand) comes in phase 3b, the publishing phase before 1.0.
+Drafts of the files that make Rappel look like a GNOME app once installed are in [`data/`](data/) (ADR 0060): the desktop entry (`io.github.rappelapp.Rappel.desktop.in`), the AppStream metainfo for software stores (`io.github.rappelapp.Rappel.metainfo.xml.in`: description, releases, content rating, screenshots), the app icon and its symbolic icon in `data/icons/` (ADR 0074), and the store screenshots in `data/screenshots/`. Nothing installs them yet: packaging (a Meson build that merges their translations and installs them, a Snap (planned for 3b, but it stopped at the image sandbox, ADR 0082, and awaits a maintainer decision; 0.4.0 has no Snap), and a self-hosted Flatpak with a manifest written by hand) comes in phases 3b (the Snap, ending in 0.4.0) and 3c (the Flatpak, ending in 1.0).
 
 - **Validate them**: the gate does (`cargo test -p rappel desktop_files`), with `desktop-file-validate` and `appstreamcli validate --no-net --pedantic`, in English and with the French translation merged in. Their texts are in `po/rappel.pot` like the app's.
-- **A new release** needs its `<release>` in the metainfo (newest first, a pre-release written `0.3.0~beta.1`); the gate fails while `CHANGELOG.md` has a version the metainfo lacks.
+- **A new release** needs its `<release>` in the metainfo (newest first, a pre-release written `0.3.0~beta.1`); the gate fails while `CHANGELOG.md` has a version the metainfo lacks. The screenshot URLs name the release's tag (`…/rappel/v0.4.0/…`, ADR 0083): bump it in the metainfo and in `SCREENSHOT_URL` of `desktop_files.rs` (a test checks it once the crate has a release version). The 0.4.0 entry is in the metainfo (prepared, not tagged).
 - **Retake the store screenshots** after a visible change (light style, GNOME's window buttons and accent, 1000 × 700 and a phone at 360 × 640):
   ```sh
-  cargo run -p rappel-core --example fill_scratch_db -- $PWD/target/tmp/demo 0 --demo
+  cargo run -p rappel-core --example fill_scratch_db -- $PWD/target/tmp/demo 0 --demo --probability
   scripts/screenshot.py --out store --size 1000x700 --data target/tmp/demo \
-      --env ADW_DEBUG_ACCENT_COLOR=blue --decoration-layout :close --steps "wait:6 shot:decks"
+      --env ADW_DEBUG_ACCENT_COLOR=blue --decoration-layout :close --steps "wait:5 shot:decks"
   ```
+  The other shots use the same flags with `--size`, `--deck` (an id from the `decks` table) and these steps (ADR 0083 has the details): `review`: Calculus, `--steps "wait:5 key:s wait:2 key:space wait:1 shot:review"`; `deck`: the "SIC 3101 – Probabilités" deck, `wait:5 shot:deck`; `all-cards`: `wait:5 key:ctrl+f wait:2 click:850,28 wait:1 shot:allcards` (the click moves the pointer off the list); `statistics`: `wait:5 click:932,28 wait:1 click:838,79 wait:2 shot:statistics`; `editor`: Calculus, `wait:5 key:ctrl+n wait:2 type:What%20is%20the%20derivative%20of%20$\sin(x^2)$? click:310,450 type:$2x\cos(x^2)$,%20by%20the%20**chain%20rule** click:310,630 type:derivatives, wait:1 shot:editor`; `phone`: `--size 360x640`, the Flags deck, `wait:5 key:s wait:2 key:space wait:1 shot:phone`.
   then copy the shots from `docs/briefs/screenshots/` to `data/screenshots/` (`convert … -strip` keeps them small). The harness has no compositor, so the windows have no shadow; for a Flathub submission, retake them on GNOME with Alt+Print.
 
 ## Recovering your data
 
 Rappel backs up its database automatically: before every schema upgrade, before an import that adds or brings back anything, and once a day, into `backups/` inside the data directory (`~/.local/share/rappel/backups/`, keeping every backup of the last 24 hours and the newest of each of the last 14 days).
+
+Those backups live beside the database and go with its disk. For a copy elsewhere, choose a folder under **Automatic Backups** in Preferences (a synced folder or a USB disk): each day Rappel closes after a change, it saves a normal export there, `Rappel backup YYYY-MM-DD.rappel`, keeps the 14 newest and never touches any other file in that folder (ADR 0080). Such a file is restored with **Import…**.
 
 If the database is damaged or you want to go back to an earlier state, **restore a backup through Rappel. Do not copy files by hand.** A copied-in file can be silently mixed with a leftover `rappel.sqlite3-wal` file from the old database, which corrupts it or brings back data you meant to drop. Restoring checks the backup first and refuses a damaged one. It never deletes your current database: it is kept next to the new one as `rappel.sqlite3.replaced-YYYYMMDD-HHMMSS` (with its `-wal`/`-shm`/`-journal` files, if any).
 

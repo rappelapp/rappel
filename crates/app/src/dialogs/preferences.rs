@@ -1,6 +1,6 @@
 //! Preferences: the daily limits, the day start hour, the desired retention,
-//! a button for the backup folder (SPEC §4.8, ADR 0027) and Clean Up Media
-//! (`clean_up`, ADR 0057). Layout in
+//! a button for the backup folder (SPEC §4.8, ADR 0027), the automatic
+//! backup folder (ADR 0080) and Clean Up Media (`clean_up`, ADR 0057). Layout in
 //! `data/preferences_dialog.blp` and `data/retention_dialog.blp`.
 //!
 //! The limits and the day start are saved as soon as they change. The
@@ -9,6 +9,7 @@
 //! thread, since a long review log takes a while to replay.
 
 use std::cell::Cell;
+use std::path::Path;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -16,6 +17,7 @@ use gtk::{gio, glib};
 use rappel_core::data_dir::ensure_data_dir;
 use rappel_core::domain::{DESIRED_RETENTION_RANGE, MAX_DAILY_LIMIT, MAX_DAY_START_HOUR, Settings};
 
+use crate::auto_backup;
 use crate::dialogs::clean_up;
 use crate::i18n::gettext;
 use crate::state::AppState;
@@ -120,6 +122,9 @@ pub(crate) struct Rows {
     retention_row: adw::ActionRow,
     retention_value: gtk::Label,
     open_backups: adw::ButtonRow,
+    auto_backup_row: adw::ActionRow,
+    auto_backup_choose: gtk::Button,
+    auto_backup_off: gtk::Button,
     clean_up_row: adw::ActionRow,
     clean_up_button: gtk::Button,
 }
@@ -143,6 +148,11 @@ impl Rows {
             object(&b, "retention_value"),
             object(&b, "open_backups"),
         );
+        let (auto_backup_row, auto_backup_choose, auto_backup_off) = (
+            object(&b, "auto_backup_row"),
+            object(&b, "auto_backup_choose"),
+            object(&b, "auto_backup_off"),
+        );
         let (clean_up_row, clean_up_button) =
             (object(&b, "clean_up_row"), object(&b, "clean_up_button"));
         let rows = Self {
@@ -154,6 +164,9 @@ impl Rows {
             retention_row: retention_row?,
             retention_value: retention_value?,
             open_backups: open_backups?,
+            auto_backup_row: auto_backup_row?,
+            auto_backup_choose: auto_backup_choose?,
+            auto_backup_off: auto_backup_off?,
             clean_up_row: clean_up_row?,
             clean_up_button: clean_up_button?,
         };
@@ -230,6 +243,12 @@ pub fn show(window: &RappelWindow, state: &AppState) {
     connect_study_rows(&rows, &ctx);
     connect_retention(window, &rows, &ctx);
     connect_backups(window, &rows, &ctx);
+    show_auto_backup(
+        &rows.auto_backup_row,
+        &rows.auto_backup_off,
+        auto_backup::load(state.data_dir()).folder.as_deref(),
+    );
+    connect_auto_backup(window, &rows, &ctx);
     clean_up::connect(
         &rows.dialog,
         &rows.clean_up_row,
@@ -368,6 +387,161 @@ fn connect_backups(window: &RappelWindow, rows: &Rows, ctx: &Context) {
             });
         }
     ));
+}
+
+/// Shows `folder` (or "Off") in the Automatic Backups row, with its full
+/// path as the row's tooltip, and Turn Off only while a folder is set.
+fn show_auto_backup(row: &adw::ActionRow, off: &gtk::Button, folder: Option<&Path>) {
+    row.set_subtitle(&auto_backup::folder_subtitle(folder));
+    let full = folder.map(|f| f.display().to_string());
+    row.set_tooltip_text(full.as_deref());
+    // Tooltips are not reliably read out: the full path is also the row's
+    // accessible description (`GtkAccessible`, `update_property`).
+    // Through `GtkWidget`: the binding marks `AdwActionRow` as accessible
+    // only with its `gtk_v4_10` feature, though every widget is one.
+    let widget = row.upcast_ref::<gtk::Widget>();
+    match &full {
+        Some(path) => widget.update_property(&[gtk::accessible::Property::Description(path)]),
+        None => widget.reset_property(gtk::AccessibleProperty::Description),
+    }
+    off.set_visible(folder.is_some());
+}
+
+/// Choose… asks for a folder; Turn Off turns automatic backups off. Both
+/// save at once.
+fn connect_auto_backup(window: &RappelWindow, rows: &Rows, ctx: &Context) {
+    let row = Rc::new(AutoBackupRow {
+        dialog: rows.dialog.downgrade(),
+        row: rows.auto_backup_row.downgrade(),
+        choose: rows.auto_backup_choose.downgrade(),
+        off: rows.auto_backup_off.downgrade(),
+    });
+    let choosing = Rc::new(Cell::new(false));
+    rows.auto_backup_choose.connect_clicked(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        row,
+        #[strong]
+        ctx,
+        move |_| {
+            // A second click while the chooser is open does nothing.
+            if choosing.replace(true) {
+                return;
+            }
+            let (row, ctx, choosing) = (row.clone(), ctx.clone(), choosing.clone());
+            glib::spawn_future_local(async move {
+                choose_backup_folder(&window, &row, &ctx).await;
+                choosing.set(false);
+            });
+        }
+    ));
+    rows.auto_backup_off.connect_clicked(glib::clone!(
+        #[strong]
+        ctx,
+        move |_| row.save(&ctx, None)
+    ));
+}
+
+/// The Automatic Backups row's widgets, held weakly so a handler never
+/// keeps the dialog alive.
+struct AutoBackupRow {
+    dialog: glib::WeakRef<adw::PreferencesDialog>,
+    row: glib::WeakRef<adw::ActionRow>,
+    choose: glib::WeakRef<gtk::Button>,
+    off: glib::WeakRef<gtk::Button>,
+}
+
+impl AutoBackupRow {
+    /// Saves `folder` as the setting and shows it; a failed write says so
+    /// and shows the setting as it is.
+    fn save(&self, ctx: &Context, folder: Option<&Path>) {
+        let (Some(dialog), Some(row), Some(choose), Some(off)) = (
+            self.dialog.upgrade(),
+            self.row.upgrade(),
+            self.choose.upgrade(),
+            self.off.upgrade(),
+        ) else {
+            return;
+        };
+        let data_dir = ctx.state.data_dir();
+        if let Err(err) = auto_backup::set_folder(data_dir, folder) {
+            ctx.errors.show_in_preferences(
+                &dialog,
+                "saving the automatic backup folder",
+                // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+                &with_error(&gettext("The setting was not saved: {error}"), &err),
+            );
+        }
+        // Turn Off hidden under the focus hands the focus to Choose…, as
+        // the next control of the row.
+        let had_focus = off.has_focus();
+        show_auto_backup(&row, &off, auto_backup::load(data_dir).folder.as_deref());
+        if had_focus && !off.is_visible() {
+            choose.grab_focus();
+        }
+    }
+}
+
+/// Asks for the automatic backup folder through `GtkFileDialog`, which
+/// uses the desktop portal's file chooser when sandboxed (a snap, a
+/// Flatpak), so the folder chosen is one the app may write to. The path
+/// is kept with its links resolved (`canonicalize`): a link found in its
+/// place later was put there since, and is refused (ADR 0080).
+async fn choose_backup_folder(window: &RappelWindow, rows: &AutoBackupRow, ctx: &Context) {
+    let Some(dialog) = rows.dialog.upgrade() else {
+        return;
+    };
+    let chooser = gtk::FileDialog::builder()
+        .title(gettext("Choose Backup Folder"))
+        .modal(true)
+        .build();
+    if let Some(current) = auto_backup::load(ctx.state.data_dir()).folder {
+        chooser.set_initial_folder(Some(&gio::File::for_path(current)));
+    }
+    let chosen = match chooser.select_folder_future(Some(window)).await {
+        Ok(file) => file,
+        // Closing the chooser is not an error (GtkFileDialog docs: the
+        // callback gets GTK_DIALOG_ERROR_DISMISSED).
+        Err(err)
+            if err.matches(gtk::DialogError::Dismissed)
+                || err.matches(gtk::DialogError::Cancelled) =>
+        {
+            return;
+        }
+        Err(err) => {
+            ctx.errors.show_in_preferences(
+                &dialog,
+                "choosing the automatic backup folder",
+                // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+                &with_error(&gettext("The folder chooser failed: {error}"), &err),
+            );
+            return;
+        }
+    };
+    // Links resolved now, or the choice is refused: a path that still ends
+    // in a link would fail every backup as "replaced by a link".
+    let Some(path) = chosen
+        .path()
+        .and_then(|path| std::fs::canonicalize(path).ok())
+        .filter(|path| path.to_str().is_some())
+    else {
+        ctx.errors.show_in_preferences(
+            &dialog,
+            "choosing the automatic backup folder",
+            &gettext("Choose a folder on this computer"),
+        );
+        return;
+    };
+    if rappel_core::auto_backup::inside_data_dir(&path, ctx.state.data_dir()) {
+        ctx.errors.show_in_preferences(
+            &dialog,
+            "choosing the automatic backup folder",
+            &auto_backup::inside_data_dir_text(),
+        );
+        return;
+    }
+    rows.save(ctx, Some(&path));
 }
 
 /// Saves a daily limit whenever its row's value changes.
@@ -645,6 +819,47 @@ mod tests {
             (ctx.refresh)();
             assert_eq!(rows.new_per_day.value(), 11.0);
             assert_eq!(rows.retention_value.label(), "90%");
+        });
+    }
+
+    /// The Automatic Backups row shows "Off" until a folder is chosen,
+    /// then the folder's name with Turn Off; both save the setting.
+    #[test]
+    fn the_automatic_backup_row_shows_and_saves_the_folder() {
+        crate::testing::with_widgets(|| {
+            let (tmp, state) = crate::testing::temporary_state();
+            let rows = Rows::load().expect("preferences_dialog.ui has every object");
+            let ctx = context(&rows, &state);
+            show_auto_backup(&rows.auto_backup_row, &rows.auto_backup_off, None);
+            assert_eq!(rows.auto_backup_row.subtitle().as_deref(), Some("Off"));
+            assert!(!rows.auto_backup_off.is_visible());
+
+            let row = AutoBackupRow {
+                dialog: rows.dialog.downgrade(),
+                row: rows.auto_backup_row.downgrade(),
+                choose: rows.auto_backup_choose.downgrade(),
+                off: rows.auto_backup_off.downgrade(),
+            };
+            let folder = tmp.path().join("My Backups");
+            row.save(&ctx, Some(&folder));
+            assert_eq!(
+                auto_backup::load(state.data_dir()).folder.as_deref(),
+                Some(folder.as_path())
+            );
+            assert_eq!(
+                rows.auto_backup_row.subtitle().as_deref(),
+                Some("My Backups")
+            );
+            assert_eq!(
+                rows.auto_backup_row.tooltip_text().as_deref(),
+                folder.to_str()
+            );
+            assert!(rows.auto_backup_off.is_visible());
+
+            row.save(&ctx, None);
+            assert_eq!(auto_backup::load(state.data_dir()).folder, None);
+            assert_eq!(rows.auto_backup_row.subtitle().as_deref(), Some("Off"));
+            assert!(!rows.auto_backup_off.is_visible());
         });
     }
 

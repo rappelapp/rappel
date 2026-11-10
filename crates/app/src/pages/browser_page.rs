@@ -49,7 +49,7 @@ mod imp {
 
     #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
     #[properties(wrapper_type = super::BrowserPage)]
-    #[template(resource = "/io/github/rsmirke/Rappel/browser_page.ui")]
+    #[template(resource = "/io/github/rappelapp/Rappel/browser_page.ui")]
     pub struct BrowserPage {
         #[template_child]
         pub empty_short: TemplateChild<adw::Breakpoint>,
@@ -86,6 +86,8 @@ mod imp {
         #[template_child]
         pub card_list: TemplateChild<gtk::ListView>,
         #[template_child]
+        pub list_header: TemplateChild<crate::widgets::CardListHeader>,
+        #[template_child]
         pub selection_bar: TemplateChild<SelectionBar>,
         /// A narrow window; the rows follow it.
         #[property(get, set)]
@@ -97,6 +99,23 @@ mod imp {
         /// to: the rows' Move to Deck… is enabled (`move_card::offered`).
         #[property(get, set)]
         pub can_move: Cell<bool>,
+        /// The ids of the tags every listed card has (after a filter by
+        /// deck or tag, often some): the rows leave them out of their
+        /// pills (ADR 0077).
+        #[property(get, set)]
+        pub shared_tags: RefCell<Vec<String>>,
+        /// Their names, which the list's header says once.
+        #[property(get, set)]
+        pub shared_tag_names: RefCell<Vec<String>>,
+        /// Reads them again after the list changed.
+        pub shared_queue: crate::widgets::card_row::SharedTagsQueue,
+        /// When the rows were read (UTC milliseconds): the rows' due words
+        /// are said from it, as their status is (ADR 0079).
+        #[property(get, set)]
+        pub now: Cell<i64>,
+        /// When the next study day begins, for the due words.
+        #[property(get, set)]
+        pub next_day: Cell<i64>,
         pub state: OnceCell<AppState>,
         pub items: OnceCell<gio::ListStore>,
         /// Selection mode: the chosen cards, the header, the action bar and
@@ -199,6 +218,22 @@ impl BrowserPage {
         imp.card_list
             .set_model(Some(&gtk::NoSelection::new(Some(store.clone()))));
         imp.card_list.set_factory(Some(&page.row_factory()));
+        page.bind_property("shared-tag-names", &*imp.list_header, "tags")
+            .sync_create()
+            .build();
+        // Every change of the list (a search, a filter, an edited card)
+        // may change which tags all its cards have.
+        store.connect_items_changed(glib::clone!(
+            #[weak]
+            page,
+            move |store, _, _, _| {
+                page.imp()
+                    .shared_queue
+                    .queue::<BrowseItem>(&page, store, |item| {
+                        std::cell::Ref::map(item.row(), |row| row.tags.as_slice())
+                    });
+            }
+        ));
         // The empty state on a short window (ADR 0058); its icon changes
         // with the state, so only `compact`.
         crate::ui::breakpoint::compact_when(&imp.empty_short, &*imp.empty_page);
@@ -232,7 +267,7 @@ impl BrowserPage {
                     header: imp.selection_header.get(),
                     bar: imp.selection_bar.get(),
                     list: imp.card_list.get(),
-                    items: store.clone(),
+                    items: store.clone().upcast(),
                     own_deck: None,
                 },
             ),
@@ -493,13 +528,21 @@ impl BrowserPage {
         }
     }
 
-    /// A row per visible card, following the page's `compact` and
-    /// `selecting` properties.
+    /// A row per visible card, following the page's `compact`,
+    /// `selecting`, `can-move`, `shared-tags`, `now` and `next-day`
+    /// properties.
     fn row_factory(&self) -> gtk::SignalListItemFactory {
         card_row::factory(
             self,
             CardRow::for_browser,
-            &["compact", "selecting", "can-move"],
+            &[
+                "compact",
+                "selecting",
+                "can-move",
+                "shared-tags",
+                "now",
+                "next-day",
+            ],
             CardRow::bind_browse,
         )
     }
@@ -593,7 +636,7 @@ impl BrowserPage {
         let n = imp.items.get().map_or(0, gio::ListStore::n_items);
         // From the page: the count label is hidden on a narrow window.
         self.announce(
-            &text::count_text(n as usize),
+            &crate::ui::text::card_count(n as usize),
             gtk::AccessibleAnnouncementPriority::Medium,
         );
     }
@@ -618,8 +661,17 @@ impl BrowserPage {
             return Ok(());
         };
         let query = self.query();
-        let rows = state.browse(&query, rappel_core::time::now_ms())?;
+        let now = rappel_core::time::now_ms();
+        let rows = state.browse(&query, now)?;
         let items: Vec<BrowseItem> = rows.into_iter().map(BrowseItem::new).collect();
+        // The rows' due words are said at the time they were read, before
+        // the new rows are bound.
+        self.set_now(now);
+        match state.next_day_start(now) {
+            Ok(day) => self.set_next_day(day),
+            // The words count days from a day after now instead.
+            Err(err) => tracing::warn!("cannot read when the study day begins: {err}"),
+        }
         store.splice(0, store.n_items(), &items);
         let filtered = text::is_filtered(&query);
         // Whether there is any card at all, whatever the filters, archived
@@ -651,7 +703,8 @@ impl BrowserPage {
                 imp.content_stack.set_visible_child_name("empty");
             }
         }
-        imp.count_label.set_label(&text::count_text(items.len()));
+        imp.count_label
+            .set_label(&crate::ui::text::card_count(items.len()));
         // Select is enabled while there is a card to choose.
         self.selection().list_changed();
         self.update_study_tag();
@@ -869,9 +922,7 @@ impl BrowserPage {
     }
 
     fn focus(&self, position: u32) {
-        self.imp()
-            .card_list
-            .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+        crate::ui::focus::focus_row(&self.imp().card_list, position);
     }
 
     // --- actions on cards ------------------------------------------------
@@ -1109,6 +1160,50 @@ mod tests {
             assert_eq!(shown(&page).len(), 4);
             assert_eq!(imp.search_entry.text(), "");
             assert_eq!(imp.deck_filter.selected(), 0);
+        });
+    }
+
+    /// The tags every listed card has are said once above the list only
+    /// while every card on screen has them (ADR 0077): after the deck
+    /// filter names Maths, whose cards are all tagged "algebra", not with
+    /// every deck listed.
+    #[test]
+    fn the_tags_every_listed_card_has_are_said_once_after_a_filter() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, _ids, maths) = state_with_cards();
+            let page = page_over(&state, None);
+            let window = gtk::Window::builder()
+                .default_width(800)
+                .default_height(600)
+                .child(&page)
+                .build();
+            window.present();
+            crate::testing::settle();
+            let imp = page.imp();
+            assert_eq!(page.shared_tag_names(), Vec::<String>::new());
+            let position = imp
+                .filter_decks
+                .borrow()
+                .iter()
+                .position(|d| d.id == maths)
+                .unwrap();
+            imp.deck_filter
+                .set_selected(u32::try_from(position + 1).unwrap());
+            crate::testing::settle();
+            assert_eq!(page.shared_tag_names(), ["algebra"]);
+            assert!(imp.list_header.is_visible());
+            assert_eq!(imp.list_header.tags(), ["algebra"]);
+            let rows = crate::testing::descendants::<CardRow>(imp.card_list.upcast_ref());
+            assert_ne!(rows.len(), 0);
+            assert!(
+                rows.iter()
+                    .all(|row| row.shared_tags() == page.shared_tags())
+            );
+            page.clear_filters();
+            crate::testing::settle();
+            assert_eq!(page.shared_tag_names(), Vec::<String>::new());
+            assert!(!imp.list_header.is_visible());
+            window.destroy();
         });
     }
 
@@ -1867,6 +1962,73 @@ mod tests {
         });
     }
 
+    /// Hardening round 5 (ADR 0084): All Cards over 10,000 cards full of
+    /// math (`testing::math_side`), as the deck page's test does: opening
+    /// and the first frame, then 20 screens down, in bounded CPU time, with
+    /// only the rows near the screen built and summarised, and the formula
+    /// cache within its 800 entries.
+    #[test]
+    fn ten_thousand_cards_full_of_math_open_and_scroll_quickly() {
+        crate::testing::with_widgets(|| {
+            const N: usize = 10_000;
+            let (_tmp, state, _deck, _ids) = crate::testing::state_with_cards(
+                N,
+                |i| {
+                    (
+                        crate::testing::math_side(i * 2, 0),
+                        crate::testing::math_side(i * 2 + 1, i % 3),
+                    )
+                },
+                &["maths"],
+                |_| vec![0],
+            );
+            let (open, (page, window)) = crate::testing::cpu_time_of(|| {
+                let page = page_over(&state, None);
+                let window = gtk::Window::builder()
+                    .default_width(800)
+                    .default_height(600)
+                    .child(&page)
+                    .build();
+                window.present();
+                let shown = crate::testing::settle_until(
+                    || count_rows(page.upcast_ref()) > 0,
+                    Duration::from_secs(30),
+                );
+                assert!(shown, "rows are shown");
+                crate::testing::settle();
+                (page, window)
+            });
+            let built = count_rows(page.upcast_ref());
+            assert!((1..1_000).contains(&built), "{built} rows");
+            let adjustment = page.imp().card_list.vadjustment().unwrap();
+            let (scroll, ()) = crate::testing::cpu_time_of(|| {
+                for _ in 0..20 {
+                    adjustment.set_value(adjustment.value() + adjustment.page_size());
+                    crate::testing::settle_until(|| false, Duration::from_millis(30));
+                }
+            });
+            assert!(adjustment.value() > 0.0);
+            assert!(crate::render::cached_formulas() <= 800);
+            let summarised = (0..u32::try_from(N).unwrap())
+                .filter(|&p| page.item(p).unwrap().has_previews())
+                .count();
+            assert!(summarised < 2_000, "{summarised} cards summarised");
+            window.destroy();
+            crate::testing::print_timing(
+                &format!("All Cards over 10,000 math cards: open and first frame ({built} rows)"),
+                open,
+            );
+            crate::testing::print_timing(
+                &format!(
+                    "All Cards over 10,000 math cards: 20 screens down ({summarised} summarised)"
+                ),
+                scroll,
+            );
+            crate::testing::assert_cpu_within(open, Duration::from_secs(10), "open");
+            crate::testing::assert_cpu_within(scroll, Duration::from_secs(20), "scroll");
+        });
+    }
+
     /// Hardening round 4 (ADR 0073): Ctrl+A on 10,000 cards. Choosing them
     /// all is quick (CPU time, ADR 0049), the header counts them, the list
     /// still builds only the rows on screen, and Delete on all of them and
@@ -2049,6 +2211,6 @@ mod tests {
     }
 
     fn count_rows(widget: &gtk::Widget) -> usize {
-        crate::testing::descendants::<CardRow>(widget).len()
+        crate::testing::card_rows(widget).len()
     }
 }

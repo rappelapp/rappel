@@ -132,8 +132,8 @@ const NOT_TRANSLATED: &[(&str, &str, &str)] = &[
     ),
     (
         "crates/app/src/dialogs/about.rs",
-        "Robert Smirke",
-        "a person's name",
+        "The Rappel Project",
+        "the project's name",
     ),
     (
         "crates/app/src/dialogs/about.rs",
@@ -186,19 +186,20 @@ const NOT_TRANSLATED: &[(&str, &str, &str)] = &[
         "only logged",
     ),
     (
-        "crates/app/src/window_state.rs",
+        "crates/app/src/key_file.rs",
         "not a regular file",
         "only logged",
     ),
-    ("crates/app/src/window_state.rs", "too large", "only logged"),
+    ("crates/app/src/key_file.rs", "too large", "only logged"),
+    ("crates/app/src/key_file.rs", "holds a NUL", "only logged"),
 ];
 
 /// The desktop integration drafts in `data/` (ADR 0060), which packaging
 /// will translate with the catalogs: the `.desktop` entry and the `AppStream`
 /// metainfo.
 pub const DESKTOP_DRAFTS: [&str; 2] = [
-    "data/io.github.rsmirke.Rappel.desktop.in",
-    "data/io.github.rsmirke.Rappel.metainfo.xml.in",
+    "data/io.github.rappelapp.Rappel.desktop.in",
+    "data/io.github.rappelapp.Rappel.metainfo.xml.in",
 ];
 
 /// Every source file scanned for messages, relative to the repository,
@@ -1250,6 +1251,15 @@ fn french_through_the_c_library() {
 /// other message as if it could, so a new message is checked unless it is
 /// listed here; one written inside a toast call cannot be listed.
 const NOT_TOASTS: &[&str] = &[
+    // The subtitle of Start Studying in the Keyboard Shortcuts dialog
+    // (ADR 0081).
+    "On a deck or the deck list",
+    // The ends of "The automatic backup failed: {reason}" (ADR 0080),
+    // behind its Details, never a title.
+    "the backup folder is read-only",
+    "it took too long and was stopped",
+    // The Turn Off button of Automatic Backups in Preferences.
+    "Turn Off Automatic Backups",
     // The Anki import's report, behind the Details of "Import done".
     "{count} card whose note is damaged",
     "{count} card too long for Rappel",
@@ -1271,9 +1281,7 @@ const NOT_TOASTS: &[&str] = &[
     "{date} · {time} · next in {interval}",
     "Looking for files no card uses…",
     "Move selected cards to a deck",
-    "No reviews in the last 30 days",
     "Not a Rappel Database",
-    "Nothing due in the next 14 days",
     "On a tag’s remove button",
     "Pass rate, last 30 days",
     // The review page's banner during a practice (ADR 0070).
@@ -1281,7 +1289,6 @@ const NOT_TOASTS: &[&str] = &[
     "Reset progress of selected cards",
     "Restore Copy Cannot Be Used",
     "Save and Add Another",
-    "Select a day to see its values",
     "Select or Deselect Card",
     "Start With an Empty Database?",
     "Stop Selecting or Clear the Search",

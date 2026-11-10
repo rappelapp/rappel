@@ -1,7 +1,8 @@
 /* The app's only stylesheet, loaded by AdwApplication from `style.css` in
  * the resource base path (AdwApplication docs, "Stylesheet"). It styles the
  * grid of a Markdown table and the sideways-scroll hint of wide formulas (render/),
- * the focus ring of a chart, the deck and card rows, the tag pills, and the
+ * the focus ring of a chart, the deck and card rows, the lists of
+ * cards, the tag pills, and the
  * review page's card text size and answer buttons.
  * No literal colours: lines and shading are the text colour at a low
  * opacity, so they follow light, dark and high-contrast themes. */
@@ -65,10 +66,36 @@ row > box.header.card-row > box.title {
   margin-bottom: 12px;
 }
 
-/* The back of a card row is as tall as a tag pill, so rows with and without
- * tags line up. */
+/* The second line of a card row is as tall as a tag pill, so rows with
+ * and without tags line up. Its labels and the back (render/math_line.rs,
+ * whose CSS name is `label`) get libadwaita's `row label.subtitle`. */
 row > box.header.card-row label.subtitle {
   min-height: 18px;
+}
+
+/* A list of cards (ADR 0079): the rows sit on the page's own background,
+ * with libadwaita's thin lines between them (the `separators` style class
+ * of a list view), as Files and Contacts list theirs; no box, no card
+ * colour. A group's header (`listview > header`, which libadwaita sets as
+ * a heading, 18 px above and 6 px under) starts where the rows' text
+ * starts: their 2 px padding and their `box.header`'s 12 px margin. */
+listview.card-list {
+  background: none;
+  color: inherit;
+}
+
+listview.card-list > header {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+/* The due word at a card row's end is dimmed and small like the second
+ * line (`row label.subtitle`), except "Today": in the accent colour
+ * (`.accent`) at full strength and bold, as the deck rows' due count, so
+ * the cards to study now stand out. */
+row label.card-due.accent {
+  opacity: 1;
+  font-weight: bold;
 }
 
 /* A tag pill (widgets/tag_pills.rs): a small rounded label on a faint fill
