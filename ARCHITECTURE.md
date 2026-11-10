@@ -212,7 +212,7 @@ Pages live in `src/pages/`, dialogs in `src/dialogs/`, reusable widgets in `src/
 - `text.rs`: the texts (`export_file_name`, `exported_text` (with the media files left out, if any), `refused_text`, `check_failed_text` and `import_failed_text` (a stale plan, a file changed since it was checked), `plan_view`, `conflicts_text`, `imported_text`, `short_front`), including new tags, card tags, settings applied or kept, and the tag and undo conflicts. Pure and unit-tested.
 - `names.rs`: `Names`, the user's own deck names and card fronts (their plain summary) that conflicts refer to, never the file's text.
 
-**Tests only**: `src/testing.rs` (the GTK test harness, see Quality gate), `src/ui_files.rs` (every `data/*.blp` file built or loaded, see UI build pipeline), `src/desktop_files.rs` and `src/snap_install.rs` (see Desktop integration and Packaging).
+**Tests only**: `src/testing.rs` (the GTK test harness, see Quality gate), `src/ui_files.rs` (every `data/*.blp` file built or loaded, see UI build pipeline), `src/desktop_files.rs` and `src/snap_install.rs` (see Desktop integration and Packaging) and `src/icon_names.rs` with `data/gnome-core26-icons.txt` (every `*-symbolic` name is bundled or on the snap's list, ADR 0086).
 
 ## UI build pipeline
 
