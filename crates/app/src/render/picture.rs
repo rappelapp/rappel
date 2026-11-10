@@ -1,5 +1,6 @@
 //! A card image on screen (ADR 0055): [`CardImage`], decoded off the main
-//! thread by glycin in a sandboxed process, cached, scaled down to the
+//! thread by glycin in a sandboxed process (in Rappel's snap, a process the
+//! snap's confinement bounds: `super::loader_sandbox`), cached, scaled down to the
 //! card's width and a height cap, and opened at full size by a click,
 //! Enter or Space. The decisions are in [`super::images`].
 //!
@@ -28,6 +29,7 @@ use super::images::{
     CACHE_BYTES, Failure, PixelBudget, TextureCache, accepted_mime, image_name, placeholder_label,
     read_image_file, texture_cost, within_limits,
 };
+use super::loader_sandbox::LoaderSandbox;
 use crate::ui::dialog;
 
 /// How long one decode may take before it is given up (and its loader
@@ -358,7 +360,12 @@ async fn decode(path: PathBuf, media: MediaRef, timeout: Duration) -> Decoded {
         .await
         .map_err(|_| Failure::CannotShow)??;
     let cancellable = gio::Cancellable::new();
-    let load = decode_bytes(bytes, media, cancellable.clone());
+    let load = decode_bytes(
+        super::loader_sandbox::current(),
+        bytes,
+        media,
+        cancellable.clone(),
+    );
     if let Ok(decoded) = glib::future_with_timeout(timeout, load).await {
         decoded
     } else {
@@ -376,19 +383,32 @@ async fn decode(path: PathBuf, media: MediaRef, timeout: Duration) -> Decoded {
 /// (`SandboxSelector::Auto`, glycin's `api_common.rs`), which is logged
 /// once as a warning. `Auto` and not `Bwrap`: forcing bubblewrap would
 /// break a Flatpak, where glycin uses flatpak-spawn.
-async fn decode_bytes(bytes: Vec<u8>, media: MediaRef, cancellable: gio::Cancellable) -> Decoded {
+///
+/// Inside Rappel's own snap only (`loader_sandbox::choose`), the selector
+/// is `NotSandboxed` on purpose (bubblewrap cannot run there, ADR 0082),
+/// said once at start-up, so no warning follows. `sandbox` is
+/// `loader_sandbox::current()`; a test gives the snap's.
+async fn decode_bytes(
+    sandbox: LoaderSandbox,
+    bytes: Vec<u8>,
+    media: MediaRef,
+    cancellable: gio::Cancellable,
+) -> Decoded {
     #[cfg(test)]
     LOADS.set(LOADS.get() + 1);
     let mut loader = glycin::Loader::new_vec(bytes);
     loader.cancellable(cancellable);
+    loader.sandbox_selector(sandbox.selector());
     let image = loader.load().await.map_err(|err| {
         tracing::debug!("an image could not be decoded: {err}");
         Failure::CannotShow
     })?;
-    if matches!(
-        image.active_sandbox_mechanism(),
-        glycin::SandboxMechanism::NotSandboxed
-    ) {
+    if sandbox == LoaderSandbox::Auto
+        && matches!(
+            image.active_sandbox_mechanism(),
+            glycin::SandboxMechanism::NotSandboxed
+        )
+    {
         warn_unsandboxed();
     }
     let mime = image.mime_type();
@@ -941,6 +961,33 @@ mod tests {
             let decoded =
                 glib::MainContext::default().block_on(decode(path, media, DECODE_TIMEOUT));
             assert!(decoded.is_ok());
+        });
+    }
+
+    /// The snap's mode (`NotSandboxed`, no bubblewrap) still decodes, in
+    /// glycin's loader process, and the checks after the decode still hold:
+    /// a type that does not match the kind is refused. (The checks before
+    /// it, in `read_image_file`, do not depend on the mode.)
+    #[test]
+    fn the_snap_s_mode_decodes_and_keeps_the_checks() {
+        crate::testing::with_widgets(|| {
+            let decode = |bytes: Vec<u8>, media| {
+                glib::MainContext::default().block_on(decode_bytes(
+                    LoaderSandbox::SnapConfinement,
+                    bytes,
+                    media,
+                    gio::Cancellable::new(),
+                ))
+            };
+            let png = MediaRef::parse(&format!("media:{}.png", "ab".repeat(32))).unwrap();
+            let texture = decode(crate::testing::png_bytes(20, 10), png).expect("decoded");
+            assert_eq!((texture.width(), texture.height()), (20, 10));
+            // A PNG's bytes under a JPEG reference: glycin reads image/png.
+            let jpg = MediaRef::parse(&format!("media:{}.jpg", "ab".repeat(32))).unwrap();
+            assert_eq!(
+                decode(crate::testing::png_bytes(20, 10), jpg).err(),
+                Some(Failure::CannotShow)
+            );
         });
     }
 }

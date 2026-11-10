@@ -10,6 +10,8 @@ mod i18n;
 mod key_file;
 mod pages;
 mod render;
+#[cfg(test)]
+mod snap_install;
 mod startup;
 mod state;
 #[cfg(test)]
@@ -61,6 +63,8 @@ fn main() -> glib::ExitCode {
     // Before GTK starts, which sets the locale and builds the first
     // translated layouts (ADR 0059).
     i18n::init();
+    // After the possible restart above, so it is said once per run.
+    render::log_image_loader_mode();
 
     if let Err(err) = gio::resources_register_include!("rappel.gresource") {
         tracing::error!("failed to register bundled resources: {err}");

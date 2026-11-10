@@ -115,16 +115,28 @@ pub fn translated(
 }
 
 /// Source files that only tests compile (`#[cfg(test)] mod …;`).
-const TEST_ONLY_FILES: [&str; 5] = [
+const TEST_ONLY_FILES: [&str; 6] = [
     "crates/app/src/testing.rs",
     "crates/app/src/gst_env/tests.rs",
     "crates/app/src/ui_files.rs",
     "crates/app/src/desktop_files.rs",
+    "crates/app/src/snap_install.rs",
     "crates/app/src/dialogs/shortcuts.rs",
 ];
 
 /// Strings that look like text but are not translated, each with why.
 const NOT_TRANSLATED: &[(&str, &str, &str)] = &[
+    (
+        "crates/app/src/render/loader_sandbox.rs",
+        "image loader: glycin chooses the sandbox (bubblewrap where the system allows it)",
+        "a start-up log line, only logged",
+    ),
+    (
+        "crates/app/src/render/loader_sandbox.rs",
+        "image loader: not sandboxed by bubblewrap; inside the rappel snap, \
+         its strict confinement is the boundary",
+        "a start-up log line, only logged",
+    ),
     (
         "crates/app/src/clock.rs",
         "day offset out of range",

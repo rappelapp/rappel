@@ -6,6 +6,16 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-11-10
+
+The first snap. Rappel can now be built as a strictly confined snap for the Snap Store's beta channel; the app itself is the same as 0.4.0. In the snap, images are decoded without bubblewrap, which strict confinement cannot run (ADR 0055 and 0082, amendments, and 0085). M4A does not play in the snap.
+
+### Added
+- **A snap.** `snap/snapcraft.yaml` packages Rappel as a strictly confined snap (`core26`, the GNOME extension, `grade: stable`): the desktop plugs and `audio-playback`, its own name on the session bus, no home folder, no removable media, no network. `scripts/snap-install.sh` installs the binary, translations, desktop entry, metainfo and icons, with the translations merged by `build.rs` (no Meson or gettext tools needed), and a test checks every installed file. `.github/workflows/snap.yml` builds the snap on release tags, by hand and on pull requests that change the packaging, and keeps the `.snap` as a workflow artifact; it never publishes. In the snap the collection lives in `~/snap/rappel/current/.local/share/rappel`, kept per revision; M4A does not play there, as its AAC decoder's licence (GPL-2.0-or-later) is not on the allowed list. The README explains installing, copying your data and reverting (ADR 0085).
+
+### Changed
+- **Images in the snap.** Inside Rappel's own snap only, glycin's image loader runs without bubblewrap, which strict confinement cannot run: the snap's confinement (no network, no home folder) is the boundary. Rappel picks this mode only when `$SNAP` is set, `$SNAP_NAME` is `rappel` and the program runs from inside `$SNAP`; everywhere else images load exactly as before. The size limits, the 10 s timeout, the SVG refusal and the four accepted formats stay. One line at start-up says which mode is in use (`RUST_LOG=rappel=info`). The accepted risk: in the snap, a decoder exploit in a hostile image could reach Rappel's data and the backup folder. A proposal for a safer snap mode in glycin itself is in `docs/notes/glycin-snap-mode.md` (ADR 0055 and ADR 0082, amendments).
+
 ## [0.4.0] — 2026-11-10
 
 The first stable release since 0.1.0. It gathers the betas (Markdown cards with formulas, images and sound, tags, search and All Cards, statistics, export and import also from Anki, Undo, a phone-sized layout and French) and phase 3b's polish: card lists grouped by tag, Statistics a month at a time, backups to a folder you choose, S to start studying, a newer SQLite, and the new app ID `io.github.rappelapp.Rappel`. Your data stays where it was. There is no Snap: the feasibility check found that glycin's image sandbox cannot run under strict confinement, and packaging waits on a decision (ADR 0082).
@@ -373,7 +383,8 @@ The beta of phase 2, media and mobile. Cards can show images and play audio, and
 ### Removed
 - `Store::due_cards` and `Store::new_cards` in `cards-core`: unused since `Store::study_input`.
 
-[Unreleased]: https://github.com/rappelapp/rappel/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/rappelapp/rappel/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/rappelapp/rappel/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rappelapp/rappel/compare/v0.4.0-beta.1...v0.4.0
 [0.4.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.3.0-beta.1...v0.4.0-beta.1
 [0.3.0-beta.1]: https://github.com/rappelapp/rappel/compare/v0.2.0-beta.1...v0.3.0-beta.1

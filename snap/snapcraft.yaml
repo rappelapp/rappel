@@ -1,0 +1,68 @@
+# Rappel as a strictly confined snap (ADR 0082, plan; ADR 0085).
+# Build: `snapcraft pack` (LXD) or CI (.github/workflows/snap.yml), which
+# only builds and uploads the .snap as a workflow artifact; nothing here or
+# in CI publishes to the store.
+#
+# Permissions are kept to the GNOME extension's desktop set plus
+# `audio-playback`, and the `dbus` slot for the app id. Never add `home`,
+# `removable-media`, `network`, `browser-support` or classic confinement:
+# with the image loader running without bubblewrap in this snap, the snap's
+# confinement is its boundary (ADR 0055 and ADR 0082, amendments). The
+# tests check this file for them (crates/app/src/snap_install.rs).
+name: rappel
+# Title, summary and description come from the metainfo (`adopt-info`
+# below), the licence is set here; the version comes from Cargo.toml
+# (`craftctl set`).
+adopt-info: rappel
+base: core26
+confinement: strict
+grade: stable
+license: GPL-3.0-or-later
+icon: data/icons/hicolor/scalable/apps/io.github.rappelapp.Rappel.svg
+
+platforms:
+  amd64:
+
+# GApplication owns its id on the session bus (single instance: backups
+# and restore rely on it). Strict confinement allows that only through
+# this slot (ADR 0082, "Also found"; QUESTIONS.md, Phase 3b, question 2).
+slots:
+  rappel-dbus:
+    interface: dbus
+    bus: session
+    name: io.github.rappelapp.Rappel
+
+apps:
+  rappel:
+    command: usr/bin/rappel
+    extensions: [gnome]
+    # The desktop file and metainfo keep the app id as their names.
+    common-id: io.github.rappelapp.Rappel
+    desktop: usr/share/applications/io.github.rappelapp.Rappel.desktop
+    # The extension adds desktop, desktop-legacy, opengl, wayland and x11.
+    plugs:
+      - audio-playback
+    environment:
+      # /usr/share/locale in a snap is the base's: Rappel reads its
+      # catalogs from here (ADR 0059).
+      RAPPEL_LOCALEDIR: $SNAP/usr/share/locale
+
+parts:
+  rappel:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    # The gnome extension adds gnome-core26-sdk: GTK 4.24, libadwaita 1.10,
+    # GtkSourceView 5.22, GStreamer, lcms2, libseccomp, fontconfig,
+    # blueprint-compiler and glib-compile-resources (ADR 0082, finding 1).
+    build-packages:
+      - gcc
+      - pkg-config
+    # The installed metainfo: title, summary, description (ADR 0060).
+    parse-info: [usr/share/metainfo/io.github.rappelapp.Rappel.metainfo.xml]
+    override-build: |
+      set -eu
+      version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+      [ -n "$version" ]
+      craftctl set version="$version"
+      scripts/snap-install.sh "$CRAFT_PART_INSTALL" /usr
