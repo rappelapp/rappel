@@ -58,31 +58,31 @@
        the maintainer has tagged v0.4.0. -->
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.0/data/screenshots/review.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.1/data/screenshots/review.png</image>
       <caption>Study a card, then say whether you knew it</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.0/data/screenshots/decks.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.1/data/screenshots/decks.png</image>
       <caption>Your decks with the cards due today</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.0/data/screenshots/deck.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.1/data/screenshots/deck.png</image>
       <caption>A deck's cards, grouped by their tags</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.0/data/screenshots/all-cards.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.1/data/screenshots/all-cards.png</image>
       <caption>Find any card by words, tags or state</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.0/data/screenshots/statistics.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.1/data/screenshots/statistics.png</image>
       <caption>See how much you studied, a month at a time</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.0/data/screenshots/editor.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.1/data/screenshots/editor.png</image>
       <caption>Write cards in Markdown with a live preview</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.0/data/screenshots/phone.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.1/data/screenshots/phone.png</image>
       <caption>Pictures on cards, on a phone</caption>
     </screenshot>
   </screenshots>
@@ -91,6 +91,11 @@
        A pre-release is written with "~" (0.2.0~beta.1), which AppStream
        sorts before 0.2.0; the notes are not translated (ADR 0060). -->
   <releases>
+    <release version="0.4.1" date="2026-11-10">
+      <description translate="no">
+        <p>The first snap: Rappel can be installed from the Snap Store's beta channel. The app is the same as 0.4.0. In the snap, M4A audio does not play.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-11-10">
       <description translate="no">
         <p>Since 0.1.0, the betas added Markdown cards with formulas drawn as in LaTeX, images and sound, tags, search and All Cards, statistics, export and import (also from Anki), Undo, a phone-sized layout and French. This release adds: card lists grouped by tag on a deck's page, with formulas drawn and a word saying when each card is due; Statistics a month at a time; backups to a folder you choose when Rappel closes; S to start studying, and 3 and 4 to pass; no more stray dots around a card's text; and a newer SQLite that fixes a security flaw when opening a crafted database file. The app ID is now io.github.rappelapp.Rappel; your data stays where it was.</p>
