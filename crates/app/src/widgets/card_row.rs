@@ -6,11 +6,12 @@
 //! none on a deck page that groups its cards by their tags, `grouped`, whose
 //! group headers name them), an icon when the card is suspended, a short
 //! word for when the card is due (`text::due_word`), and a menu with Edit,
-//! Card Information, Study Cards Tagged “…” for each of its tags (a submenu
-//! when there are more than three, ADR 0069), Suspend or Unsuspend, Reset
-//! Progress, Move to Deck… and Delete. The deck page and All Cards use the
-//! same row, so both lists look and cost the same; on All Cards
-//! ([`CardRow::for_browser`]) the second line starts with the deck. On
+//! Card Information, Practice This Card (ADR 0088), Study Cards Tagged “…”
+//! for each of its tags (a submenu when there are more than three, ADR
+//! 0069), Suspend or Unsuspend, Reset Progress, Move to Deck… and Delete.
+//! The deck page and All Cards use the same row, so both lists look and
+//! cost the same; on All Cards ([`CardRow::for_browser`]) the second line
+//! starts with the deck. On
 //! both, a check button shows while cards are being chosen
 //! (`ui::selection`, ADR 0065), and a long press on a touch screen starts
 //! choosing with the row's card.
@@ -25,11 +26,11 @@
 //! those out of the pills; `now` and `next-day` (the page's clock and the
 //! start of the next study day) set the due word. As in `DeckRow`, the
 //! menu items activate the row's own `row.edit` / `row.info` /
-//! `row.suspend` / `row.unsuspend` / `row.reset` / `row.move` /
-//! `row.delete` actions, which forward to the page's `edit-card` /
-//! `card-info` / `suspend-card` / `unsuspend-card` / `reset-card` /
-//! `move-card` / `delete-card` actions (in the `deck.` or `browser.` group)
-//! with the bound card's id, and a long press to `select-card`;
+//! `row.practice` / `row.suspend` / `row.unsuspend` / `row.reset` /
+//! `row.move` / `row.delete` actions, which forward to the page's
+//! `edit-card` / `card-info` / `practice-card` / `suspend-card` /
+//! `unsuspend-card` / `reset-card` / `move-card` / `delete-card` actions
+//! (in the `deck.` or `browser.` group) with the bound card's id, and a long press to `select-card`;
 //! `row.study-tag`, whose target is a tag's id, forwards it to the page's
 //! `study-tag`.
 
@@ -168,6 +169,9 @@ mod imp {
             klass.install_action("row.delete", None, |row, _, _| {
                 row.forward("delete-card");
             });
+            klass.install_action("row.practice", None, |row, _, _| {
+                row.forward("practice-card");
+            });
             klass.install_action(
                 "row.study-tag",
                 Some(glib::VariantTy::STRING),
@@ -278,6 +282,8 @@ impl CardRow {
             tags: &item.tag_list(),
             suspended: card.suspended,
             is_new: item.is_new(),
+            // A deck page's deck is never archived: archiving leaves it.
+            deck_archived: false,
             status: item.status(),
             id: &card.id,
         });
@@ -300,6 +306,7 @@ impl CardRow {
                 tags: &row.tags,
                 suspended: row.card.suspended,
                 is_new: row.is_new,
+                deck_archived: row.deck_archived,
                 status: row.status,
                 id: &row.card.id,
             });
@@ -341,6 +348,7 @@ impl CardRow {
             tags,
             suspended,
             is_new,
+            deck_archived,
             status,
             id,
         } = parts;
@@ -367,7 +375,7 @@ impl CardRow {
         // actions are widget actions installed in `class_init`;
         // `gtk_widget_action_set_enabled` (GtkWidget docs) disables one, and
         // a menu item naming a disabled action is insensitive.
-        for (action, enabled) in text::row_actions(suspended, is_new) {
+        for (action, enabled) in text::row_actions(suspended, is_new, deck_archived) {
             self.action_set_enabled(action, enabled);
         }
         imp.card_id.replace(id.to_owned());
@@ -612,6 +620,8 @@ struct RowParts<'a> {
     tags: &'a [Tag],
     suspended: bool,
     is_new: bool,
+    /// Its deck is archived (All Cards only): no Practice This Card.
+    deck_archived: bool,
     /// Where it stands, for the due word.
     status: rappel_core::storage::CardStatus,
     /// The card's id.
@@ -795,6 +805,7 @@ mod tests {
                 CardStatus::New
             },
             is_new: true,
+            deck_archived: false,
         })
     }
 
@@ -1456,6 +1467,7 @@ mod tests {
                         tags: tagged.tags,
                         status: CardStatus::New,
                         is_new: true,
+                        deck_archived: false,
                     })
                 })
                 .collect();

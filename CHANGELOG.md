@@ -6,14 +6,18 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.4.2] — 2026-11-10
+## [0.4.2] — 2026-11-16
 
-French wording, and a test that guards the icon names. The app is otherwise the same as 0.4.1.
+Formulas in the card editor (Ctrl+M, and no Markdown styling inside them), Practice This Card, a calmer editor, French wording closer to Anki's, and a test that guards the icon names.
 
 ### Added
+- **Ctrl+M makes a formula.** In the card editor, Ctrl+M wraps the selection as `$x$`; pressed again it becomes `$$x$$`, and a third time the dollars go. With nothing selected it inserts `$$` with the cursor between. Each press is one undo step, and it is listed in Keyboard Shortcuts.
+- **Practice This Card.** Each card's menu, on a deck's page and in All Cards, and the Card Menu while studying, has Practice This Card: a practice of that card alone, which, like any practice, reschedules nothing and writes nothing. After Show Answer, Pass or Fail takes you back to where you were, with the focus on that card's row (or on the card you were studying); there is no summary. It is disabled for a suspended card and for a card of an archived deck (ADR 0088).
 - **A test for icon names.** It lists every `*-symbolic` icon name in the Blueprint files and the Rust sources and fails unless each one is bundled in the app's resources or is on `crates/app/data/gnome-core26-icons.txt`, the names the snap's Adwaita ships. All 30 names Rappel uses are on that list, so nothing needed bundling (ADR 0086).
 
 ### Changed
+- **A calmer card editor.** The vertical line between the fields and the preview is gone.
+- **No Markdown styling inside formulas in the editor.** In the card editor, text between `$…$` or `$$…$$` is no longer made italic or bold by `_` and `*` (as in `$$n_1\sin\theta_1 = n_2\sin\theta_2$$`): a formula gets one quiet colour of its own, and emphasis or a heading around a formula leaves it alone. Formulas are found as the preview finds them, so `\$` and prices such as `$5-$10` stay plain text. An underscore inside a word (`x_1`) no longer starts italics. From 768 characters on, a line is left without highlighting, so a very long paragraph of formulas cannot freeze the editor. HTML tags are no longer coloured in the editor: Rappel never interprets HTML, and shows it as text (ADR 0087).
 - **French wording** follows Anki's words more closely. "Due" is now "À réviser" everywhere (states, filters, counts, screen-reader texts, the store listing) and "À revoir" is free; "Time Studied" is "Temps passé" ("12 min passées"); "Recall Now" is "Probabilité de rappel"; "Expected retention" is "Rétention estimée"; the forecast is "Révisions à venir" and "À venir"; "Card Information" is "Infos sur la carte"; "Day Starts At" is "Le jour commence à"; the daily limit is "Révisions max. par jour". The Fail and Pass buttons stay "Raté" and "Réussi" (`docs/briefs/fr-glossary-0.4.2.md`).
 
 ## [0.4.1] — 2026-11-10

@@ -5,8 +5,9 @@
 //! - Ctrl+Enter saves and closes; Ctrl+Shift+Enter saves and starts a new
 //!   card in the same deck, with the focus in the front field. Both are
 //!   caught in the capture phase, before the text views see the Enter.
-//! - Ctrl+B / Ctrl+I wrap the selection of the focused side in bold /
-//!   italic markers ([`format::wrap`]), as one undoable step.
+//! - Ctrl+B / Ctrl+I wrap the selection of the focused side in bold / italic
+//!   markers ([`format::wrap`]); Ctrl+M cycles it through `$x$`, `$$x$$` and
+//!   plain ([`format::math`]), each as one undoable step.
 //! - The preview renders both sides as the review page does, once typing
 //!   pauses ([`PREVIEW_DELAY`]), and only while it is shown: beside the text
 //!   when the dialog is wide, instead of it when the Edit / Preview toggle
@@ -33,6 +34,7 @@
 
 mod format;
 mod insert;
+mod language;
 mod layout;
 mod media;
 mod same_front;
@@ -87,9 +89,12 @@ fn save_tooltip() -> Option<String> {
     keys::label(trigger).map(|key| keys::tooltip(&gettext("Save"), &key))
 }
 
-/// The formatting keys and the marker each wraps the selection in.
-pub(crate) const FORMAT_KEYS: [(&str, &str); 2] =
-    [("<Control>b", format::BOLD), ("<Control>i", format::ITALIC)];
+/// The formatting keys and what each does to the selection.
+pub(crate) const FORMAT_KEYS: [(&str, format::Format); 3] = [
+    ("<Control>b", format::Format::Wrap(format::BOLD)),
+    ("<Control>i", format::Format::Wrap(format::ITALIC)),
+    ("<Control>m", format::Format::Math),
+];
 
 /// What a save did, for the deck page to update its list.
 #[derive(Debug, Clone)]
@@ -156,8 +161,6 @@ mod imp {
         pub breakpoint: TemplateChild<adw::Breakpoint>,
         #[template_child]
         pub edit_pane: TemplateChild<gtk::ScrolledWindow>,
-        #[template_child]
-        pub pane_separator: TemplateChild<gtk::Separator>,
         #[template_child]
         pub preview_pane: TemplateChild<gtk::ScrolledWindow>,
         #[template_child]
@@ -353,7 +356,7 @@ impl CardEditor {
         }
     }
 
-    /// Ctrl+Enter, Ctrl+Shift+Enter, Ctrl+B and Ctrl+I.
+    /// Ctrl+Enter, Ctrl+Shift+Enter, Ctrl+B, Ctrl+I and Ctrl+M.
     fn setup_shortcuts(&self) {
         // Capture phase: the text views would otherwise take the Enter.
         let shortcuts = gtk::ShortcutController::new();
@@ -372,12 +375,12 @@ impl CardEditor {
                 Some(action),
             ));
         }
-        for (trigger, marker) in FORMAT_KEYS {
+        for (trigger, format) in FORMAT_KEYS {
             let action = gtk::CallbackAction::new(move |widget, _| {
                 let editor = widget.downcast_ref::<Self>();
                 match editor.and_then(Self::focused_buffer) {
                     Some(buffer) => {
-                        wrap_selection(&buffer, marker);
+                        format_selection(&buffer, format);
                         glib::Propagation::Stop
                     }
                     // Not in a text field: the key is not ours.
@@ -396,10 +399,8 @@ impl CardEditor {
     /// of their text updates.
     fn setup_views(&self) {
         let imp = self.imp();
-        let language = sourceview5::LanguageManager::default().language("markdown");
-        if language.is_none() {
-            tracing::warn!("GtkSourceView has no markdown language; no highlighting");
-        }
+        // Rappel's Markdown with math, else the stock one (`language`).
+        let language = language::markdown();
         for buffer in [&*imp.front_buffer, &*imp.back_buffer] {
             buffer.set_language(language.as_ref());
             buffer.set_highlight_syntax(true);
@@ -694,7 +695,6 @@ impl CardEditor {
         let panes = layout::panes(imp.narrow.get(), self.mode());
         imp.edit_pane.set_visible(panes.edit);
         imp.preview_pane.set_visible(panes.preview);
-        imp.pane_separator.set_visible(panes.separator);
         self.refresh_preview();
     }
 
@@ -1062,32 +1062,85 @@ fn scheme_id(dark: bool) -> &'static str {
     if dark { "Adwaita-dark" } else { "Adwaita" }
 }
 
-/// Wraps the selection in `buffer` (or the cursor's empty spot) in
-/// `marker`, as one user action so one Ctrl+Z takes it back.
-fn wrap_selection(buffer: &sourceview5::Buffer, marker: &str) {
-    let (mut start, mut end) = buffer.selection_bounds().unwrap_or_else(|| {
+/// Applies `format` to the selection in `buffer` (or the cursor's empty
+/// spot), as one user action so one Ctrl+Z takes it back.
+fn format_selection(buffer: &sourceview5::Buffer, format: format::Format) {
+    let (start, end) = buffer.selection_bounds().unwrap_or_else(|| {
         let cursor = buffer.iter_at_mark(&buffer.get_insert());
         (cursor, cursor)
     });
     // `slice` with hidden chars, not `text`: it keeps the U+FFFC of any
     // embedded object, so its characters match the iterators' offsets.
     let selected = buffer.slice(&start, &end, true);
-    let wrapped = format::wrap(&selected, marker);
-    let offset = start.offset();
+    let edit = match format {
+        format::Format::Wrap(marker) => {
+            let wrapped = format::wrap(&selected, marker);
+            format::Edit {
+                before: 0,
+                after: 0,
+                text: wrapped.text,
+                select: wrapped.select,
+            }
+        }
+        format::Format::Math => {
+            // A few characters around the selection: where the dollars of
+            // a formula it sits in (and an escaping backslash) would be.
+            let mut from = start;
+            from.backward_chars(3);
+            let mut to = end;
+            to.forward_chars(2);
+            format::math(
+                &buffer.slice(&from, &start, true),
+                &selected,
+                &buffer.slice(&end, &to, true),
+            )
+        }
+    };
+    let mut from = start;
+    from.backward_chars(i32::try_from(edit.before).unwrap_or(0));
+    let mut to = end;
+    to.forward_chars(i32::try_from(edit.after).unwrap_or(0));
+    let offset = from.offset();
     let at = |chars: usize| {
         buffer.iter_at_offset(offset.saturating_add(i32::try_from(chars).unwrap_or(i32::MAX)))
     };
     buffer.begin_user_action();
-    buffer.delete(&mut start, &mut end);
-    buffer.insert(&mut start, &wrapped.text);
+    buffer.delete(&mut from, &mut to);
+    buffer.insert(&mut from, &edit.text);
     // The cursor (insert mark) at the end, so Shift+Arrow extends from there.
-    buffer.select_range(&at(wrapped.select.end), &at(wrapped.select.start));
+    buffer.select_range(&at(edit.select.end), &at(edit.select.start));
     buffer.end_user_action();
 }
 
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+
+    /// Ctrl+M on a selection cycles `x`, `$x$`, `$$x$$`, `x`, each press one
+    /// undoable step (the dollars outside the selection are found in the
+    /// buffer around it).
+    #[test]
+    fn ctrl_m_cycles_the_dollars_and_each_press_is_one_undo() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, _deck, editor, _saved) = editor_over(None);
+            let buffer = editor.imp().front_buffer.get();
+            buffer.set_enable_undo(true);
+            buffer.set_text("see x now");
+            let start = buffer.iter_at_offset(4);
+            let end = buffer.iter_at_offset(5);
+            buffer.select_range(&start, &end);
+            let text =
+                |b: &sourceview5::Buffer| b.text(&b.start_iter(), &b.end_iter(), true).to_string();
+            for expected in ["see $x$ now", "see $$x$$ now", "see x now"] {
+                format_selection(&buffer, format::Format::Math);
+                assert_eq!(text(&buffer), expected);
+            }
+            for expected in ["see $$x$$ now", "see $x$ now", "see x now"] {
+                buffer.undo();
+                assert_eq!(text(&buffer), expected);
+            }
+        });
+    }
 
     /// Save says its key in its tooltip (#117), and nothing on the page
     /// hints it any more: neither the keycap label nor its words.
@@ -1624,11 +1677,7 @@ pub(super) mod tests {
         let results = crate::testing::with_widgets(move || {
             sides.map(|(what, side)| {
                 let buffer = sourceview5::Buffer::new(None);
-                buffer.set_language(
-                    sourceview5::LanguageManager::default()
-                        .language("markdown")
-                        .as_ref(),
-                );
+                buffer.set_language(super::language::markdown().as_ref());
                 buffer.set_highlight_syntax(true);
                 let view = sourceview5::View::with_buffer(&buffer);
                 view.set_monospace(true);

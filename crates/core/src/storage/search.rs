@@ -251,6 +251,9 @@ pub struct BrowseRow {
     /// No surviving review since it was created or last reset, so a reset
     /// has nothing to do. Also for a suspended card, whose `status` hides it.
     pub is_new: bool,
+    /// Its deck is archived (listed only with
+    /// [`BrowseQuery::include_archived`]): it cannot be practised.
+    pub deck_archived: bool,
 }
 
 /// Where one card of a deck stands, for its row on the deck page
@@ -265,7 +268,7 @@ pub struct CardStanding {
 }
 
 const ROW_SELECT: &str = "c.id, c.deck_id, c.front_md, c.back_md, c.created_at, c.updated_at, \
-     c.suspended, d.name, s.phase, s.due_at";
+     c.suspended, d.name, s.phase, s.due_at, d.archived_at IS NOT NULL";
 
 impl Store {
     /// The live cards in live decks (archived ones only with
@@ -437,6 +440,7 @@ fn row_from(r: &rusqlite::Row<'_>, now: i64) -> rusqlite::Result<BrowseRow> {
     let deck_name: String = r.get(7)?;
     let phase: Option<String> = r.get(8)?;
     let due_at: Option<i64> = r.get(9)?;
+    let deck_archived: bool = r.get(10)?;
     let is_new = phase.is_none();
     let status = status_of(card.suspended, phase.as_deref(), due_at, now);
     Ok(BrowseRow {
@@ -445,6 +449,7 @@ fn row_from(r: &rusqlite::Row<'_>, now: i64) -> rusqlite::Result<BrowseRow> {
         tags: Vec::new(),
         status,
         is_new,
+        deck_archived,
     })
 }
 

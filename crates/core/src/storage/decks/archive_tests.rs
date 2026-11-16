@@ -314,7 +314,10 @@ fn all_cards_hides_archived_decks_unless_asked() {
         include_archived: true,
         ..BrowseQuery::default()
     };
-    assert_eq!(found(&store, &shown), [other, new.clone(), reviewed]);
+    assert_eq!(
+        found(&store, &shown),
+        [other.clone(), new.clone(), reviewed]
+    );
     // Filtered to the archived deck: only when shown.
     let deck = |include_archived| BrowseQuery {
         deck_id: Some(spanish.clone()),
@@ -323,8 +326,17 @@ fn all_cards_hides_archived_decks_unless_asked() {
     };
     assert_eq!(found(&store, &deck(false)), Vec::<String>::new());
     assert_eq!(found(&store, &deck(true)).len(), 2);
-    // A card's own row is found whatever the filter.
-    assert!(store.browse_row(&new, T0).unwrap().is_some());
+    // A card's own row is found whatever the filter, and each row says
+    // whether its deck is archived (no Practice This Card, ADR 0088).
+    assert!(store.browse_row(&new, T0).unwrap().unwrap().deck_archived);
+    assert!(!store.browse_row(&other, T0).unwrap().unwrap().deck_archived);
+    let archived: Vec<bool> = store
+        .browse(&shown, T0)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.deck_archived)
+        .collect();
+    assert_eq!(archived, [false, true, true]);
 }
 
 #[test]

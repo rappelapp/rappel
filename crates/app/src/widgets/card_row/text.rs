@@ -229,15 +229,33 @@ pub fn other_tags<'a>(names: &'a [String], tags: &[Tag], shared: &[String]) -> C
 }
 
 /// The row actions that depend on the card, each with whether it is
-/// enabled: the one of Suspend and Unsuspend that changes something, and
-/// Reset Progress unless the card is already new, where a reset would only
-/// add a log entry that changes nothing.
-pub fn row_actions(suspended: bool, is_new: bool) -> [(&'static str, bool); 3] {
+/// enabled: the one of Suspend and Unsuspend that changes something, Reset
+/// Progress unless the card is already new, where a reset would only add a
+/// log entry that changes nothing, and Practice This Card
+/// ([`practice_card_offered`]).
+pub fn row_actions(
+    suspended: bool,
+    is_new: bool,
+    deck_archived: bool,
+) -> [(&'static str, bool); 4] {
     [
         ("row.suspend", !suspended),
         ("row.unsuspend", suspended),
         ("row.reset", !is_new),
+        (
+            "row.practice",
+            practice_card_offered(suspended, deck_archived),
+        ),
     ]
+}
+
+/// Whether a card's menu offers Practice This Card (ADR 0088): as a deck's
+/// Practice (`pages::practice_offered`), only when there is a card to
+/// practise, here the card itself unless it is suspended or its deck is
+/// archived (which the store refuses, `Store::practice_card`). A deleted
+/// card has no row.
+pub fn practice_card_offered(suspended: bool, deck_archived: bool) -> bool {
+    crate::pages::practice_offered(usize::from(!suspended && !deck_archived))
 }
 
 /// "Study Cards Tagged “verbs”": the entry that starts a session over the
@@ -686,20 +704,30 @@ mod tests {
     #[test]
     fn a_row_offers_only_what_changes_the_card() {
         assert_eq!(
-            row_actions(false, false),
+            row_actions(false, false, false),
             [
                 ("row.suspend", true),
                 ("row.unsuspend", false),
-                ("row.reset", true)
+                ("row.reset", true),
+                ("row.practice", true)
             ]
         );
         assert_eq!(
-            row_actions(true, true),
+            row_actions(true, true, false),
             [
                 ("row.suspend", false),
                 ("row.unsuspend", true),
-                ("row.reset", false)
+                ("row.reset", false),
+                ("row.practice", false)
             ]
         );
+    }
+
+    #[test]
+    fn only_a_card_that_can_be_practised_offers_practice() {
+        assert!(practice_card_offered(false, false));
+        assert!(!practice_card_offered(true, false));
+        assert!(!practice_card_offered(false, true));
+        assert!(!practice_card_offered(true, true));
     }
 }

@@ -41,5 +41,8 @@
     <file preprocess="xml-stripblanks">shortcuts-dialog.ui</file>
       <!-- Not compiled: plain CSS, loaded by AdwApplication. -->
     <file>style.css</file>
+    <!-- The card editor's highlighting (Markdown with math, ADR 0087),
+         found by its own GtkSourceLanguageManager in this directory. -->
+    <file>language-specs/rappel-markdown.lang</file>
   </gresource>
 </gresources>

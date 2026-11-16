@@ -592,3 +592,88 @@ fn a_damaged_schedule_cache_never_breaks_a_practice() {
     assert!(store.has_practisable(&scope).unwrap());
     assert_eq!(dump(&store), before);
 }
+
+/// Practice This Card (ADR 0088): the card alone, if it may be practised;
+/// a deleted, suspended or archived deck's card is refused, as the deck's
+/// practice leaves it out.
+#[test]
+fn a_cards_practice_is_that_card_alone_and_refuses_what_a_deck_leaves_out() {
+    let mut store = Store::in_memory();
+    let (spanish, gone) = fixture(&mut store);
+    let queue = store
+        .practice_queue(&StudyScope::deck(&spanish), NOW)
+        .unwrap();
+    for id in &queue {
+        assert_eq!(store.practice_card(id).unwrap(), std::slice::from_ref(id));
+    }
+    let by_front = |store: &Store, deck: &str, front: &str| {
+        store
+            .list_cards(deck)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.front_md == front)
+            .unwrap()
+            .id
+    };
+    let suspended = by_front(&store, &spanish, "suspended");
+    assert!(matches!(
+        store.practice_card(&suspended),
+        Err(Error::CardSuspended(id)) if id == suspended
+    ));
+    let archived = by_front(&store, &gone, "archived");
+    assert!(matches!(
+        store.practice_card(&archived),
+        Err(Error::DeckArchived(_))
+    ));
+    // A deleted card (the fixture's is no longer listed, so one deleted
+    // here, whose id is known).
+    let deleted = card(&mut store, &spanish, "deleted now", &[]);
+    store.delete_card_at(&deleted, T0).unwrap();
+    assert!(matches!(
+        store.practice_card(&deleted),
+        Err(Error::CardNotFound(_))
+    ));
+    assert!(matches!(
+        store.practice_card("not-a-card"),
+        Err(Error::CardNotFound(_))
+    ));
+    // Each refusal left the connection writable.
+    assert!(!is_query_only(&store));
+}
+
+/// A practice of one card, answered with Fail, Undo and Pass, and the
+/// refused ones, leave the database byte-identical (as
+/// `a_practice_leaves_the_database_byte_identical`).
+#[test]
+fn a_cards_practice_leaves_the_database_byte_identical() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join(DB_FILE_NAME);
+    let mut store = Store::open(tmp.path()).unwrap();
+    let (spanish, gone) = fixture(&mut store);
+    let observer = Connection::open(&db).unwrap();
+    let before = snapshot(&store, &db);
+    let version = data_version(&observer);
+    let changes = store.conn.total_changes();
+
+    for card in store.list_cards(&spanish).unwrap() {
+        match store.practice_card(&card.id) {
+            Ok(queue) => {
+                let mut practice = Practice::new(queue);
+                let id = practice.next().unwrap().to_owned();
+                store.card(&id).unwrap();
+                practice.graded(&id, Grade::Fail, Duration::from_secs(1));
+                practice.undo_last();
+                practice.graded(&id, Grade::Pass, Duration::from_secs(1));
+                assert_eq!(practice.next(), None);
+            }
+            Err(err) => assert!(matches!(err, Error::CardSuspended(_)), "{err}"),
+        }
+    }
+    for card in store.list_cards(&gone).unwrap() {
+        assert!(store.practice_card(&card.id).is_err());
+    }
+
+    assert_eq!(store.conn.total_changes(), changes);
+    assert_eq!(data_version(&observer), version);
+    assert_eq!(snapshot(&store, &db), before);
+}

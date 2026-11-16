@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Rappel's Markdown for the card editor (ADR 0087): GtkSourceView's own
+  "markdown" language with math. Copyright the Rappel contributors,
+  GPL-3.0-or-later. It copies nothing from markdown.lang: it refers to it
+  (`markdown:…`) and replaces six of its contexts. It takes markdown's
+  Markdown syntax only, not its HTML (`html:html`): HTML is never
+  interpreted or rendered (SPEC §1.5), so colouring it would mislead, and
+  HTML's own contexts of several lines (`<title>`, `<style>`, comments)
+  would run their content past the long-line cap below.
+
+  Math is found as the renderer finds it (pulldown-cmark with math, and
+  `crates/core/src/content/parse.rs`):
+  - a backslash before ASCII punctuation escapes it, so `\$` is never a
+    delimiter, inside math or out, and `\\` is an escaped backslash;
+  - `$…$` opens on a `$` not followed by a space and closes on the next
+    unescaped `$` not preceded by one, on the same line here; a `$` that
+    cannot close on the way makes the opener plain text;
+  - a closing `$` followed by a digit is a price, not math (`$5-$10`);
+  - `$$…$$` is display math, over several lines; here it also ends at a
+    blank line, so a `$$` typed alone does not colour the rest of the card.
+  Inside math there is no other Markdown styling: math has one quiet style
+  of its own (that of inline code), and emphasis, strong emphasis and
+  headings skip over it. Not modelled: braces hiding a `$` (`$\text{$}$`).
+-->
+<language id="rappel-markdown" name="Rappel Markdown" version="2.0" hidden="true">
+  <styles>
+    <style id="math" name="Math" map-to="def:inline-code"/>
+    <style id="backslash-escape" name="Backslash Escape" map-to="markdown:backslash-escape"/>
+    <style id="emphasis" name="Emphasis" map-to="markdown:emphasis"/>
+    <style id="strong-emphasis" name="Strong Emphasis" map-to="markdown:strong-emphasis"/>
+    <style id="header" name="Header" map-to="markdown:header"/>
+  </styles>
+
+  <definitions>
+    <!-- One character of math: an escape (a backslash and what follows,
+         kept together so `\$` never closes), or anything but `$`. -->
+    <define-regex id="math-char">(?&gt;\\.?|[^$\\])</define-regex>
+    <!-- `$$…$$` on one line, or from `$$` to the line's end. -->
+    <define-regex id="display-math-line">\$\$\%{math-char}*(?:\$\$|$)</define-regex>
+    <define-regex id="inline-math">\$(?![\s$])\%{math-char}*(?&lt;!\s)\$(?![0-9])</define-regex>
+    <!-- One step through a line that skips math whole: what emphasis looks
+         for its closing marker with, so the marker is never inside math. -->
+    <define-regex id="item">(?&gt;\%{display-math-line}|\%{inline-math}|\\.?|.)</define-regex>
+
+    <context id="backslash-escape" style-ref="backslash-escape">
+      <match>\\[!-/:-@\[-`{-~]</match>
+    </context>
+
+    <context id="display-math" style-ref="math" class="math no-spell-check">
+      <start>\$\$</start>
+      <end>\$\$|^[ \t]*$</end>
+      <include>
+        <context id="display-math-escape">
+          <match>\\.</match>
+        </context>
+      </include>
+    </context>
+
+    <context id="inline-math" style-ref="math" class="math no-spell-check">
+      <match>\%{inline-math}</match>
+    </context>
+
+    <!-- Math inside a one-line span (emphasis, a heading). -->
+    <context id="display-math-line" style-ref="math" class="math no-spell-check">
+      <match>\%{display-math-line}</match>
+    </context>
+
+    <context id="math-on-a-line">
+      <include>
+        <context ref="display-math-line"/>
+        <context ref="inline-math"/>
+      </include>
+    </context>
+
+    <!-- In place of markdown's backslash escape, which every Markdown
+         context includes (blockquotes too): escapes, then math. -->
+    <context id="escape-and-math">
+      <include>
+        <context ref="backslash-escape"/>
+        <context ref="display-math"/>
+        <context ref="inline-math"/>
+      </include>
+    </context>
+
+    <!-- Emphasis and strong emphasis as markdown.lang has them, except that
+         the closing marker is looked for past whole math spans, and the
+         span is styled piece by piece: its markers and the text between
+         math, never the math (a style of the span as a whole would make
+         the math in it italic or bold too). Underscores do not open or
+         close within a word (`x_1`), as in CommonMark. -->
+    <context id="asterisks-emphasis" end-at-line-end="true">
+      <start>(?&lt;!\*)\*(?=(?![* \t])\%{item}+?(?&lt;![\\* \t])\*(?!\*))</start>
+      <end>(?&lt;![\\* \t])\*(?!\*)</end>
+      <include>
+        <context sub-pattern="0" where="start" style-ref="emphasis"/>
+        <context sub-pattern="0" where="end" style-ref="emphasis"/>
+        <context ref="math-on-a-line"/>
+        <context style-ref="emphasis">
+          <match>(?:\\.?|[^$\\*])+</match>
+        </context>
+        <context style-ref="emphasis">
+          <match>\$|(?&lt;=[\\* \t])\*|\*(?=\*)</match>
+        </context>
+      </include>
+    </context>
+
+    <context id="underscores-emphasis" end-at-line-end="true">
+      <start>(?&lt;![_[:alnum:]])_(?=(?![_ \t])\%{item}+?(?&lt;![\\_ \t])_(?![_[:alnum:]]))</start>
+      <end>(?&lt;![\\_ \t])_(?![_[:alnum:]])</end>
+      <include>
+        <context sub-pattern="0" where="start" style-ref="emphasis"/>
+        <context sub-pattern="0" where="end" style-ref="emphasis"/>
+        <context ref="math-on-a-line"/>
+        <context style-ref="emphasis">
+          <match>(?:\\.?|[^$\\_])+</match>
+        </context>
+        <context style-ref="emphasis">
+          <match>\$|(?&lt;=[\\_ \t])_|_(?=[_[:alnum:]])</match>
+        </context>
+      </include>
+    </context>
+
+    <context id="asterisks-strong-emphasis" end-at-line-end="true">
+      <start>\*\*(?=(?![* \t])\%{item}+?(?&lt;![\\* \t])\*\*)</start>
+      <end>(?&lt;![\\* \t])\*\*</end>
+      <include>
+        <context sub-pattern="0" where="start" style-ref="strong-emphasis"/>
+        <context sub-pattern="0" where="end" style-ref="strong-emphasis"/>
+        <context ref="math-on-a-line"/>
+        <context style-ref="strong-emphasis">
+          <match>(?:\\.?|[^$\\*])+</match>
+        </context>
+        <context style-ref="strong-emphasis">
+          <match>\$|(?&lt;=[\\* \t])\*|\*(?!\*)</match>
+        </context>
+      </include>
+    </context>
+
+    <context id="underscores-strong-emphasis" end-at-line-end="true">
+      <start>(?&lt;![_[:alnum:]])__(?=(?![_ \t])\%{item}+?(?&lt;![\\_ \t])__(?![_[:alnum:]]))</start>
+      <end>(?&lt;![\\_ \t])__(?![_[:alnum:]])</end>
+      <include>
+        <context sub-pattern="0" where="start" style-ref="strong-emphasis"/>
+        <context sub-pattern="0" where="end" style-ref="strong-emphasis"/>
+        <context ref="math-on-a-line"/>
+        <context style-ref="strong-emphasis">
+          <match>(?:\\.?|[^$\\_])+</match>
+        </context>
+        <context style-ref="strong-emphasis">
+          <match>\$|(?&lt;=[\\_ \t])_|_(?=_?[[:alnum:]])|_(?!_)</match>
+        </context>
+      </include>
+    </context>
+
+    <!-- `# Heading`, styled piece by piece like emphasis, so a formula in a
+         heading is not bold. -->
+    <context id="atx-header" end-at-line-end="true">
+      <start>^#+(?=.)</start>
+      <include>
+        <context sub-pattern="0" where="start" style-ref="header"/>
+        <context ref="math-on-a-line"/>
+        <context style-ref="header">
+          <match>(?:\\.?|[^$\\])+</match>
+        </context>
+        <context style-ref="header">
+          <match>\$</match>
+        </context>
+      </include>
+    </context>
+
+    <replace id="markdown:backslash-escape" ref="escape-and-math"/>
+    <replace id="markdown:asterisks-emphasis" ref="asterisks-emphasis"/>
+    <replace id="markdown:underscores-emphasis" ref="underscores-emphasis"/>
+    <replace id="markdown:asterisks-strong-emphasis" ref="asterisks-strong-emphasis"/>
+    <replace id="markdown:underscores-strong-emphasis" ref="underscores-strong-emphasis"/>
+    <replace id="markdown:atx-header" ref="atx-header"/>
+
+    <!-- From 768 characters on, a line is left plain to its end (ADR
+         0087). GtkSourceView's engine spends time in proportion to the
+         line's length for every highlighted piece it finds on it, and never
+         splits a line between main-loop steps, so a long line full of
+         formulas (or of code spans, in the stock language too) costs the
+         square of its length: measured with 5.22, 20 KB of `$$a ` took
+         2.4 s and 40 KB of `$a$ ` 31 s, in one step. `\G` is where a search
+         resumes: the line's start, or the end of a context of several
+         lines that closes on it, so no line escapes the cap. 768 is chosen
+         by measure: 1 MiB of lines just under the cap, full of formulas,
+         gives steps of 0.33 s (1,024: 0.45 s; 512: 0.20 s). -->
+    <context id="long-line" end-at-line-end="true">
+      <start>\G(?=.{768})</start>
+    </context>
+
+    <context id="rappel-markdown">
+      <include>
+        <context ref="long-line"/>
+        <context ref="markdown:markdown-syntax"/>
+      </include>
+    </context>
+  </definitions>
+</language>

@@ -24,7 +24,7 @@ use crate::state::AppState;
 use crate::ui::selection::{Bulk, CardSelection, Parts, SelectionPage};
 use crate::ui::text::one_line;
 use crate::ui::toast::{info_toast, show_error, show_toast_from};
-use crate::ui::{breakpoint, dropdown, init_once, nav};
+use crate::ui::{breakpoint, dropdown, focus, init_once, nav};
 use crate::widgets::{BrowseItem, CardRow, card_row};
 use crate::window::RappelWindow;
 
@@ -140,6 +140,10 @@ mod imp {
         /// A study session was started from here: the rows' statuses are
         /// read again when the page shows again.
         pub studied: Cell<bool>,
+        /// The card of a practice pushed from its menu (Practice This
+        /// Card, ADR 0088): its row takes the focus when this page is
+        /// shown again.
+        pub practised_card: RefCell<Option<String>>,
         /// The window, noted when the page is shown: a page that was popped
         /// may no longer have a root when `hidden` is emitted.
         pub window: glib::WeakRef<crate::window::RappelWindow>,
@@ -171,6 +175,11 @@ mod imp {
             // A card's menu, with a tag's id; and the header's button, for
             // the tag the filter names (ADR 0069).
             rows::install_id_action(klass, "browser.study-tag", super::BrowserPage::study_tag);
+            rows::install_id_action(
+                klass,
+                "browser.practice-card",
+                super::BrowserPage::practise_card,
+            );
             klass.install_action("browser.study-filter-tag", None, |page, _, _| {
                 if let Some(tag) = page.filter_tag() {
                     page.study_tag(&tag.id);
@@ -422,7 +431,12 @@ impl BrowserPage {
                 page.imp().dirty.set(true);
                 page.requery();
             }
-            page.focus_search();
+            // Back from a practice of one card: that card's row.
+            let practised = page.imp().practised_card.take();
+            match focus::back_from_practice(practised.as_deref(), |id| page.position(id)) {
+                Some(position) => page.focus(position),
+                None => page.focus_search(),
+            }
         });
         self.add_escape();
     }
@@ -760,6 +774,44 @@ impl BrowserPage {
                     self.imp().studied.set(true);
                 }
             }
+            Err(err) => {
+                // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+                self.error_toast(&with_error(
+                    &gettext("The session could not start: {error}"),
+                    &err,
+                ));
+            }
+        }
+    }
+
+    /// Practice This Card (a card's menu, ADR 0088): pushes a practice of
+    /// card `id` alone, which writes nothing. Its answer, or its Back,
+    /// comes back here, with the focus on the card's row; the rows are
+    /// read again first, as a Suspend, a Delete or a Move from the
+    /// practice's Card Menu may have changed them.
+    fn practise_card(&self, id: &str) {
+        let Some(state) = self.imp().state.get() else {
+            return;
+        };
+        if self.selecting() {
+            return;
+        }
+        let Some(view) = nav::navigation_view(self) else {
+            return;
+        };
+        let on_saved = glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |saved| page.saved(&saved)
+        );
+        match nav::push_unless_on_top(&view, || {
+            ReviewPage::practice_card(state.clone(), id, StartedFrom::AllCards, on_saved)
+        }) {
+            Ok(true) => {
+                self.imp().studied.set(true);
+                self.imp().practised_card.replace(Some(id.to_owned()));
+            }
+            Ok(false) => {}
             Err(err) => {
                 // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
                 self.error_toast(&with_error(
@@ -1108,6 +1160,61 @@ mod tests {
             page.activate_action("browser.study-tag", Some(&tag.id.to_variant()))
                 .unwrap();
             assert!(view.visible_page().and_downcast::<ReviewPage>().is_some());
+            window.destroy();
+        });
+    }
+
+    /// Practice This Card from a row's menu (ADR 0088): a practice of that
+    /// card alone, which writes nothing; Fail goes back to All Cards with
+    /// the focus on that card's row. A card of an archived deck is refused
+    /// by the store, and its row does not offer it (`card_row::text`).
+    #[test]
+    fn practice_this_card_comes_back_to_its_row() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, ids, maths) = state_with_cards();
+            let view = adw::NavigationView::new();
+            let window = gtk::Window::builder()
+                .default_width(600)
+                .default_height(500)
+                .child(&view)
+                .build();
+            window.present();
+            let page = page_over(&state, None);
+            view.push(&page);
+            crate::testing::settle();
+            let changes = state.total_changes();
+            page.activate_action("browser.practice-card", Some(&ids[1].to_variant()))
+                .unwrap();
+            let practice = view
+                .visible_page()
+                .and_downcast::<ReviewPage>()
+                .expect("a practice is pushed");
+            assert!(practice.is_practice());
+            practice.activate_action("review.reveal", None).unwrap();
+            practice.activate_action("review.fail", None).unwrap();
+            assert!(crate::testing::settle_until(
+                || view.visible_page().as_ref() == Some(page.upcast_ref()),
+                Duration::from_secs(5)
+            ));
+            let focused = || {
+                let focus = gtk::prelude::GtkWindowExt::focus(&window)?;
+                let row = focus
+                    .first_child()
+                    .and_downcast::<CardRow>()
+                    .or_else(|| focus.downcast::<CardRow>().ok())?;
+                Some(row.card_id())
+            };
+            assert!(crate::testing::settle_until(
+                || focused().as_deref() == Some(ids[1].as_str()),
+                Duration::from_secs(5)
+            ));
+            assert_eq!(state.total_changes(), changes);
+
+            // An archived deck's card: nothing is pushed.
+            state.archive_deck(&maths).unwrap();
+            page.activate_action("browser.practice-card", Some(&ids[0].to_variant()))
+                .unwrap();
+            assert_eq!(view.visible_page().as_ref(), Some(page.upcast_ref()));
             window.destroy();
         });
     }

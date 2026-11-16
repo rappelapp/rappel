@@ -516,6 +516,12 @@ impl AppState {
         self.0.store.borrow().practice_queue(scope, now)
     }
 
+    /// The queue of a practice of card `card_id` alone (see
+    /// [`Store::practice_card`]); a shared borrow, as `practice_queue`.
+    pub fn practice_card(&self, card_id: &str) -> rappel_core::Result<Vec<String>> {
+        self.0.store.borrow().practice_card(card_id)
+    }
+
     /// The store's [`Store::total_changes`], for tests that check that a
     /// practice wrote nothing.
     #[cfg(test)]

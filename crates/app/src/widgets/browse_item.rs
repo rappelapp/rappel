@@ -53,6 +53,7 @@ mod imp {
                     tags: Vec::new(),
                     status: CardStatus::New,
                     is_new: true,
+                    deck_archived: false,
                 }),
                 front: OnceCell::new(),
                 back: OnceCell::new(),

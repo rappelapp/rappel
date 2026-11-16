@@ -3,6 +3,7 @@
 use rusqlite::{Connection, params};
 
 use super::Store;
+use super::cards::live_card;
 use super::decks::ensure_active_deck;
 use super::review::{TAGGED_FROM, TAGGED_IN_SCOPE, ensure_tag};
 use super::schedule::to_f32;
@@ -48,6 +49,30 @@ impl Store {
             Ok(candidates)
         })?;
         Ok(practice_order(candidates))
+    }
+
+    /// The queue of a practice of card `card_id` alone (Practice This Card
+    /// in a card's menu, ADR 0088): that card, if it may be practised as
+    /// [`Self::practice_queue`] would take it: live, not suspended, in a
+    /// deck that is neither deleted nor archived. Read with
+    /// `PRAGMA query_only` on, as `practice_queue`.
+    ///
+    /// # Errors
+    /// [`Error::CardNotFound`](crate::Error::CardNotFound) for a deleted
+    /// card, [`Error::CardSuspended`](crate::Error::CardSuspended),
+    /// [`Error::DeckNotFound`](crate::Error::DeckNotFound),
+    /// [`Error::DeckArchived`](crate::Error::DeckArchived), SQLite errors.
+    pub fn practice_card(&self, card_id: &str) -> Result<Vec<String>> {
+        query_only(&self.conn, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            let card = live_card(&tx, card_id)?;
+            ensure_active_deck(&tx, &card.deck_id)?;
+            if card.suspended {
+                return Err(crate::Error::CardSuspended(card.id));
+            }
+            tx.finish()?;
+            Ok(vec![card.id])
+        })
     }
 
     /// Whether a practice of `scope` would show at least one card: the

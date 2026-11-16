@@ -32,8 +32,6 @@ pub struct Panes {
     pub edit: bool,
     /// The preview, which is rendered only while shown.
     pub preview: bool,
-    /// The line between them.
-    pub separator: bool,
 }
 
 /// The panes for a `narrow` dialog or a wide one, in `mode`. Wide shows
@@ -43,13 +41,11 @@ pub fn panes(narrow: bool, mode: Mode) -> Panes {
         Panes {
             edit: mode == Mode::Edit,
             preview: mode == Mode::Preview,
-            separator: false,
         }
     } else {
         Panes {
             edit: true,
             preview: true,
-            separator: true,
         }
     }
 }
@@ -150,8 +146,7 @@ mod tests {
                 panes(false, mode),
                 Panes {
                     edit: true,
-                    preview: true,
-                    separator: true
+                    preview: true
                 }
             );
         }
@@ -160,9 +155,9 @@ mod tests {
     #[test]
     fn narrow_shows_the_one_the_toggle_picks() {
         let edit = panes(true, Mode::Edit);
-        assert!(edit.edit && !edit.preview && !edit.separator);
+        assert!(edit.edit && !edit.preview);
         let preview = panes(true, Mode::Preview);
-        assert!(!preview.edit && preview.preview && !preview.separator);
+        assert!(!preview.edit && preview.preview);
     }
 
     #[test]

@@ -441,6 +441,14 @@ menu card_menu {
       accel: "i";
       action: "review.card-info";
     }
+
+    // The card on screen alone, writing nothing (ADR 0088); in a study
+    // session only (`card_practice_offered`).
+    item {
+      label: _("_Practice This Card");
+      action: "review.practice-card";
+      hidden-when: "action-disabled";
+    }
   }
 
   section {

@@ -149,6 +149,13 @@ mod imp {
         pub left_decks: RefCell<std::collections::HashSet<String>>,
         /// The session, or the practice (ADR 0070).
         pub(super) session: RefCell<Option<Run>>,
+        /// A practice of one card (Practice This Card, ADR 0088): it goes
+        /// back where it was started once the card is answered or gone,
+        /// with no summary (`super::at_end`).
+        pub one_card: Cell<bool>,
+        /// The card on screen while a practice of it alone, pushed from
+        /// the Card Menu, is above this page (`super::ReviewPage::practise_card`).
+        pub card_practised: RefCell<Option<String>>,
         /// The card on screen.
         pub current: RefCell<Option<String>>,
         /// Its back, parsed, until it is shown.
@@ -214,6 +221,9 @@ mod imp {
             klass.install_action("review.practice", None, |page, _, _| {
                 page.practise_instead();
             });
+            klass.install_action("review.practice-card", None, |page, _, _| {
+                page.practise_card();
+            });
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -233,7 +243,10 @@ mod imp {
             // A grab before the push does nothing, and the navigation view
             // then focuses the first widget: the Back button, which would
             // take Space and Enter. So park the focus once on screen.
-            page.connect_shown(super::ReviewPage::park_focus);
+            page.connect_shown(|page| {
+                page.back_from_card_practice();
+                page.park_focus();
+            });
         }
     }
     impl WidgetImpl for ReviewPage {}
@@ -547,6 +560,34 @@ impl ReviewPage {
         Self::start(state, studied, Mode::Practice, on_saved)
     }
 
+    /// A practice of card `card_id` alone (Practice This Card in a card's
+    /// menu on a deck page, in All Cards or in this page's Card Menu, ADR
+    /// 0088), started from `from`: nothing is written, as in any practice
+    /// (ADR 0070). Once the card is answered (Pass or Fail) or leaves (a
+    /// Suspend, a Delete, a Move), the page goes back where it came from,
+    /// without a summary ([`at_end`]).
+    ///
+    /// # Errors
+    /// If the card cannot be practised (deleted, suspended, of an archived
+    /// deck: `Store::practice_card`) or read.
+    pub fn practice_card(
+        state: AppState,
+        card_id: &str,
+        from: StartedFrom,
+        on_saved: impl Fn(Saved) + 'static,
+    ) -> rappel_core::Result<Self> {
+        let queue = state.practice_card(card_id)?;
+        let card = state.card(card_id)?;
+        let deck = state.deck(&card.deck_id)?;
+        let studied = Studied::Deck { deck, from };
+        let page = Self::build(state, studied, Mode::Practice, true, on_saved);
+        page.imp()
+            .session
+            .replace(Some(Run::Practice(Practice::new(queue))));
+        page.show_next();
+        Ok(page)
+    }
+
     /// Whether this page is a practice.
     pub fn is_practice(&self) -> bool {
         matches!(&*self.imp().session.borrow(), Some(Run::Practice(_)))
@@ -649,6 +690,23 @@ impl ReviewPage {
                 (Run::Practice(Practice::new(queue)), empty)
             }
         };
+        let page = Self::build(state, studied, mode, false, on_saved);
+        let imp = page.imp();
+        imp.started_empty.set(empty);
+        imp.session.replace(Some(run));
+        page.show_next();
+        Ok(page)
+    }
+
+    /// A page for `studied` in `mode`, before its run is given and its
+    /// first card shown.
+    fn build(
+        state: AppState,
+        studied: Studied,
+        mode: Mode,
+        one_card: bool,
+        on_saved: impl Fn(Saved) + 'static,
+    ) -> Self {
         let page: Self = glib::Object::new();
         let imp = page.imp();
         // Deck and tag names are untrusted; AdwWindowTitle shows plain
@@ -660,13 +718,11 @@ impl ReviewPage {
             // button of a page above it.
             page.set_title(&pgettext("page title", "Practice"));
         }
-        imp.started_empty.set(empty);
-        imp.session.replace(Some(run));
+        imp.one_card.set(one_card);
         init_once(&imp.state, state);
         init_once(&imp.studied, studied);
         init_once(&imp.on_saved, Callback::new(Rc::new(on_saved)));
-        page.show_next();
-        Ok(page)
+        page
     }
 
     fn setup_keys(&self) {
@@ -1107,6 +1163,61 @@ impl ReviewPage {
         );
     }
 
+    /// Practice This Card (Card Menu, ADR 0088): pushes a practice of the
+    /// card on screen alone above this session, which carries on as it was
+    /// when it comes back (`back_from_card_practice`). Only in a study
+    /// session ([`card_practice_offered`]).
+    fn practise_card(&self) {
+        let imp = self.imp();
+        let (Some(state), Some(studied), Some(id)) = (
+            imp.state.get(),
+            imp.studied.get(),
+            imp.current.borrow().clone(),
+        ) else {
+            return;
+        };
+        if imp.editing.get() || imp.asking.get() || !card_practice_offered(self.is_practice()) {
+            return;
+        }
+        let Some(view) = nav::navigation_view(self) else {
+            return;
+        };
+        // The practice covers the card: what it played stops.
+        stop_audio();
+        // A card edited in the practice is redrawn here and passed on.
+        let on_saved = glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |saved| page.saved(saved)
+        );
+        match Self::practice_card(state.clone(), &id, studied.from(), on_saved) {
+            Ok(practice) => {
+                imp.card_practised.replace(Some(id));
+                view.push(&practice);
+            }
+            Err(err) => {
+                // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+                self.error_toast(&with_error(
+                    &gettext("The session could not start: {error}"),
+                    &err,
+                ));
+            }
+        }
+    }
+
+    /// Back from a practice of the card on screen: a card suspended,
+    /// deleted or moved out of what this page studies there leaves this
+    /// session too, as it would have here (`practisable_card`, which
+    /// checks just that).
+    fn back_from_card_practice(&self) {
+        let Some(id) = self.imp().card_practised.take() else {
+            return;
+        };
+        if !self.practisable_card(&id) {
+            self.leave_session(&id);
+        }
+    }
+
     /// Shows the information of the card on screen. The session carries on
     /// as it was: nothing is graded, and the timer keeps running (the time
     /// of an answer is capped, ADR 0014).
@@ -1456,6 +1567,10 @@ impl ReviewPage {
         self.action_set_enabled("review.suspend", editable);
         self.action_set_enabled("review.move", editable && self.imp().can_move.get());
         self.action_set_enabled("review.delete", editable);
+        self.action_set_enabled(
+            "review.practice-card",
+            editable && card_practice_offered(self.is_practice()),
+        );
         self.imp().editable.set(editable);
         self.show_header_buttons();
         // The summary has its own button; the bar goes, and the summary
@@ -1595,7 +1710,13 @@ impl ReviewPage {
         };
         let duration = imp.shown_at.get().map_or(Duration::ZERO, |t| t.elapsed());
         if let Some(Run::Practice(practice)) = imp.session.borrow_mut().as_mut() {
-            practice.graded(&id, grade, duration);
+            if imp.one_card.get() {
+                // Pass or Fail, the one card is done: a Fail does not
+                // bring it back (ADR 0088).
+                practice.skip(&id);
+            } else {
+                practice.graded(&id, grade, duration);
+            }
         }
         imp.current.replace(None);
         self.show_next();
@@ -1698,6 +1819,11 @@ impl ReviewPage {
         let imp = self.imp();
         imp.current.replace(None);
         imp.shown_at.set(None);
+        if at_end(imp.one_card.get()) == AtEnd::Leave {
+            self.set_controls(Controls::Hidden);
+            self.leave_when_idle();
+            return;
+        }
         let summary = imp
             .session
             .borrow()
@@ -1758,6 +1884,28 @@ impl ReviewPage {
 
     fn done(&self) {
         nav::pop(self);
+    }
+
+    /// Goes back to the page below once the main loop is idle, if this
+    /// page is still the one shown: a one-card practice that is over
+    /// ([`at_end`]). Not at once: a Suspend, a Delete or a Move that took
+    /// the card shows its Undo toast from this page right after, which
+    /// needs the page still in the window (`show_toast_from`).
+    fn leave_when_idle(&self) {
+        glib::idle_add_local_once(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move || {
+                let view = page
+                    .ancestor(adw::NavigationView::static_type())
+                    .and_downcast::<adw::NavigationView>();
+                if let Some(view) = view
+                    && view.visible_page().as_ref() == Some(page.upcast_ref())
+                {
+                    view.pop();
+                }
+            }
+        ));
     }
 
     /// Whether a practice of what this page studies would show a card
@@ -1989,6 +2137,34 @@ pub fn practice_offered(practisable: usize) -> bool {
     practisable > 0
 }
 
+/// Whether the Card Menu offers Practice This Card (ADR 0088): in a study
+/// session; not in a practice, which already writes nothing.
+fn card_practice_offered(practising: bool) -> bool {
+    !practising
+}
+
+/// What the page does once no card is left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AtEnd {
+    /// It shows the summary.
+    Summary,
+    /// It goes back to where it was started.
+    Leave,
+}
+
+/// What the page does once no card is left: a practice of one card
+/// (Practice This Card, ADR 0088) goes back to where it was started, with
+/// the focus on that card's row there, as "Practice Complete" over one
+/// answer that changed nothing would tell nothing; any other run shows its
+/// summary.
+fn at_end(one_card: bool) -> AtEnd {
+    if one_card {
+        AtEnd::Leave
+    } else {
+        AtEnd::Summary
+    }
+}
+
 /// Whether the summary shows its Practice button: after a session, not a
 /// practice (which would only start over), when the scope has a card to
 /// practise (`practisable`, from `AppState::has_practisable`).
@@ -2046,11 +2222,16 @@ impl Studied {
         }
     }
 
+    /// Where the session was started.
+    fn from(&self) -> StartedFrom {
+        match self {
+            Self::Deck { from, .. } | Self::Tag { from, .. } => *from,
+        }
+    }
+
     /// The summary's button, which leaves the page.
     fn done_label(&self) -> String {
-        match self {
-            Self::Deck { from, .. } | Self::Tag { from, .. } => from.done_label(),
-        }
+        self.from().done_label()
     }
 
     /// The "all done" page's text: there was nothing to study.
@@ -3754,10 +3935,10 @@ mod tests {
                 .expect("the card menu button has its menu");
             let mut items = Vec::new();
             menu_items(&menu, &mut items);
-            assert_eq!(items.len(), 5);
+            assert_eq!(items.len(), 6);
             for (action, accel) in items {
-                // Move to Deck… has no key.
-                if action == "review.move" {
+                // Move to Deck… and Practice This Card have no key.
+                if action == "review.move" || action == "review.practice-card" {
                     assert_eq!(accel, None);
                     continue;
                 }
@@ -3903,6 +4084,124 @@ mod tests {
                 .map(|id| state.review_events(id).unwrap().len())
                 .collect();
             assert_eq!(after, logs);
+        });
+    }
+
+    #[test]
+    fn a_one_card_practice_goes_back_and_only_a_session_offers_it() {
+        assert_eq!(at_end(true), AtEnd::Leave);
+        assert_eq!(at_end(false), AtEnd::Summary);
+        assert!(card_practice_offered(false));
+        assert!(!card_practice_offered(true));
+    }
+
+    /// A deck's session with a practice of its card on screen pushed from
+    /// the Card Menu, in a navigation view (`view.visible_page()` says
+    /// which page is shown).
+    fn session_with_card_practice(
+        state: &AppState,
+    ) -> (adw::NavigationView, gtk::Window, ReviewPage, ReviewPage) {
+        let deck = state.decks().unwrap().remove(0);
+        let session = ReviewPage::new(state.clone(), deck, |_| {}).unwrap();
+        let view = adw::NavigationView::new();
+        let window = gtk::Window::builder().child(&view).build();
+        view.push(&session);
+        session
+            .activate_action("review.practice-card", None)
+            .unwrap();
+        let practice = view
+            .visible_page()
+            .and_downcast::<ReviewPage>()
+            .filter(|page| page != &session)
+            .expect("a practice is pushed above the session");
+        (view, window, session, practice)
+    }
+
+    /// Practice This Card (ADR 0088): a practice of the card alone, which
+    /// writes nothing; after Show Answer, Fail (or Pass) goes back to the
+    /// page it came from, with no summary and without showing the card
+    /// again, and the session there carries on with that card.
+    #[test]
+    fn a_practice_of_one_card_writes_nothing_and_goes_back_after_an_answer() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, ids) = page_of(3);
+            drop(page);
+            let observer =
+                rusqlite::Connection::open(state.data_dir().join("rappel.sqlite3")).unwrap();
+            let logs: Vec<usize> = ids
+                .iter()
+                .map(|id| state.review_events(id).unwrap().len())
+                .collect();
+            let before = on_disk(&state, &observer);
+            let changes = state.total_changes();
+
+            for grade in [Grade::Fail, Grade::Pass] {
+                let (view, _window, session, practice) = session_with_card_practice(&state);
+                let card = current(&session).unwrap();
+                let imp = practice.imp();
+                assert!(practice.is_practice());
+                assert!(imp.banner.is_revealed());
+                assert_eq!(practice.title(), "Practice");
+                assert_eq!(current(&practice), Some(card.clone()));
+                assert_eq!(imp.window_title.subtitle(), "1 left");
+                // Not again from within the practice.
+                let _ = practice.activate_action("review.practice-card", None);
+                assert_eq!(view.visible_page().as_ref(), Some(practice.upcast_ref()));
+                practice.reveal();
+                practice.grade(grade);
+                // No summary: the card is done and the page leaves.
+                assert_eq!(current(&practice), None);
+                assert_ne!(imp.stack.visible_child_name().as_deref(), Some("summary"));
+                assert!(crate::testing::settle_until(
+                    || view.visible_page().as_ref() == Some(session.upcast_ref()),
+                    Duration::from_secs(5),
+                ));
+                // The session still shows its card.
+                assert_eq!(current(&session), Some(card));
+            }
+
+            assert_eq!(on_disk(&state, &observer), before);
+            assert_eq!(state.total_changes(), changes);
+            let after: Vec<usize> = ids
+                .iter()
+                .map(|id| state.review_events(id).unwrap().len())
+                .collect();
+            assert_eq!(after, logs);
+        });
+    }
+
+    /// A card suspended from its own practice's Card Menu leaves that
+    /// practice (which goes back) and the session below it too, and the
+    /// Undo toast still works.
+    #[test]
+    fn a_card_suspended_in_its_practice_leaves_the_session_below_too() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, _ids) = page_of(2);
+            drop(page);
+            let (view, _window, session, practice) = session_with_card_practice(&state);
+            let card = current(&session).unwrap();
+            practice.remove_current(Removal::Suspend);
+            assert!(state.card(&card).unwrap().suspended);
+            assert!(crate::testing::settle_until(
+                || view.visible_page().as_ref() == Some(session.upcast_ref()),
+                Duration::from_secs(5),
+            ));
+            assert_ne!(current(&session), Some(card));
+            assert!(current(&session).is_some());
+        });
+    }
+
+    /// The store refuses a suspended card: no page.
+    #[test]
+    fn a_suspended_card_has_no_practice() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, state, page, ids) = page_of(1);
+            drop(page);
+            state.set_suspended(&ids[..1], true).unwrap();
+            assert!(matches!(
+                ReviewPage::practice_card(state.clone(), &ids[0], StartedFrom::DeckPage, |_| {}),
+                Err(rappel_core::Error::CardSuspended(_))
+            ));
         });
     }
 

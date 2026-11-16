@@ -270,6 +270,11 @@ msgid "Card _Information"
 msgstr ""
 
 #: crates/app/data/card_row.blp
+#: crates/app/data/review_page.blp
+msgid "_Practice This Card"
+msgstr ""
+
+#: crates/app/data/card_row.blp
 msgid "_Suspend"
 msgstr ""
 
@@ -843,6 +848,10 @@ msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp
 msgid "Italic"
+msgstr ""
+
+#: crates/app/data/shortcuts-dialog.blp
+msgid "Formula"
 msgstr ""
 
 #: crates/app/data/shortcuts-dialog.blp

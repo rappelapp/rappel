@@ -91,9 +91,9 @@
        A pre-release is written with "~" (0.2.0~beta.1), which AppStream
        sorts before 0.2.0; the notes are not translated (ADR 0060). -->
   <releases>
-    <release version="0.4.2" date="2026-11-10">
+    <release version="0.4.2" date="2026-11-16">
       <description translate="no">
-        <p>French wording closer to Anki's: "À réviser" for cards due, "Temps passé", "Probabilité de rappel", "Révisions à venir" and others. A new test guards the icon names the app uses.</p>
+        <p>Practice This Card in each card's menu: go over one card without changing its schedule. In the card editor, Ctrl+M makes a formula, formulas are no longer styled by the Markdown inside them, and the line between the fields and the preview is gone. French wording closer to Anki's: "À réviser" for cards due, "Temps passé", "Probabilité de rappel", "Révisions à venir" and others. A new test guards the icon names the app uses.</p>
       </description>
     </release>
     <release version="0.4.1" date="2026-11-10">

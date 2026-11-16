@@ -130,6 +130,10 @@ mod imp {
         pub editing: Rc<Cell<bool>>,
         /// The card to focus when the editor closes: the one last saved.
         pub focus_after_edit: RefCell<Option<String>>,
+        /// The card of a practice pushed from its menu (Practice This
+        /// Card, ADR 0088): its row takes the focus when this page is
+        /// shown again.
+        pub practised_card: RefCell<Option<String>>,
         /// The pending re-check of what there is to study.
         pub study_timer: Debounce,
         /// A narrow window (the breakpoint applies): the rows show fewer
@@ -210,6 +214,7 @@ mod imp {
             });
             rows::install_id_action(klass, "deck.reset-card", super::DeckPage::reset);
             rows::install_id_action(klass, "deck.card-info", super::DeckPage::card_info);
+            rows::install_id_action(klass, "deck.practice-card", super::DeckPage::practise_card);
             // A card's menu, with a tag's id (ADR 0069).
             rows::install_id_action(klass, "deck.study-tag", super::DeckPage::study_tag);
             // A long press on a touch screen: start choosing with the card.
@@ -832,6 +837,45 @@ impl DeckPage {
         }
     }
 
+    /// Practice This Card (a card's menu, ADR 0088): pushes a practice of
+    /// card `id` alone, which writes nothing. Its answer, or its Back,
+    /// comes back here, with the focus on the card's row
+    /// (`focus_when_shown`).
+    fn practise_card(&self, id: &str) {
+        let Some(state) = self.imp().state.get() else {
+            return;
+        };
+        if self.selecting() {
+            return;
+        }
+        let Some(view) = nav::navigation_view(self) else {
+            return;
+        };
+        // A card edited during the practice updates this list too.
+        let on_saved = glib::clone!(
+            #[weak(rename_to = deck_page)]
+            self,
+            move |saved| {
+                deck_page.show_saved(saved);
+            }
+        );
+        match nav::push_unless_on_top(&view, || {
+            ReviewPage::practice_card(state.clone(), id, StartedFrom::DeckPage, on_saved)
+        }) {
+            Ok(true) => {
+                self.imp().practised_card.replace(Some(id.to_owned()));
+            }
+            Ok(false) => {}
+            Err(err) => {
+                // Translators: a toast: what is before ":" is its title, the rest is behind Details. {error} is why, in English.
+                self.error_toast(&with_error(
+                    &gettext("The session could not start: {error}"),
+                    &err,
+                ));
+            }
+        }
+    }
+
     /// Pushes a session over the cards carrying tag `tag_id` in every deck
     /// that is not archived (a card's menu, ADR 0069). Its Back, and its
     /// summary's Back to Deck, come back here; `shown` then reads the
@@ -1327,7 +1371,9 @@ impl DeckPage {
         }
     }
 
-    /// Focuses the first card (or Add Card) unless the focus is already
+    /// Back from a practice of one card, focuses that card's row
+    /// (`focus::back_from_practice`, ADR 0088). Otherwise focuses the first
+    /// card (or Add Card) unless the focus is already
     /// on this page (see [`focus::when_shown`]). On a push the focus is
     /// set here, in `shown`, never before: a grab before or during the push
     /// is lost (`ui::nav`). At startup the page is pushed without animation
@@ -1339,6 +1385,14 @@ impl DeckPage {
     /// gtk/gtkwindow.c, source read for GTK 4.22). Observed with
     /// libadwaita 1.10.0 and GTK 4.24.1, where the window test runs.
     fn focus_when_shown(&self) {
+        // Back from a practice of one card: that card's row.
+        let practised = self.imp().practised_card.take();
+        if let Some(position) =
+            focus::back_from_practice(practised.as_deref(), |id| self.shown_position(id))
+        {
+            self.focus(position);
+            return;
+        }
         let inside = self
             .root()
             .and_then(|root| root.focus())
@@ -2935,6 +2989,41 @@ mod tests {
             undo_reset(&state, &ids[0], &reset, &page.downgrade(), None);
             assert_eq!(state.review_events(&ids[0]).unwrap(), log);
             assert_eq!(state.card_state(&ids[0]).unwrap(), card_state);
+        });
+    }
+
+    /// Practice This Card from a row's menu (ADR 0088): a practice of that
+    /// card alone; after Show Answer and an answer it goes back to the deck
+    /// page, with the focus on that card's row.
+    #[test]
+    fn practice_this_card_comes_back_to_its_row() {
+        crate::testing::with_widgets(|| {
+            let (_tmp, _state, page, ids) = page_of(3);
+            let (window, view, _entry) = in_view(&page);
+            crate::testing::settle();
+            page.activate_action("deck.practice-card", Some(&ids[2].to_variant()))
+                .unwrap();
+            let practice = view
+                .visible_page()
+                .and_downcast::<ReviewPage>()
+                .expect("a practice is pushed");
+            assert!(practice.is_practice());
+            assert_eq!(
+                page.imp().practised_card.borrow().as_deref(),
+                Some(ids[2].as_str())
+            );
+            practice.activate_action("review.reveal", None).unwrap();
+            practice.activate_action("review.pass", None).unwrap();
+            assert!(crate::testing::settle_until(
+                || !reviewing(&view),
+                Duration::from_secs(5)
+            ));
+            assert!(crate::testing::settle_until(
+                || focused_card(&window).as_deref() == Some(ids[2].as_str()),
+                Duration::from_secs(5)
+            ));
+            assert!(page.imp().practised_card.borrow().is_none());
+            window.destroy();
         });
     }
 

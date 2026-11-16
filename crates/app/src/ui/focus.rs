@@ -141,6 +141,22 @@ pub fn when_shown(focus_inside: bool, rows: u32) -> ShownFocus {
     }
 }
 
+/// The row a page with a list focuses when it is shown again after a
+/// practice of one of its cards (Practice This Card, ADR 0088), so the
+/// keyboard is back on the card it left from: that card's row, at its
+/// position now (`position_of`, `None` when it is no longer listed:
+/// deleted, or moved out of the list, in the practice). `None` too when no
+/// card was practised from the page: the page focuses as it would
+/// otherwise ([`when_shown`]). Set by the page itself: the navigation view
+/// gives back the widget that had the focus, the row's menu button, whose
+/// recycled row may show another card by then.
+pub fn back_from_practice(
+    practised: Option<&str>,
+    position_of: impl FnOnce(&str) -> Option<u32>,
+) -> Option<u32> {
+    practised.and_then(position_of)
+}
+
 /// Keeps `label` (selectable) from showing all of its text selected when
 /// the window gives it the focus as its page is first shown. On the startup
 /// problem pages it is the only focusable widget, and `GtkWindow`, shown
@@ -280,6 +296,16 @@ mod tests {
         assert_eq!(when_shown(false, 3), ShownFocus::FirstRow);
         assert_eq!(when_shown(false, 1), ShownFocus::FirstRow);
         assert_eq!(when_shown(false, 0), ShownFocus::EmptyState);
+    }
+
+    #[test]
+    fn back_from_a_cards_practice_its_row_has_the_focus_if_still_listed() {
+        let listed = |id: &str| (id == "b").then_some(4);
+        assert_eq!(back_from_practice(Some("b"), listed), Some(4));
+        // Deleted or moved away during the practice.
+        assert_eq!(back_from_practice(Some("gone"), listed), None);
+        // No practice of a card: the page's own focus.
+        assert_eq!(back_from_practice(None, listed), None);
     }
 
     #[test]

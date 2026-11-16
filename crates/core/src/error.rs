@@ -390,6 +390,11 @@ pub enum Error {
     #[error("card {0} does not exist")]
     CardNotFound(String),
 
+    /// The card is suspended, so it cannot be practised (ADR 0070, 0088).
+    /// Nothing was read past it, and nothing was written.
+    #[error("card {0} is suspended")]
+    CardSuspended(String),
+
     /// The card is new (no surviving review since it was created or last
     /// reset), so a reset would only add a log entry that changes nothing.
     #[error("card {0} is already new, so there is no progress to reset")]
