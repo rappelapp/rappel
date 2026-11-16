@@ -584,14 +584,14 @@ mod tests {
             assert_eq!(status_text(CardStatus::New, NOW), "Nouvelle");
             assert_eq!(
                 status_text(CardStatus::Due(NOW - 1), NOW),
-                "À revoir maintenant"
+                "À réviser maintenant"
             );
             assert_eq!(
                 status_text(
                     CardStatus::Scheduled(NOW + 3 * crate::ui::time::DAY_MS),
                     NOW
                 ),
-                "À revoir dans 3\u{a0}jours"
+                "À réviser dans 3\u{a0}jours"
             );
             assert_eq!(crate::ui::text::card_count(5_000), "5\u{202f}000 cartes");
             assert_eq!(crate::ui::text::card_count(0), "Aucune carte");

@@ -166,7 +166,7 @@ mod tests {
         const NOW: i64 = 1_000_000_000_000;
         crate::i18n::tests::in_french(|| {
             assert_eq!(relative_due(NOW + 3 * DAY_MS, NOW), "dans 3\u{a0}jours");
-            assert_eq!(relative_due(NOW, NOW), "à revoir maintenant");
+            assert_eq!(relative_due(NOW, NOW), "à réviser maintenant");
             assert_eq!(relative_due(NOW - DAY_MS, NOW), "en retard de 1\u{a0}jour");
             assert_eq!(
                 relative_due(NOW - 2 * DAY_MS, NOW),

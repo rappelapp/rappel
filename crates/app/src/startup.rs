@@ -8,7 +8,7 @@ use rappel_core::Error;
 use rappel_core::data_dir::{self, BuildProfile, DataDirEnv};
 use rappel_core::domain::{SettingKey, Settings};
 
-use crate::i18n::{fill, gettext};
+use crate::i18n::{fill, gettext, pgettext};
 use crate::state::AppState;
 
 /// Why the database needs a backup restored before the app can continue.
@@ -168,7 +168,7 @@ pub fn setting_name(key: SettingKey) -> String {
     match key {
         SettingKey::DesiredRetention => gettext("Desired Retention"),
         SettingKey::MaxNewPerDay => gettext("New Cards per Day"),
-        SettingKey::MaxReviewsPerDay => gettext("Reviews per Day"),
+        SettingKey::MaxReviewsPerDay => pgettext("setting", "Reviews per Day"),
         SettingKey::DayStartHour => gettext("Day Starts At"),
     }
 }

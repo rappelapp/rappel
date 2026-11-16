@@ -527,7 +527,7 @@ mod tests {
             assert_eq!(counted_units(days, 0), "0\u{a0}jour");
             assert_eq!(
                 due_new_line(1_234, 20).as_deref(),
-                Some("1\u{202f}234 à revoir · 20 nouvelles")
+                Some("1\u{202f}234 à réviser · 20 nouvelles")
             );
             assert_eq!(
                 decks_cards_reviews(12, 1, 5_210).as_deref(),

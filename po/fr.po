@@ -105,7 +105,7 @@ msgstr "En apprentissage"
 
 #: crates/app/data/browser_page.blp
 msgid "Due"
-msgstr "À revoir"
+msgstr "À réviser"
 
 #: crates/app/data/browser_page.blp
 #: crates/app/data/card_row.blp
@@ -194,7 +194,7 @@ msgstr "A_perçu"
 #: crates/app/data/card_info_dialog.blp
 #: crates/app/data/shortcuts-dialog.blp
 msgid "Card Information"
-msgstr "Informations sur la carte"
+msgstr "Infos sur la carte"
 
 #: crates/app/data/card_info_dialog.blp
 msgid "Card"
@@ -244,7 +244,7 @@ msgstr "Difficulté"
 
 #: crates/app/data/card_info_dialog.blp
 msgid "Recall Now"
-msgstr "Rappel actuel"
+msgstr "Probabilité de rappel"
 
 #: crates/app/data/card_info_dialog.blp
 msgid "Next Due"
@@ -269,7 +269,7 @@ msgstr "_Modifier…"
 #: crates/app/data/card_row.blp
 #: crates/app/data/review_page.blp
 msgid "Card _Information"
-msgstr "_Informations sur la carte"
+msgstr "_Infos sur la carte"
 
 #: crates/app/data/card_row.blp
 msgid "_Suspend"
@@ -488,19 +488,19 @@ msgid "The most new cards a deck introduces in a day"
 msgstr "Le plus grand nombre de nouvelles cartes qu’un paquet présente par jour"
 
 #: crates/app/data/preferences_dialog.blp
-#: crates/app/src/pages/stats_page/text.rs
 #: crates/app/src/startup.rs
+msgctxt "setting"
 msgid "Reviews per Day"
-msgstr "Révisions par jour"
+msgstr "Révisions max. par jour"
 
 #: crates/app/data/preferences_dialog.blp
 msgid "The most due cards a deck shows in a day; the rest wait for the next day"
-msgstr "Le plus grand nombre de cartes à revoir qu’un paquet montre par jour ; les autres attendent le lendemain"
+msgstr "Le plus grand nombre de cartes à réviser qu’un paquet montre par jour ; les autres attendent le lendemain"
 
 #: crates/app/data/preferences_dialog.blp
 #: crates/app/src/startup.rs
 msgid "Day Starts At"
-msgstr "Début de la journée"
+msgstr "Le jour commence à"
 
 #: crates/app/data/preferences_dialog.blp
 msgid "Studying before this time still counts toward the previous day"
@@ -979,7 +979,7 @@ msgstr "_Temps"
 
 #: crates/app/data/stats_page.blp
 msgid "_Forecast"
-msgstr "_Prévision"
+msgstr "À _venir"
 
 #: crates/app/data/stats_page.blp
 msgctxt "chart legend"
@@ -1613,7 +1613,7 @@ msgstr "Lecture des données impossible : {error}"
 #. Translators: a card's status; {when} is "in 3 days".
 #: crates/app/src/pages/browser_page/text.rs
 msgid "Due {when}"
-msgstr "À revoir {when}"
+msgstr "À réviser {when}"
 
 #. Translators: the start of the line under a card in All Cards, before the card's back: {deck} is its deck's name.
 #: crates/app/src/pages/browser_page/text.rs
@@ -2007,7 +2007,7 @@ msgstr "La réinitialisation du réglage s’est arrêtée de façon inattendue"
 
 #: crates/app/src/pages/stats_page/text.rs
 msgid "Expected retention"
-msgstr "Rétention attendue"
+msgstr "Rétention estimée"
 
 #: crates/app/src/pages/stats_page/text.rs
 msgid "no reviewed cards"
@@ -2023,15 +2023,19 @@ msgstr "aucune révision"
 
 #: crates/app/src/pages/stats_page/text.rs
 msgid "Time studied, last 30 days"
-msgstr "Temps d’étude, 30 derniers jours"
+msgstr "Temps passé, 30 derniers jours"
+
+#: crates/app/src/pages/stats_page/text.rs
+msgid "Reviews per Day"
+msgstr "Révisions par jour"
 
 #: crates/app/src/pages/stats_page/text.rs
 msgid "Time Studied per Day"
-msgstr "Temps d’étude par jour"
+msgstr "Temps passé par jour"
 
 #: crates/app/src/pages/stats_page/text.rs
 msgid "Due Forecast"
-msgstr "Prévision des révisions"
+msgstr "Révisions à venir"
 
 #: crates/app/src/pages/stats_page/text.rs
 msgid "Today"
@@ -2082,8 +2086,8 @@ msgstr[1] "{count} cartes"
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{count} card due"
 msgid_plural "{count} cards due"
-msgstr[0] "{count} carte à revoir"
-msgstr[1] "{count} cartes à revoir"
+msgstr[0] "{count} carte à réviser"
+msgstr[1] "{count} cartes à réviser"
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
@@ -2108,27 +2112,27 @@ msgstr "{period} : {reviews}, {passed} réussies, {failed} ratées ; jour le
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{day}: no time studied"
-msgstr "{day} : aucun temps d’étude"
+msgstr "{day} : aucun temps passé"
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct", {time} "12 min".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{day}: {time} studied"
-msgstr "{day} : {time} d’étude"
+msgstr "{day} : {time} passées"
 
 #. Translators: a chart's summary for screen readers; {period} is "Last 30 Days" or "8 Sep – 7 Oct".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{period}: no time studied."
-msgstr "{period} : aucun temps d’étude."
+msgstr "{period} : aucun temps passé."
 
 #. Translators: a chart's summary for screen readers: {period} is "Last 30 Days" or "8 Sep – 7 Oct", {time} "3 h 12 min", {day} "14 October", {most} "25 min".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{period}: {time} studied, longest day {day} with {most}."
-msgstr "{period} : {time} d’étude ; jour le plus long : {day}, avec {most}."
+msgstr "{period} : {time} passées ; jour le plus long : {day}, avec {most}."
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{day}: nothing due"
-msgstr "{day} : rien à revoir"
+msgstr "{day} : rien à réviser"
 
 #. Translators: a chart's day; {day} is "Tue 14 Oct", {cards} "12 cards due".
 #: crates/app/src/pages/stats_page/text.rs
@@ -2138,7 +2142,7 @@ msgstr "{day} : {cards}"
 #. Translators: a chart's summary for screen readers; {period} is "Next 30 Days".
 #: crates/app/src/pages/stats_page/text.rs
 msgid "{period}: nothing due."
-msgstr "{period} : rien à revoir."
+msgstr "{period} : rien à réviser."
 
 #: crates/app/src/pages/stats_page/text.rs
 #: crates/app/src/widgets/deck_row/text.rs
@@ -3094,8 +3098,8 @@ msgstr "Aucune carte"
 #: crates/app/src/ui/text.rs
 msgid "{count} due"
 msgid_plural "{count} due"
-msgstr[0] "{count} à revoir"
-msgstr[1] "{count} à revoir"
+msgstr[0] "{count} à réviser"
+msgstr[1] "{count} à réviser"
 
 #. Translators: {count} is a number of new cards to learn today ("5 new"), shown under a deck's name.
 #: crates/app/src/ui/text.rs
@@ -3219,7 +3223,7 @@ msgstr "dans {interval}"
 
 #: crates/app/src/ui/time.rs
 msgid "due now"
-msgstr "à revoir maintenant"
+msgstr "à réviser maintenant"
 
 #. Translators: a card that should have been reviewed {count} days ago.
 #: crates/app/src/ui/time.rs
@@ -3323,7 +3327,7 @@ msgstr "Aujourd’hui"
 #: crates/app/src/widgets/card_row/text.rs
 msgctxt "card due"
 msgid "due today"
-msgstr "à revoir aujourd’hui"
+msgstr "à réviser aujourd’hui"
 
 #. Translators: at the end of a card's row: when it is due again, later today; {interval} is "10 min" or "5 h".
 #: crates/app/src/widgets/card_row/text.rs
@@ -3335,7 +3339,7 @@ msgstr "Dans {interval}"
 #: crates/app/src/widgets/card_row/text.rs
 msgctxt "card due"
 msgid "due in {interval}"
-msgstr "à revoir dans {interval}"
+msgstr "à réviser dans {interval}"
 
 #. Translators: at the end of a card's row: due in the next study day.
 #: crates/app/src/widgets/card_row/text.rs
@@ -3347,7 +3351,7 @@ msgstr "Demain"
 #: crates/app/src/widgets/card_row/text.rs
 msgctxt "card due"
 msgid "due tomorrow"
-msgstr "à revoir demain"
+msgstr "à réviser demain"
 
 #. Translators: at the end of a card's row: due in {count} days (2 or more).
 #: crates/app/src/widgets/card_row/text.rs
@@ -3362,8 +3366,8 @@ msgstr[1] "Dans {count} jours"
 msgctxt "card due"
 msgid "due in {count} day"
 msgid_plural "due in {count} days"
-msgstr[0] "à revoir dans {count} jour"
-msgstr[1] "à revoir dans {count} jours"
+msgstr[0] "à réviser dans {count} jour"
+msgstr[1] "à réviser dans {count} jours"
 
 #. Translators: starts a study session over the cards that carry a tag, in every deck; {tag} is the tag's name.
 #: crates/app/src/widgets/card_row/text.rs
@@ -3584,7 +3588,7 @@ msgstr "Étudiez une carte, puis dites si vous la saviez"
 
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Your decks with the cards due today"
-msgstr "Vos paquets et les cartes à revoir aujourd’hui"
+msgstr "Vos paquets et les cartes à réviser aujourd’hui"
 
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "A deck's cards, grouped by their tags"

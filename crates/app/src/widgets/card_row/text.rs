@@ -443,7 +443,7 @@ mod tests {
             assert_eq!(word(CardStatus::Suspended), "Suspendue");
             assert_eq!(
                 due_word(CardStatus::Scheduled(day + 4 * DAY_MS), NOW, day).spoken,
-                "à revoir dans 5\u{a0}jours"
+                "à réviser dans 5\u{a0}jours"
             );
         });
     }
