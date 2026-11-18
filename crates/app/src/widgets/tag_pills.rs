@@ -332,7 +332,7 @@ impl TagPills {
     fn removable_pill(&self) -> Pill {
         let label = pill_label(true);
         let remove = gtk::Button::builder()
-            .icon_name("window-close-symbolic")
+            .icon_name("io.github.rappelapp.Rappel-window-close-symbolic")
             .tooltip_text(pgettext("tag pill", "Remove Tag"))
             .valign(gtk::Align::Center)
             .css_classes(["flat", "circular"])

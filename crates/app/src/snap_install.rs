@@ -9,6 +9,13 @@
 //!   are valid and carry every language of `po/LINGUAS`.
 //! - It refuses a relative or `..` destination, and half of its test
 //!   variables, writing nothing.
+//! - `scripts/cargo-outputs.sh` finds the binary and the build script's
+//!   output folder in cargo's JSON messages by the app's package id, in
+//!   the build-folder layouts before and since cargo 1.100, and refuses
+//!   messages where either is missing or not one.
+//! - The install script itself, with a stand-in `cargo` on `PATH`, takes
+//!   the binary and that folder from it by package id and prints cargo's
+//!   version, without a release build.
 //! - The snap's recipe keeps the permissions the brief allows (no `home`,
 //!   `removable-media`, `network`, `browser-support`, no classic
 //!   confinement) and the workflow never publishes or reads a secret: the
@@ -264,6 +271,231 @@ fn the_install_script_refuses_bad_arguments_and_writes_nothing() {
     }
 }
 
+/// Runs `scripts/cargo-outputs.sh package_id` with `messages` on stdin.
+fn cargo_outputs(package_id: &str, messages: &str) -> Output {
+    use std::io::Write as _;
+    let mut child = Command::new("bash")
+        .arg(repo().join("scripts/cargo-outputs.sh"))
+        .arg(package_id)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("bash could not run scripts/cargo-outputs.sh ({err})"));
+    child
+        .stdin
+        .take()
+        .expect("stdin was piped")
+        .write_all(messages.as_bytes())
+        .expect("the script reads its stdin");
+    child.wait_with_output().expect("the script finishes")
+}
+
+/// Cargo's messages for a build of the app, trimmed to the fields the
+/// parser reads, around the app's own: rappel-core's library and build
+/// script (another `out_dir`), the app's build script as an artifact
+/// (`executable` null), and a package whose id starts with the app's.
+/// `app` and `core` are the two packages' ids, `out` the app's `out_dir`.
+fn messages(app: &str, core: &str, target: &str, out: &str, core_out: &str) -> String {
+    let artifact = |id: &str, kind: &str, executable: &str| {
+        format!(
+            "{{\"reason\":\"compiler-artifact\",\"package_id\":\"{id}\",\
+             \"target\":{{\"kind\":[\"{kind}\"]}},\"executable\":{executable},\"fresh\":false}}"
+        )
+    };
+    let script = |id: &str, out_dir: &str| {
+        format!(
+            "{{\"reason\":\"build-script-executed\",\"package_id\":\"{id}\",\
+             \"linked_libs\":[],\"linked_paths\":[],\"cfgs\":[],\"env\":[],\
+             \"out_dir\":\"{out_dir}\"}}"
+        )
+    };
+    let decoy = format!("{app}-decoy");
+    [
+        artifact(core, "custom-build", "null"),
+        script(core, core_out),
+        artifact(core, "lib", "null"),
+        artifact(app, "custom-build", "null"),
+        script(app, out),
+        artifact(&decoy, "bin", &format!("\"{target}/release/decoy\"")),
+        script(&decoy, &format!("{target}/release/build/decoy/0/out")),
+        artifact(app, "bin", &format!("\"{target}/release/rappel\"")),
+        "{\"reason\":\"build-finished\",\"success\":true}".to_owned(),
+    ]
+    .join("\n")
+        + "\n"
+}
+
+#[test]
+fn the_binary_and_out_dir_are_found_by_package_id_in_any_layout() {
+    let target = "/build/rappel/target";
+    // (layout, the app's id, rappel-core's id, the app's out_dir, core's).
+    // Cargo before 1.77 is not supported (ADR 0090).
+    let cases = [
+        // Cargo 1.100 (checked with its own build of this workspace):
+        // `build/<package>/<hash>/out`, the id as a package id spec.
+        (
+            "cargo 1.100",
+            "path+file:///build/rappel/crates/app#rappel@0.4.3",
+            "path+file:///build/rappel/crates/core#rappel-core@0.4.3",
+            format!("{target}/release/build/rappel/b82b475a3d060210/out"),
+            format!("{target}/release/build/rappel-core/5d1e0c3a9b7f2468/out"),
+        ),
+        // Cargo 1.77 to 1.99: `build/<package>-<hash>/out`.
+        (
+            "cargo 1.99",
+            "path+file:///build/rappel/crates/app#rappel@0.4.3",
+            "path+file:///build/rappel/crates/core#rappel-core@0.4.3",
+            format!("{target}/release/build/rappel-07e9dc817fe1de31/out"),
+            format!("{target}/release/build/rappel-core-1f2e3d4c5b6a7980/out"),
+        ),
+    ];
+    for (layout, app, core, out, core_out) in cases {
+        let output = cargo_outputs(app, &messages(app, core, target, &out, &core_out));
+        assert!(
+            output.status.success(),
+            "{layout}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            format!("{target}/release/rappel\n{out}\n"),
+            "{layout}"
+        );
+    }
+}
+
+#[test]
+fn the_parser_refuses_missing_or_ambiguous_outputs() {
+    let app = "path+file:///r/crates/app#rappel@0.4.3";
+    let core = "path+file:///r/crates/core#rappel-core@0.4.3";
+    let full = messages(app, core, "/t", "/t/release/build/rappel/1/out", "/t/c");
+    let without = |reason: &str| {
+        full.lines()
+            .filter(|line| !(line.contains(app) && line.contains(reason)))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
+    };
+    let twice = format!(
+        "{full}{}\n",
+        full.lines()
+            .find(|line| line.contains("build-script-executed") && line.contains(app))
+            .expect("the app's build script ran")
+            .replace("/1/out", "/2/out")
+    );
+    let two_binaries = format!(
+        "{full}{}\n",
+        full.lines()
+            .find(|line| line.contains("\"bin\"") && line.contains(&format!("\"{app}\"")))
+            .expect("the app's binary was built")
+            .replace("/release/rappel", "/release/other")
+    );
+    let cases = [
+        ("two binaries", two_binaries),
+        ("no build script", without("build-script-executed")),
+        ("no binary", without("\"bin\"")),
+        ("two out_dirs", twice),
+        ("no messages", String::new()),
+    ];
+    for (case, input) in cases {
+        let output = cargo_outputs(app, &input);
+        assert_eq!(output.status.code(), Some(1), "{case} was not refused");
+        assert!(output.stdout.is_empty(), "{case} printed a result");
+    }
+    // Another package's id, or none, finds nothing of the app's.
+    let other = cargo_outputs("path+file:///r/crates/app#rappel@0.4", &full);
+    assert_eq!(other.status.code(), Some(1), "a prefix of the id matched");
+    assert_eq!(cargo_outputs("", &full).status.code(), Some(2));
+}
+
+#[test]
+fn the_install_script_takes_cargos_outputs_by_package_id() {
+    // `snap-install.sh` without its test variables, with a stand-in `cargo`
+    // first on PATH that answers `--version`, `pkgid` and `build` as cargo
+    // 1.100 would: the glue between it and `cargo-outputs.sh` (ADR 0090).
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let target = dir.path().join("target");
+    let release = target.join("release");
+    std::fs::create_dir_all(&release).expect("the temporary folder is writable");
+    let binary = release.join("rappel");
+    std::fs::write(&binary, b"#!/bin/sh\n").expect("the temporary folder is writable");
+    let target_text = target.to_str().expect("a UTF-8 temporary path");
+    let app = "path+file:///stub/crates/app#rappel@0.4.3";
+    let core = "path+file:///stub/crates/core#rappel-core@0.4.3";
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).expect("the temporary folder is writable");
+    let stub = |messages: &str| {
+        let messages_path = dir.path().join("messages.json");
+        std::fs::write(&messages_path, messages).expect("the temporary folder is writable");
+        let script = format!(
+            "#!/bin/sh\ncase \"$1\" in\n\
+             --version) echo 'cargo 1.100.0 (stub)' ;;\n\
+             pkgid) echo '{app}' ;;\n\
+             build) cat '{}' ;;\n\
+             *) exit 3 ;;\nesac\n",
+            messages_path.display()
+        );
+        let cargo = bin.join("cargo");
+        std::fs::write(&cargo, script).expect("the temporary folder is writable");
+        std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755))
+            .expect("the stand-in can be made executable");
+    };
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let path = Path::new(&path);
+
+    stub(&messages(app, core, target_text, OUT_DIR, "/elsewhere/out"));
+    let dest = dir.path().join("dest");
+    let output = install(
+        &[dest.to_str().expect("a UTF-8 temporary path")],
+        &[("PATH", path)],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "the install failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.starts_with("cargo 1.100.0 (stub)\n"), "{stdout}");
+    assert_eq!(
+        std::fs::read(dest.join(format!("usr/bin/{BINARY}"))).expect("installed"),
+        std::fs::read(&binary).expect("the stand-in is readable"),
+    );
+    assert!(
+        dest.join(format!("usr/share/applications/{APP_ID}.desktop"))
+            .is_file()
+    );
+
+    // Messages without the app's build script: refused, nothing written.
+    let full = messages(app, core, target_text, OUT_DIR, "/elsewhere/out");
+    stub(
+        &(full
+            .lines()
+            .filter(|line| !(line.contains("build-script-executed") && line.contains(app)))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"),
+    );
+    let dest = dir.path().join("dest-2");
+    let output = install(
+        &[dest.to_str().expect("a UTF-8 temporary path")],
+        &[("PATH", path)],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("cargo did not report the binary or the build script's folder")
+    );
+    assert!(
+        !dest.exists(),
+        "a refused install wrote into the destination"
+    );
+}
+
 /// The lines of a YAML file without comments, trimmed.
 fn yaml_lines(text: &str) -> Vec<String> {
     text.lines()
@@ -379,6 +611,7 @@ fn the_snap_workflow_only_builds() {
     for path in [
         "- 'snap/**'",
         "- 'scripts/snap-install.sh'",
+        "- 'scripts/cargo-outputs.sh'",
         "- '.github/workflows/snap.yml'",
     ] {
         assert!(

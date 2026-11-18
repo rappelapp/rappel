@@ -1033,10 +1033,6 @@ msgid "Folder not allowed: a backup inside Rappel’s data folder would be lost 
 msgstr "Dossier refusé : une sauvegarde dans le dossier de données de Rappel serait perdue avec lui. Choisissez un dossier en dehors."
 
 #: crates/app/src/auto_backup.rs
-msgid "the backup folder was not found; is its disk connected?"
-msgstr "le dossier de sauvegarde est introuvable ; son disque est-il branché ?"
-
-#: crates/app/src/auto_backup.rs
 msgid "the backup folder is not a folder any more; choose it again in Preferences"
 msgstr "le dossier de sauvegarde n’est plus un dossier ; choisissez-le à nouveau dans les Préférences"
 
@@ -1080,10 +1076,43 @@ msgstr "elle a pris trop de temps et a été arrêtée"
 msgid "Rappel was stopped before it finished"
 msgstr "Rappel a été arrêté avant la fin"
 
+#. Translators: why a backup failed, after "Automatic backup failed: ". {folder} is the folder's full path.
+#: crates/app/src/auto_backup.rs
+msgid "the folder “{folder}” was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected"
+msgstr "le dossier « {folder} » est introuvable ; il a peut-être été renommé, déplacé ou supprimé, ou se trouve sur un disque non connecté"
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected"
+msgstr "le dossier de sauvegarde est introuvable ; il a peut-être été renommé, déplacé ou supprimé, ou se trouve sur un disque non connecté"
+
+#. Translators: the text of an alert at the start. {why} is why, ending without a full stop (for example "the folder “/home/me/Backups” was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected").
+#: crates/app/src/auto_backup.rs
+msgid "Rappel could not make its automatic backup: {why}.\n\nRappel does not create the folder by itself, and has not moved or deleted any backup or data. If the folder is on a disk, connect it; otherwise choose the folder again to keep making backups."
+msgstr "Rappel n’a pas pu faire sa sauvegarde automatique : {why}.\n\nRappel ne crée pas le dossier de lui-même et n’a déplacé ni supprimé aucune sauvegarde ni aucune donnée. Si le dossier est sur un disque, branchez-le ; sinon, choisissez à nouveau le dossier pour que les sauvegardes continuent."
+
+#: crates/app/src/auto_backup.rs
+msgid "Backup Folder Not Found"
+msgstr "Dossier de sauvegarde introuvable"
+
 #. Translators: a toast at the start: what is before ":" is its title, the rest is behind Details. {reason} is why.
 #: crates/app/src/auto_backup.rs
 msgid "Automatic backup failed: {reason}"
 msgstr "Échec de la sauvegarde : {reason}"
+
+#: crates/app/src/auto_backup.rs
+#: crates/app/src/transfer/anki.rs
+#: crates/app/src/transfer/mod.rs
+#: crates/app/src/ui/toast.rs
+msgid "_Close"
+msgstr "_Fermer"
+
+#: crates/app/src/auto_backup.rs
+msgid "_Choose Folder…"
+msgstr "_Choisir le dossier…"
+
+#: crates/app/src/dialogs/about.rs
+msgid "Adwaita Icons"
+msgstr "Icônes Adwaita"
 
 #: crates/app/src/dialogs/about.rs
 msgid "KaTeX Fonts"
@@ -2339,12 +2368,6 @@ msgstr "La base de données n’a pas pu être ouverte."
 #: crates/app/src/transfer/mod.rs
 msgid "Checking the file stopped unexpectedly"
 msgstr "La vérification du fichier s’est arrêtée de façon inattendue"
-
-#: crates/app/src/transfer/anki.rs
-#: crates/app/src/transfer/mod.rs
-#: crates/app/src/ui/toast.rs
-msgid "_Close"
-msgstr "_Fermer"
 
 #: crates/app/src/transfer/anki.rs
 #: crates/app/src/transfer/mod.rs
@@ -3618,6 +3641,18 @@ msgstr "Écrivez vos cartes en Markdown avec un aperçu en direct"
 #: data/io.github.rappelapp.Rappel.metainfo.xml.in
 msgid "Pictures on cards, on a phone"
 msgstr "Des images sur les cartes, sur un téléphone"
+
+#~ msgid "the folder “{folder}” was not found; it may have been renamed, moved or deleted"
+#~ msgstr "le dossier « {folder} » est introuvable ; il a peut-être été renommé, déplacé ou supprimé"
+
+#~ msgid "the backup folder was not found; it may have been renamed, moved or deleted"
+#~ msgstr "le dossier de sauvegarde est introuvable ; il a peut-être été renommé, déplacé ou supprimé"
+
+#~ msgid "Rappel could not make its automatic backup: {why}.\n\nRappel does not create the folder by itself, and no backup or data was moved or deleted. Choose the folder again to keep making backups."
+#~ msgstr "Rappel n’a pas pu faire sa sauvegarde automatique : {why}.\n\nRappel ne recrée pas le dossier de lui-même, et aucune sauvegarde ni aucune donnée n’a été déplacée ou supprimée. Choisissez à nouveau le dossier pour que les sauvegardes continuent."
+
+#~ msgid "the backup folder was not found; is its disk connected?"
+#~ msgstr "le dossier de sauvegarde est introuvable ; son disque est-il branché ?"
 
 #~ msgid "Choose a folder outside Rappel’s data folder"
 #~ msgstr "Choisissez un dossier hors du dossier de données de Rappel"

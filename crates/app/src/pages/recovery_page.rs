@@ -138,7 +138,7 @@ glib::wrapper! {
 
 /// The page's icon, as in `data/recovery_page.blp`, given back after a
 /// short window took it off (`ui::breakpoint::compact_status_page`).
-const ICON: &str = "dialog-warning-symbolic";
+const ICON: &str = "io.github.rappelapp.Rappel-dialog-warning-symbolic";
 
 impl RecoveryPage {
     /// Explains `reason`, lists the backups in `data_dir`, and calls

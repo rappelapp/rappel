@@ -26,7 +26,7 @@ use crate::ui::worker;
 type OnReset = dyn Fn(PathBuf, Store, SettingKey, bool);
 
 /// The status page's icon, left out on a short window.
-const ICON: &str = "dialog-warning-symbolic";
+const ICON: &str = "io.github.rappelapp.Rappel-dialog-warning-symbolic";
 
 mod imp {
     use std::cell::{Cell, RefCell};

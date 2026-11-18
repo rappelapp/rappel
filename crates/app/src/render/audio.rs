@@ -71,10 +71,14 @@ impl State {
     /// The icon of the button.
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Ready => "media-playback-start-symbolic",
-            Self::Loading | Self::Playing => "media-playback-pause-symbolic",
-            Self::Unavailable | Self::TooMany | Self::NoPlayback => "audio-x-generic-symbolic",
-            Self::Failed => "dialog-warning-symbolic",
+            Self::Ready => "io.github.rappelapp.Rappel-media-playback-start-symbolic",
+            Self::Loading | Self::Playing => {
+                "io.github.rappelapp.Rappel-media-playback-pause-symbolic"
+            }
+            Self::Unavailable | Self::TooMany | Self::NoPlayback => {
+                "io.github.rappelapp.Rappel-audio-x-generic-symbolic"
+            }
+            Self::Failed => "io.github.rappelapp.Rappel-dialog-warning-symbolic",
         }
     }
 
@@ -211,8 +215,14 @@ mod tests {
         assert!(State::NoPlayback.tooltip().contains("GStreamer"));
         assert_eq!(Ready.tooltip(), "Play");
         assert_eq!(Playing.tooltip(), "Pause");
-        assert_eq!(Ready.icon(), "media-playback-start-symbolic");
-        assert_eq!(Playing.icon(), "media-playback-pause-symbolic");
+        assert_eq!(
+            Ready.icon(),
+            "io.github.rappelapp.Rappel-media-playback-start-symbolic"
+        );
+        assert_eq!(
+            Playing.icon(),
+            "io.github.rappelapp.Rappel-media-playback-pause-symbolic"
+        );
         assert_eq!(Unavailable.note().as_deref(), Some("Audio not available"));
         assert_eq!(Failed.note().as_deref(), Some("Could not be played"));
         assert_eq!(Failed.tooltip(), "Audio could not be played");

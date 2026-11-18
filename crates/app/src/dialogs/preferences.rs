@@ -213,6 +213,16 @@ pub(crate) fn retention_layout() -> Result<(adw::AlertDialog, adw::SpinRow), &'s
 
 /// Shows the preferences over `window`, unless they are already open.
 pub fn show(window: &RappelWindow, state: &AppState) {
+    show_with(window, state, false);
+}
+
+/// Shows the preferences and, at once, the chooser of the automatic backup
+/// folder: what the report of a missing backup folder offers.
+pub fn show_choosing_backup_folder(window: &RappelWindow, state: &AppState) {
+    show_with(window, state, true);
+}
+
+fn show_with(window: &RappelWindow, state: &AppState, choose_backup_folder: bool) {
     let open = window.dialogs();
     if (0..open.n_items()).any(|i| {
         open.item(i)
@@ -269,6 +279,17 @@ pub fn show(window: &RappelWindow, state: &AppState) {
         }
     ));
     rows.dialog.present(Some(window));
+    if choose_backup_folder {
+        // After the dialog is shown, so the chooser opens over it; the same
+        // click as Choose… on the row, with its guard against a second one.
+        glib::idle_add_local_once(glib::clone!(
+            #[weak(rename_to = choose)]
+            rows.auto_backup_choose,
+            move || {
+                choose.emit_clicked();
+            }
+        ));
+    }
 }
 
 /// The state the handlers share. Its `refresh` holds the rows weakly.
@@ -497,7 +518,11 @@ async fn choose_backup_folder(window: &RappelWindow, rows: &AutoBackupRow, ctx: 
         .modal(true)
         .build();
     if let Some(current) = auto_backup::load(ctx.state.data_dir()).folder {
-        chooser.set_initial_folder(Some(&gio::File::for_path(current)));
+        // A missing folder (what the report of one offers to replace) is
+        // not given to the chooser: its nearest existing parent is.
+        if let Some(start) = auto_backup::existing_ancestor(&current, Path::is_dir) {
+            chooser.set_initial_folder(Some(&gio::File::for_path(start)));
+        }
     }
     let chosen = match chooser.select_folder_future(Some(window)).await {
         Ok(file) => file,

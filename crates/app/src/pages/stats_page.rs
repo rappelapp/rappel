@@ -24,7 +24,7 @@ use crate::widgets::bar_chart::{StyleWatch, paint_swatch};
 
 /// The empty state's icon, as in its layout, given back after a short
 /// window took it off (`ui::breakpoint::compact_status_page`).
-const EMPTY_ICON: &str = "document-open-recent-symbolic";
+const EMPTY_ICON: &str = "io.github.rappelapp.Rappel-document-open-recent-symbolic";
 
 /// How days are named on this page, in the local zone and language.
 fn day_names() -> DayNames<'static> {

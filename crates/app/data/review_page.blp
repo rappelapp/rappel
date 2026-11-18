@@ -48,7 +48,7 @@ template $RappelReviewPage: Adw.NavigationPage {
 
         [start]
         Gtk.Button undo_button {
-          icon-name: "edit-undo-symbolic";
+          icon-name: "io.github.rappelapp.Rappel-edit-undo-symbolic";
           action-name: "review.undo";
 
           accessibility {
@@ -59,7 +59,7 @@ template $RappelReviewPage: Adw.NavigationPage {
         [end]
         Gtk.MenuButton card_menu_button {
           visible: false;
-          icon-name: "view-more-symbolic";
+          icon-name: "io.github.rappelapp.Rappel-view-more-symbolic";
           menu-model: card_menu;
           tooltip-text: _("Card Menu");
 
@@ -71,7 +71,7 @@ template $RappelReviewPage: Adw.NavigationPage {
         [end]
         Gtk.Button edit_button {
           visible: false;
-          icon-name: "document-edit-symbolic";
+          icon-name: "io.github.rappelapp.Rappel-document-edit-symbolic";
           action-name: "review.edit";
 
           accessibility {
@@ -180,7 +180,7 @@ template $RappelReviewPage: Adw.NavigationPage {
           child: Adw.StatusPage summary_page {
             // Also in the page (`SUMMARY_ICON`), which takes it off on
             // short windows.
-            icon-name: "object-select-symbolic";
+            icon-name: "io.github.rappelapp.Rappel-object-select-symbolic";
             title: _("Session Complete");
 
             child: Gtk.Box summary_box {

@@ -30,8 +30,8 @@ const TRANSFER_ACTIONS: [&str; 2] = ["win.export", "win.import"];
 
 /// The icons of the "too new" and "could not start" pages, as in
 /// `data/window.blp`, given back after a short window took them off.
-const TOO_NEW_ICON: &str = "software-update-available-symbolic";
-const ERROR_ICON: &str = "dialog-error-symbolic";
+const TOO_NEW_ICON: &str = "io.github.rappelapp.Rappel-software-update-available-symbolic";
+const ERROR_ICON: &str = "io.github.rappelapp.Rappel-dialog-error-symbolic";
 
 mod imp {
     use std::cell::{Cell, OnceCell};
@@ -265,7 +265,7 @@ impl RappelWindow {
         self.tidy_media_trash();
         if let Some(state) = imp.state.get() {
             // A failed automatic backup is said at the next start (ADR 0080).
-            crate::auto_backup::report_at_start(self, state.data_dir());
+            crate::auto_backup::report_at_start(self, state);
         }
         // Only at startup, before the window is shown; not after a restore.
         if !self.is_mapped() {

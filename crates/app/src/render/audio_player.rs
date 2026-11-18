@@ -755,7 +755,7 @@ mod tests {
             assert_eq!(label.text(), "the tone");
             assert_eq!(
                 tone.imp().icon.get().unwrap().icon_name().as_deref(),
-                Some("media-playback-start-symbolic")
+                Some("io.github.rappelapp.Rappel-media-playback-start-symbolic")
             );
             // The file that is not there: disabled, and says so.
             let button = missing.button();

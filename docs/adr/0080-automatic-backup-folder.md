@@ -118,3 +118,7 @@ Both save at once; a failed write shows the dialog's error toast. Turn Off hidde
 - In French, the Folder row's "Off" is "Aucun" (no folder), which agrees with "Dossier".
 - The full path is the row's tooltip and its accessible description.
 - Not covered by tests: the GTK hold and cap at close, which the maintainer checks by closing the app (Try it). The portal's persistence under a strict snap is for slice 7 to confirm.
+
+## Amendment (0.4.3): a missing folder is an alert
+
+A folder that is not found (renamed, moved, deleted or on a disk that is not connected) used to give a toast "the backup folder was not found; is its disk connected?". The text did not name the folder and offered no way on, so a user whose folder had been renamed only saw a vague error. For this one reason, `report_at_start` now shows an alert instead of a toast: its body names the folder, lists the possible causes (including a disk not connected), says Rappel does not create the folder and has not moved or deleted anything, and its **Choose Folder…** button opens Preferences and the folder chooser, starting in the nearest existing parent of the missing folder (`existing_ancestor`). Every other reason keeps the toast. The texts are pure functions (`reason_text`, `missing_folder_alert`) with English and French tests; nothing is created, moved or deleted by the report.

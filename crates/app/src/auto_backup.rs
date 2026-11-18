@@ -22,13 +22,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use gtk::prelude::*;
+use adw::prelude::*;
 use gtk::{gio, glib};
 use rappel_core::auto_backup::{self, Failure, FailureKind, LastBackup, LocalDate, Outcome};
 
 use crate::i18n::{fill, gettext, pgettext};
 use crate::key_file::{self, Unread};
+use crate::state::AppState;
 use crate::ui::toast::show_error;
+use crate::window::RappelWindow;
 
 /// The file name in the data directory.
 const FILE_NAME: &str = "auto-backup.ini";
@@ -347,11 +349,11 @@ pub fn folder_subtitle(folder: Option<&Path>) -> String {
 }
 
 /// Why the backup failed, in words, as the end of [`failed_text`].
-pub fn reason_text(reason: Reason) -> String {
+/// `folder` is the folder chosen in Preferences, named where the reason is
+/// about it.
+pub fn reason_text(reason: Reason, folder: Option<&Path>) -> String {
     match reason {
-        Reason::Failed(FailureKind::FolderMissing) => {
-            gettext("the backup folder was not found; is its disk connected?")
-        }
+        Reason::Failed(FailureKind::FolderMissing) => missing_folder_text(folder),
         Reason::Failed(FailureKind::NotAFolder) => {
             gettext("the backup folder is not a folder any more; choose it again in Preferences")
         }
@@ -382,14 +384,62 @@ pub fn reason_text(reason: Reason) -> String {
     }
 }
 
+/// Plain words for a backup folder that is not there, naming it. It does
+/// not guess that a disk is missing: the usual cause is a folder renamed or
+/// moved since it was chosen.
+fn missing_folder_text(folder: Option<&Path>) -> String {
+    match folder {
+        Some(folder) => fill(
+            // Translators: why a backup failed, after "Automatic backup failed: ". {folder} is the folder's full path.
+            &gettext(
+                "the folder “{folder}” was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected",
+            ),
+            &[("folder", &folder.display().to_string())],
+        ),
+        None => gettext(
+            "the backup folder was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected",
+        ),
+    }
+}
+
+/// The folder to start the chooser in: `folder` if it exists, else its
+/// nearest parent that does (a renamed folder's parent usually holds the
+/// new name). `exists` is a parameter so the rule is testable.
+pub fn existing_ancestor(folder: &Path, exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    folder
+        .ancestors()
+        .find(|path| path.parent().is_some() && exists(path))
+        .map(Path::to_path_buf)
+}
+
+/// Whether the report for `reason` offers to choose the folder again: the
+/// folder is missing, so Rappel cannot do anything until the user picks one
+/// (it never creates it by itself).
+pub fn offers_choosing_folder(reason: Reason) -> bool {
+    matches!(reason, Reason::Failed(FailureKind::FolderMissing))
+}
+
+/// The alert for a backup folder that is missing: its heading and body.
+pub fn missing_folder_alert(folder: Option<&Path>) -> (String, String) {
+    let why = missing_folder_text(folder);
+    let body = fill(
+        // Translators: the text of an alert at the start. {why} is why, ending without a full stop (for example "the folder “/home/me/Backups” was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected").
+        &gettext(
+            "Rappel could not make its automatic backup: {why}.\n\nRappel does not create the folder by itself, and has not moved or deleted any backup or data. If the folder is on a disk, connect it; otherwise choose the folder again to keep making backups.",
+        ),
+        &[("why", &why)],
+    );
+    (gettext("Backup Folder Not Found"), body)
+}
+
 /// The toast at the start after a failed backup: "Automatic backup
 /// failed: the disk is full" (its title, before ":", fits beside Details
 /// at 360 px). An unexpected error says the error itself
 /// (in English, as every error detail does).
-pub fn failed_text(reason: Reason, detail: &str) -> String {
+pub fn failed_text(reason: Reason, detail: &str, folder: Option<&Path>) -> String {
     let why = match reason {
         Reason::Failed(FailureKind::Other) if !detail.is_empty() => detail.to_owned(),
-        _ => reason_text(reason),
+        _ => reason_text(reason, folder),
     };
     fill(
         // Translators: a toast at the start: what is before ":" is its title, the rest is behind Details. {reason} is why.
@@ -401,7 +451,8 @@ pub fn failed_text(reason: Reason, detail: &str) -> String {
 /// Shows the toast for the last backup over `window` if it failed or never
 /// ended, then forgets it. Not while this process's own backup still runs
 /// (the window was opened again while it ran).
-pub fn report_at_start(window: &impl IsA<gtk::Widget>, data_dir: &Path) {
+pub fn report_at_start(window: &RappelWindow, state: &AppState) {
+    let data_dir = state.data_dir();
     if IN_PROGRESS.get() {
         return;
     }
@@ -421,12 +472,49 @@ pub fn report_at_start(window: &impl IsA<gtk::Widget>, data_dir: &Path) {
         return;
     };
     tracing::debug!("the last automatic backup failed: {detail}");
-    show_error(window, "an automatic backup", &failed_text(reason, &detail));
+    if offers_choosing_folder(reason) {
+        tracing::warn!(?reason, "an automatic backup failed");
+        show_missing_folder(window, state, record.folder.as_deref());
+    } else {
+        show_error(
+            window,
+            "an automatic backup",
+            &failed_text(reason, &detail, record.folder.as_deref()),
+        );
+    }
     record.failure = None;
     record.running = None;
     if let Err(err) = save(data_dir, &record) {
         tracing::warn!("the automatic backup record could not be saved: {err}");
     }
+}
+
+/// An alert saying the backup folder was not found, naming it, with a
+/// button that opens Preferences on the folder chooser. The window's toast
+/// would cut such a text short and has room for one button only.
+fn show_missing_folder(window: &RappelWindow, state: &AppState, folder: Option<&Path>) {
+    let (heading, body) = missing_folder_alert(folder);
+    let alert = adw::AlertDialog::builder()
+        .heading(heading)
+        .body(body)
+        .body_use_markup(false)
+        .build();
+    alert.add_response("close", &gettext("_Close"));
+    alert.add_response("choose", &gettext("_Choose Folder…"));
+    alert.set_response_appearance("choose", adw::ResponseAppearance::Suggested);
+    alert.set_default_response(Some("choose"));
+    alert.set_close_response("close");
+    alert.connect_response(
+        Some("choose"),
+        glib::clone!(
+            #[weak]
+            window,
+            #[strong]
+            state,
+            move |_, _| crate::dialogs::preferences::show_choosing_backup_folder(&window, &state)
+        ),
+    );
+    alert.present(Some(window));
 }
 
 /// Makes the automatic backup if it is due, as the window closes: on a
@@ -800,28 +888,32 @@ mod tests {
         );
         assert_eq!(folder_subtitle(Some(Path::new("/"))), "/");
         assert_eq!(
-            failed_text(Reason::Failed(FailureKind::NoSpace), "ENOSPC"),
+            failed_text(Reason::Failed(FailureKind::NoSpace), "ENOSPC", None),
             "Automatic backup failed: the disk is full"
         );
         assert_eq!(
-            failed_text(Reason::Failed(FailureKind::Other), "database is locked"),
+            failed_text(
+                Reason::Failed(FailureKind::Other),
+                "database is locked",
+                None
+            ),
             "Automatic backup failed: database is locked"
         );
         assert_eq!(
-            failed_text(Reason::Failed(FailureKind::Other), ""),
+            failed_text(Reason::Failed(FailureKind::Other), "", None),
             "Automatic backup failed: something unexpected happened"
         );
         // A title of its own beside Details, at 360 px (ADR 0058).
         assert!(matches!(
-            crate::ui::toast::toast_text(&failed_text(Reason::Failed(FailureKind::NoSpace), "")),
+            crate::ui::toast::toast_text(&failed_text(Reason::Failed(FailureKind::NoSpace), "", None)),
             crate::ui::toast::ToastText::Detailed { title, .. } if title == "Automatic backup failed"
         ));
         assert_eq!(
-            failed_text(Reason::Unfinished, ""),
+            failed_text(Reason::Unfinished, "", None),
             "Automatic backup failed: Rappel was stopped before it finished"
         );
         assert!(
-            failed_text(Reason::Failed(FailureKind::InsideDataDir), "")
+            failed_text(Reason::Failed(FailureKind::InsideDataDir), "", None)
                 .starts_with("Automatic backup failed: the backup folder is inside")
         );
         assert_eq!(
@@ -841,5 +933,99 @@ mod tests {
         assert_eq!(title(inside_data_dir_text()), "Folder not allowed");
         let french = crate::i18n::tests::in_french(|| title(inside_data_dir_text()));
         assert_eq!(french, "Dossier refusé");
+    }
+
+    /// Every reason has its own plain text, in English and French, and the
+    /// folder that is missing is named.
+    #[test]
+    fn every_reason_has_a_text() {
+        let reasons = [
+            Reason::Failed(FailureKind::FolderMissing),
+            Reason::Failed(FailureKind::NotAFolder),
+            Reason::Failed(FailureKind::FolderIsLink),
+            Reason::Failed(FailureKind::NoSpace),
+            Reason::Failed(FailureKind::ReadOnly),
+            Reason::Failed(FailureKind::NotAllowed),
+            Reason::Failed(FailureKind::TooLarge),
+            Reason::Failed(FailureKind::NameTaken),
+            Reason::Failed(FailureKind::InsideDataDir),
+            Reason::Failed(FailureKind::Other),
+            Reason::TimedOut,
+            Reason::Unfinished,
+            Reason::Stopped,
+        ];
+        let folder = Path::new("/home/me/Documents/5. Archives/Backups/Rappel");
+        let mut seen = Vec::new();
+        for reason in reasons {
+            let english = reason_text(reason, Some(folder));
+            let french = crate::i18n::tests::in_french(|| reason_text(reason, Some(folder)));
+            assert!(!english.is_empty() && !french.is_empty(), "{reason:?}");
+            assert_ne!(english, french, "{reason:?} is not translated");
+            // Another reason may share a text only when it is the same
+            // thing for the user (Other and Stopped, the time cap).
+            if !matches!(reason, Reason::Stopped | Reason::TimedOut) {
+                assert!(!seen.contains(&english), "{reason:?} repeats a text");
+                seen.push(english);
+            }
+        }
+    }
+
+    #[test]
+    fn a_missing_folder_is_named_and_not_blamed_on_a_disk() {
+        let folder = Path::new("/home/me/Documents/5. Archives/Backups/Rappel");
+        let missing = Reason::Failed(FailureKind::FolderMissing);
+        let text = reason_text(missing, Some(folder));
+        assert_eq!(
+            text,
+            "the folder “/home/me/Documents/5. Archives/Backups/Rappel” was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected"
+        );
+        // A disk is one possible cause, not the only one.
+        assert!(text.contains("renamed, moved or deleted"));
+        let (heading, body) = missing_folder_alert(Some(folder));
+        assert_eq!(heading, "Backup Folder Not Found");
+        assert!(body.contains("“/home/me/Documents/5. Archives/Backups/Rappel”"));
+        assert!(body.contains("does not create the folder by itself"));
+        // Without a stored folder it still says what happened.
+        assert!(!reason_text(missing, None).contains("{folder}"));
+        let (french_heading, french_body) =
+            crate::i18n::tests::in_french(|| missing_folder_alert(Some(folder)));
+        assert_eq!(french_heading, "Dossier de sauvegarde introuvable");
+        assert!(
+            french_body.contains("«\u{a0}/home/me/Documents/5. Archives/Backups/Rappel\u{a0}»")
+        );
+        assert!(!french_body.contains("{why}") && !french_body.contains("{folder}"));
+    }
+
+    #[test]
+    fn the_chooser_starts_at_the_nearest_existing_parent() {
+        let there = |path: &Path| path == Path::new("/home/me/Documents");
+        assert_eq!(
+            existing_ancestor(
+                Path::new("/home/me/Documents/5. Archives/Backups/Rappel"),
+                there
+            ),
+            Some(PathBuf::from("/home/me/Documents"))
+        );
+        assert_eq!(
+            existing_ancestor(Path::new("/home/me/Documents"), there),
+            Some(PathBuf::from("/home/me/Documents"))
+        );
+        assert_eq!(existing_ancestor(Path::new("/gone/folder"), there), None);
+    }
+
+    /// Only a folder that is missing offers to choose it again.
+    #[test]
+    fn only_a_missing_folder_offers_choosing_it() {
+        assert!(offers_choosing_folder(Reason::Failed(
+            FailureKind::FolderMissing
+        )));
+        for other in [
+            Reason::Failed(FailureKind::NoSpace),
+            Reason::Failed(FailureKind::Other),
+            Reason::TimedOut,
+            Reason::Unfinished,
+        ] {
+            assert!(!offers_choosing_folder(other));
+        }
     }
 }

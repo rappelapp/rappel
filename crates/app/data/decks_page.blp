@@ -10,7 +10,7 @@ template $RappelDecksPage: Adw.NavigationPage {
     Adw.HeaderBar {
       [start]
       Gtk.Button {
-        icon-name: "list-add-symbolic";
+        icon-name: "io.github.rappelapp.Rappel-list-add-symbolic";
         action-name: "win.new-deck";
         tooltip-text: _("New Deck");
 
@@ -24,7 +24,7 @@ template $RappelDecksPage: Adw.NavigationPage {
       [end]
       Gtk.MenuButton {
         primary: true;
-        icon-name: "open-menu-symbolic";
+        icon-name: "io.github.rappelapp.Rappel-open-menu-symbolic";
         menu-model: primary_menu;
         tooltip-text: _("Main Menu");
 
@@ -35,7 +35,7 @@ template $RappelDecksPage: Adw.NavigationPage {
 
       [end]
       Gtk.Button {
-        icon-name: "system-search-symbolic";
+        icon-name: "io.github.rappelapp.Rappel-system-search-symbolic";
         action-name: "win.search";
         tooltip-text: _("Search All Cards");
 
@@ -64,7 +64,7 @@ template $RappelDecksPage: Adw.NavigationPage {
           // Title and description are set in pages/decks_page.rs: they
           // say so when every deck is archived (ADR 0068).
           child: Adw.StatusPage empty_status {
-            icon-name: "accessories-dictionary-symbolic";
+            icon-name: "io.github.rappelapp.Rappel-accessories-dictionary-symbolic";
 
             child: Gtk.Box {
               orientation: vertical;
@@ -110,7 +110,7 @@ template $RappelDecksPage: Adw.NavigationPage {
 
                     [suffix]
                     Gtk.Image {
-                      icon-name: "go-next-symbolic";
+                      icon-name: "io.github.rappelapp.Rappel-go-next-symbolic";
                       accessible-role: presentation;
                     }
                   }
@@ -177,7 +177,7 @@ template $RappelDecksPage: Adw.NavigationPage {
 
                   [suffix]
                   Gtk.Image {
-                    icon-name: "go-next-symbolic";
+                    icon-name: "io.github.rappelapp.Rappel-go-next-symbolic";
                     accessible-role: presentation;
                   }
                 }

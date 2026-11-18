@@ -160,9 +160,9 @@ pub enum Mark {
 impl Mark {
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Passed => "object-select-symbolic",
-            Self::Failed => "window-close-symbolic",
-            Self::Reset => "view-refresh-symbolic",
+            Self::Passed => "io.github.rappelapp.Rappel-object-select-symbolic",
+            Self::Failed => "io.github.rappelapp.Rappel-window-close-symbolic",
+            Self::Reset => "io.github.rappelapp.Rappel-view-refresh-symbolic",
         }
     }
 

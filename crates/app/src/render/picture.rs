@@ -331,7 +331,7 @@ impl CardImage {
         line.add_css_class("dimmed");
         line.update_property(&[gtk::accessible::Property::Label(&text)]);
         let icon = gtk::Image::builder()
-            .icon_name("image-missing-symbolic")
+            .icon_name("io.github.rappelapp.Rappel-image-missing-symbolic")
             .valign(gtk::Align::Center)
             .accessible_role(gtk::AccessibleRole::Presentation)
             .build();
