@@ -6,6 +6,9 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The sample data (`fill_scratch_db --probability`), the tests and the store screenshots no longer use course codes: the deck is "Probabilités" and its tags are "Statistiques" and "Mesure".
+
 ## [0.4.3] — 2026-11-18
 
 Icons that no theme can hide, and a clear message when the automatic backup folder is gone.

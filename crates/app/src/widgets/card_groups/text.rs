@@ -33,7 +33,7 @@ pub fn count(n: u32) -> String {
 
 /// What a screen reader says for a group's header: its title, the tags
 /// in words (at most 20, then how many more) and the count, "Also tagged
-/// Analyse, MAT3101, 7 cards" or "Only the shared tags, 14 cards".
+/// Analyse, Mesure, 7 cards" or "Only the shared tags, 14 cards".
 pub fn spoken(tags: &[String], shared: bool, n: u32) -> String {
     let count = count(n);
     if tags.is_empty() {
@@ -49,7 +49,7 @@ pub fn spoken(tags: &[String], shared: bool, n: u32) -> String {
     let template = if shared {
         // Translators: what a screen reader says for a group of cards
         // that have these tags besides the shared ones: {tags} is
-        // "Analyse, MAT3101", {count} "7 cards".
+        // "Analyse, Mesure", {count} "7 cards".
         gettext("Also tagged {tags}, {count}")
     } else {
         // Translators: the same, when no tag is on every card.
@@ -73,8 +73,8 @@ mod tests {
         assert_eq!(count(1), "1 card");
         assert_eq!(count(1_234), "1,234 cards");
         assert_eq!(
-            spoken(&names(&["Analyse", "MAT3101"]), true, 7),
-            "Also tagged Analyse, MAT3101, 7 cards"
+            spoken(&names(&["Analyse", "Mesure"]), true, 7),
+            "Also tagged Analyse, Mesure, 7 cards"
         );
         assert_eq!(spoken(&[], true, 14), "Only the shared tags, 14 cards");
         assert_eq!(spoken(&names(&["x"]), false, 2), "Tagged x, 2 cards");

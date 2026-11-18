@@ -211,7 +211,7 @@ section.prop { margin-top: 56px; border-top: 1px solid var(--line); padding-top:
   const svg = n => '<svg viewBox="0 0 16 16" aria-hidden="true">' + I[n] + '</svg>';
   const wsvg = n => '<svg viewBox="0 0 12 12" aria-hidden="true">' + I[n] + '</svg>';
   const m = s => '<span class="m">' + s + '</span>';
-  const X = ['Analyse', 'MAT3101'];
+  const X = ['Analyse', 'Mesure'];
   // [front, extra tags, state, when]
   const cards = [
     ['Expérience aléatoire', [], 'later', 'In 4 days'],
@@ -236,14 +236,14 @@ section.prop { margin-top: 56px; border-top: 1px solid var(--line); padding-top:
     ['Mesure absolument continue', [], 'new', 'New'],
     ['Théorème de Radon–Nikodym', [], 'new', 'New']
   ];
-  const SHARED = ['Mathématiques', 'Probabilités', 'SIC3101'];
+  const SHARED = ['Mathématiques', 'Probabilités', 'Statistiques'];
   const pills = t => t.map(x => '<span class="tp">' + x + '</span>').join('');
   const shared = '<div class="shared">On every card:' + pills(SHARED) + '</div>';
   const nDue = cards.filter(c => c[2] === 'due').length, nNew = cards.filter(c => c[2] === 'new').length;
 
   function header(w) {
     const sub = w === 'phone' ? nDue + ' due' : nDue + ' due · ' + nNew + ' new';
-    const t = '<div class="ttl"><b>SIC 3101 – Probabilités</b><span>' + sub + '</span></div>';
+    const t = '<div class="ttl"><b>Probabilités</b><span>' + sub + '</span></div>';
     if (w === 'phone') return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib">' + svg('plus') + '</span>' + t + '<span class="ib">' + svg('more') + '</span></div>';
     return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib">' + svg('plus') + '</span>' + t +
       '<span class="btn-s">Study</span><span class="ib">' + svg('sel') + '</span><span class="ib">' + svg('more') + '</span>' +

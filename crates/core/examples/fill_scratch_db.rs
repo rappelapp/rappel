@@ -32,13 +32,13 @@
 //! chemical elements, art history, calculus with formulas and flags drawn
 //! as images, with tags and a month of review history, so some cards are
 //! due and the statistics have days to show. `fill_scratch_db -- <dir> 0 --demo` adds only those.
-//! With `--probability`, it adds the deck "SIC 3101 – Probabilités" of
+//! With `--probability`, it adds the deck "Probabilités" of
 //! the card list mockups (ADR 0077): 17 new cards with formulas on both
 //! sides, all tagged with the same four tags and some with two more, and
 //! one suspended, to see the tags said once above the list and the rows'
 //! drawn math.
 //! With `--groups`, it adds two decks for the deck page's groups (ADR
-//! 0079): "SIC 3101 – Fronts", the round 2 mockup's 21 fronts without
+//! 0079): "Probabilités – Fronts", the round 2 mockup's 21 fronts without
 //! backs, all with three shared tags and 7 with two more (two groups),
 //! some due, one in a learning step, some due in a few days, some new,
 //! one suspended; and "Tag sets", 24 cards with a dozen sets of tags
@@ -319,14 +319,19 @@ const PROBABILITY_CARDS: [(&str, &str, bool); 17] = [
 /// report.
 fn fill_probability(store: &mut Store) -> Result<String, String> {
     let deck = store
-        .create_deck("SIC 3101 – Probabilités")
+        .create_deck("Probabilités")
         .map_err(|e| e.to_string())?;
-    let shared = ["Définition", "Mathématiques", "Probabilités", "SIC3101"];
+    let shared = [
+        "Définition",
+        "Mathématiques",
+        "Probabilités",
+        "Statistiques",
+    ];
     let mut suspended = Vec::new();
     for (front, back, extra) in PROBABILITY_CARDS {
         let mut tags: Vec<String> = shared.iter().map(|&t| t.to_owned()).collect();
         if extra {
-            tags.extend(["Analyse".to_owned(), "MAT3101".to_owned()]);
+            tags.extend(["Analyse".to_owned(), "Mesure".to_owned()]);
         }
         let card = store
             .add_card_with_tags(&deck.id, front, back, &tags)
@@ -387,14 +392,14 @@ const GROUP_FRONTS: [(&str, bool, Stand); 21] = [
 fn fill_groups(store: &mut Store) -> Result<String, String> {
     let now = now_ms();
     let deck = store
-        .create_deck("SIC 3101 – Fronts")
+        .create_deck("Probabilités – Fronts")
         .map_err(|e| e.to_string())?;
-    let shared = ["Mathématiques", "Probabilités", "SIC3101"];
+    let shared = ["Mathématiques", "Probabilités", "Statistiques"];
     let mut held = Vec::new();
     for (i, &(front, extra, stand)) in GROUP_FRONTS.iter().enumerate() {
         let mut tags: Vec<String> = shared.iter().map(|&t| t.to_owned()).collect();
         if extra {
-            tags.extend(["Analyse".to_owned(), "MAT3101".to_owned()]);
+            tags.extend(["Analyse".to_owned(), "Mesure".to_owned()]);
         }
         let card = store
             .add_card_with_tags(&deck.id, front, "", &tags)

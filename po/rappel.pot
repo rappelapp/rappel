@@ -3318,7 +3318,7 @@ msgstr ""
 msgid "{title}, {count}"
 msgstr ""
 
-#. Translators: what a screen reader says for a group of cards that have these tags besides the shared ones: {tags} is "Analyse, MAT3101", {count} "7 cards".
+#. Translators: what a screen reader says for a group of cards that have these tags besides the shared ones: {tags} is "Analyse, Mesure", {count} "7 cards".
 #: crates/app/src/widgets/card_groups/text.rs
 msgid "Also tagged {tags}, {count}"
 msgstr ""

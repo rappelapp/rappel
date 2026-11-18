@@ -229,7 +229,7 @@ section.prop { margin-top: 56px; border-top: 1px solid var(--line); padding-top:
   const wsvg = n => '<svg viewBox="0 0 12 12" aria-hidden="true">' + I[n] + '</svg>';
   const m = s => '<span class="m">' + s + '</span>';
   const u = s => '<span class="mu">' + s + '</span>';
-  const X = ['Analyse', 'MAT3101'];
+  const X = ['Analyse', 'Mesure'];
   // state: due | learn | new | later | susp ; when: shown in B
   const cards = [
     ['Expérience aléatoire', 'Expérience dont on ne peut prévoir le résultat avec certitude', [], 'later', 'Tomorrow'],
@@ -250,14 +250,14 @@ section.prop { margin-top: 56px; border-top: 1px solid var(--line); padding-top:
     ['Événement négligeable', 'Un événement ' + m('A') + ' tel que ' + m('P') + u('(') + m('A') + u(') = 0'), [], 'new', ''],
     ['Événement presque sûr', 'Un événement ' + m('A') + ' tel que ' + m('P') + u('(') + m('A') + u(') = 1'), [], 'new', '']
   ];
-  const SHARED = ['Définition', 'Mathématiques', 'Probabilités', 'SIC3101'];
+  const SHARED = ['Définition', 'Mathématiques', 'Probabilités', 'Statistiques'];
   const pills = (t) => t.map(x => '<span class="tp">' + x + '</span>').join('');
 
   function header(w, sub) {
     if (w === 'phone') return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib">' + svg('plus') + '</span>' +
-      '<div class="ttl"><b>SIC 3101 – Probabilités</b><span>' + sub + '</span></div><span class="ib">' + svg('more') + '</span></div>';
+      '<div class="ttl"><b>Probabilités</b><span>' + sub + '</span></div><span class="ib">' + svg('more') + '</span></div>';
     return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib">' + svg('plus') + '</span>' +
-      '<div class="ttl"><b>SIC 3101 – Probabilités</b><span>' + sub + '</span></div>' +
+      '<div class="ttl"><b>Probabilités</b><span>' + sub + '</span></div>' +
       '<span class="btn-s">Study</span><span class="ib">' + svg('sel') + '</span><span class="ib">' + svg('more') + '</span>' +
       '<span class="wbtn">' + wsvg('min') + '</span><span class="wbtn">' + wsvg('max') + '</span><span class="wbtn">' + wsvg('close') + '</span></div>';
   }

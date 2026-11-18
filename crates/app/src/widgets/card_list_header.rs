@@ -134,9 +134,9 @@ mod tests {
             let header = CardListHeader::default();
             let imp = header.imp();
             assert!(!header.is_visible());
-            header.set_tags(vec!["Définition".to_owned(), "SIC3101".to_owned()]);
+            header.set_tags(vec!["Définition".to_owned(), "Statistiques".to_owned()]);
             assert!(header.is_visible());
-            assert_eq!(imp.shared_pills.tags(), ["Définition", "SIC3101"]);
+            assert_eq!(imp.shared_pills.tags(), ["Définition", "Statistiques"]);
             // Every name, wrapping: no "+N" above the list.
             assert!(!imp.shared_pills.single_line());
             assert!(!imp.overflow.is_visible());

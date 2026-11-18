@@ -302,7 +302,7 @@ svg.ch { display: block; overflow: visible; }
   const passRate = Math.round(100 * sumP / (sumP + sumF));
 
   function header(w) {
-    const t = '<div class="ttl"><b>Statistics</b><span>SIC 3101 – Probabilités</span></div>';
+    const t = '<div class="ttl"><b>Statistics</b><span>Probabilités</span></div>';
     if (w === 'phone') return '<div class="hb"><span class="ib">' + svg('back') + '</span>' + t + '<span class="ib" style="visibility:hidden"></span></div>';
     return '<div class="hb"><span class="ib">' + svg('back') + '</span><span class="ib" style="visibility:hidden"></span><span class="ib" style="visibility:hidden"></span>' + t +
       '<span class="ib" style="visibility:hidden"></span><span class="wbtn">' + wsvg('min') + '</span><span class="wbtn">' + wsvg('max') + '</span><span class="wbtn">' + wsvg('close') + '</span></div>';

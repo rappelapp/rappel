@@ -277,13 +277,13 @@ mod tests {
     /// keeps the deck's order.
     #[test]
     fn the_mockups_deck_has_two_groups_in_the_decks_order() {
-        let shared = ["Mathématiques", "Probabilités", "SIC3101"];
+        let shared = ["Mathématiques", "Probabilités", "Statistiques"];
         let extra = [7, 8, 10, 11, 12, 17, 18];
         let cards: Vec<Vec<Tag>> = (0..21)
             .map(|i| {
                 let mut list: Vec<&str> = shared.to_vec();
                 if extra.contains(&i) {
-                    list.extend(["Analyse", "MAT3101"]);
+                    list.extend(["Analyse", "Mesure"]);
                 }
                 tags(&list)
             })
@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(plan.groups.len(), 2);
         assert_eq!(plan.groups[0].tags, []);
         assert_eq!((plan.groups[0].start, plan.groups[0].len), (0, 14));
-        assert_eq!(names(&plan.groups[1]), ["Analyse", "MAT3101"]);
+        assert_eq!(names(&plan.groups[1]), ["Analyse", "Mesure"]);
         assert_eq!((plan.groups[1].start, plan.groups[1].len), (14, 7));
         let expected: Vec<u32> = (0..21)
             .filter(|i| !extra.contains(i))

@@ -622,14 +622,14 @@ mod tests {
     #[test]
     fn the_shared_tags_are_on_every_card_in_the_first_cards_order() {
         let cards = [
-            tags(&["Probabilités", "Définition", "SIC3101", "Analyse"]),
-            tags(&["SIC3101", "Définition", "Probabilités"]),
-            tags(&["Définition", "Probabilités", "SIC3101", "MAT3101"]),
+            tags(&["Probabilités", "Définition", "Statistiques", "Analyse"]),
+            tags(&["Statistiques", "Définition", "Probabilités"]),
+            tags(&["Définition", "Probabilités", "Statistiques", "Mesure"]),
         ];
         let shared = shared_tags(cards.iter().map(Vec::as_slice));
         assert_eq!(
             ids(&shared),
-            ["id-Probabilités", "id-Définition", "id-SIC3101"]
+            ["id-Probabilités", "id-Définition", "id-Statistiques"]
         );
         // One card without tags: nothing is shared.
         let with_bare = [tags(&["a", "b"]), Vec::new(), tags(&["a"])];
@@ -687,11 +687,11 @@ mod tests {
     fn a_row_shows_only_the_tags_not_shared() {
         use crate::widgets::tag_pills::text::{COMPACT_ROW_PILLS, overflow_text, split};
 
-        let card = tags(&["Définition", "Analyse", "MAT3101", "SIC3101"]);
+        let card = tags(&["Définition", "Analyse", "Mesure", "Statistiques"]);
         let names: Vec<String> = card.iter().map(|t| t.name.clone()).collect();
-        let shared = ids(&tags(&["Définition", "SIC3101"]));
+        let shared = ids(&tags(&["Définition", "Statistiques"]));
         let others = other_tags(&names, &card, &shared);
-        assert_eq!(*others, ["Analyse", "MAT3101"]);
+        assert_eq!(*others, ["Analyse", "Mesure"]);
         // Nothing shared: every tag, borrowed.
         assert!(matches!(other_tags(&names, &card, &[]), Cow::Borrowed(_)));
         // Every tag shared: no pill.

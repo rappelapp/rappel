@@ -6,7 +6,7 @@
 
 ## Decision
 
-**Screenshots.** The store set is now seven, retaken with `scripts/screenshot.py` under Xvfb in English, light style, GNOME's window buttons and blue accent, from `fill_scratch_db -- <dir> 0 --demo --probability` (scratch data only): `review.png` (default, a calculus card with its answer), `decks.png`, `deck.png` (a deck's page: the tags said once, two group headers, "Only the shared tags" and "Also Analyse MAT3101", and rows with drawn maths on their backs), `all-cards.png`, `statistics.png` (the new month-at-a-time card), `editor.png` (Markdown with a live preview) and `phone.png` (a flag card at 360 × 640). No key hints are visible. Together about 290 KB; each is under the 300 KB limit of the test. The harness has no compositor, so there is still no window shadow (ADR 0060's "not met" stands for Flathub).
+**Screenshots.** The store set is now seven, retaken with `scripts/screenshot.py` under Xvfb in English, light style, GNOME's window buttons and blue accent, from `fill_scratch_db -- <dir> 0 --demo --probability` (scratch data only): `review.png` (default, a calculus card with its answer), `decks.png`, `deck.png` (a deck's page: the tags said once, two group headers, "Only the shared tags" and "Also Analyse Mesure", and rows with drawn maths on their backs), `all-cards.png`, `statistics.png` (the new month-at-a-time card), `editor.png` (Markdown with a live preview) and `phone.png` (a flag card at 360 × 640). No key hints are visible. Together about 290 KB; each is under the 300 KB limit of the test. The harness has no compositor, so there is still no window shadow (ADR 0060's "not met" stands for Flathub).
 
 **URLs pinned to the tag.** The metainfo and the test name `…/rappel/v0.4.0/data/screenshots/…` instead of `main`, as ADR 0060 suggested for release time, so a store listing of 0.4.0 keeps showing 0.4.0's screens. The tag exists only once the maintainer tags the release; until then the URLs 404 and `appstreamcli --no-net` (the test) does not fetch them.
 
@@ -16,7 +16,7 @@
 
 ## Reproducing the set
 
-Data: `fill_scratch_db -- <dir> 0 --demo --probability`. For `deck.png` and `all-cards.png` the groups are balanced in a copy, so that both group headers are above the fold: the cards with `seq` 58, 59, 62 and 66 to 69 of the "SIC 3101 – Probabilités" deck also get the tags "Analyse" and "MAT3101" (two `INSERT OR IGNORE INTO card_tags` per card, with Python's `sqlite3` on the copy; the scratch data is throwaway). The step strings of each shot are in the README's "Retake the store screenshots". `all-cards.png` moves the pointer to the header bar before the shot, so no row is highlighted.
+Data: `fill_scratch_db -- <dir> 0 --demo --probability`. For `deck.png` and `all-cards.png` the groups are balanced in a copy, so that both group headers are above the fold: the cards with `seq` 58, 59, 62 and 66 to 69 of the "Probabilités" deck also get the tags "Analyse" and "Mesure" (two `INSERT OR IGNORE INTO card_tags` per card, with Python's `sqlite3` on the copy; the scratch data is throwaway). The step strings of each shot are in the README's "Retake the store screenshots". `all-cards.png` moves the pointer to the header bar before the shot, so no row is highlighted.
 
 ## Release notes
 

@@ -110,10 +110,10 @@ mod tests {
         crate::testing::with_widgets(|| {
             let header = CardGroupHeader::default();
             let imp = header.imp();
-            header.show(&["Analyse".to_owned(), "MAT3101".to_owned()], true, 7);
+            header.show(&["Analyse".to_owned(), "Mesure".to_owned()], true, 7);
             assert_eq!(imp.title_label.label(), "Also");
             assert!(imp.group_pills.is_visible());
-            assert_eq!(imp.group_pills.tags(), ["Analyse", "MAT3101"]);
+            assert_eq!(imp.group_pills.tags(), ["Analyse", "Mesure"]);
             assert_eq!(imp.count_label.label(), "7 cards");
             assert!(gtk::test_accessible_has_property(
                 &header,
