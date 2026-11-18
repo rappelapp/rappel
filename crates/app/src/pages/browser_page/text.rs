@@ -97,17 +97,17 @@ pub fn empty_page(empty: Empty) -> Option<(&'static str, String, String)> {
     match empty {
         Empty::No => None,
         Empty::NoCards => Some((
-            "document-new-symbolic",
+            "io.github.rappelapp.Rappel-document-new-symbolic",
             gettext("No Cards Yet"),
             gettext("Cards you add to your decks will show up here"),
         )),
         Empty::NoResults => Some((
-            "edit-find-symbolic",
+            "io.github.rappelapp.Rappel-edit-find-symbolic",
             gettext("No Results Found"),
             gettext("Try a different search or other filters"),
         )),
         Empty::OnlyArchived => Some((
-            "edit-find-symbolic",
+            "io.github.rappelapp.Rappel-edit-find-symbolic",
             gettext("Only Archived Cards"),
             gettext("The cards of archived decks are hidden"),
         )),

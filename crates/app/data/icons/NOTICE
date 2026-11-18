@@ -1,0 +1,31 @@
+Symbolic icons in scalable/actions/
+
+Every file in scalable/actions/ is a symbolic icon from adwaita-icon-theme
+51.0 (the GNOME Project, https://www.gnome.org), copied unchanged from its
+Adwaita/symbolic/ folder and renamed with the prefix
+"io.github.rappelapp.Rappel-" (ADR 0089). For example
+io.github.rappelapp.Rappel-edit-undo-symbolic.svg is
+Adwaita/symbolic/actions/edit-undo-symbolic.svg.
+
+Artwork: Jakub Steiner, Lapo Calamandrei, Hylke Bons.
+Metaphors: Claire Alexander, Hylke Bons, Darren Wilson.
+
+Licence, as stated by adwaita-icon-theme for these files (its copyright
+file, "Files: *": "CC-BY-SA-3.0 or LGPL-3, and CC-BY-SA-4.0"; the 4.0 part
+covers the sources it ships beside the icons, such as gnome-stencils.svg):
+
+  This work is licenced under the terms of either the GNU LGPL v3 or
+  Creative Commons Attribution-Share Alike 3.0 United States License.
+
+  To view a copy of the CC-BY-SA licence, visit
+  https://creativecommons.org/licenses/by-sa/3.0/ or send a letter to
+  Creative Commons, 171 Second Street, Suite 300, San Francisco,
+  California 94105, USA.
+
+  When attributing the artwork, using "GNOME Project" is enough.
+  Please link to https://www.gnome.org where available.
+
+Rappel uses them under the GNU LGPL v3 (SPDX LGPL-3.0-only: the upstream
+notice names no later version), whose text is in LGPL-3.0.txt next to this
+file. The LGPL v3 adds permissions to the GNU GPL v3, whose text is in
+LICENSE at the top of the repository.

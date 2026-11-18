@@ -855,7 +855,7 @@ fn the_extraction_finds_marked_calls_comments_and_unmarked_text() {
           // Translators: the deck's name follows.
           label: _("Deck");
           tooltip-text: C_("action", "Study");
-          icon-name: "view-more-symbolic";
+          icon-name: "io.github.rappelapp.Rappel-view-more-symbolic";
           styles ["Dimmed Class"]
           title: "Not Marked";
           name: "Page Name";
@@ -1113,6 +1113,7 @@ fn prose_is_told_from_ids_and_classes() {
         "",
         "3 %",
         "x y",
+        "io.github.rappelapp.Rappel-edit-undo-symbolic",
     ] {
         assert!(!extract::is_prose(text), "{text}");
     }

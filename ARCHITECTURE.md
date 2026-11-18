@@ -213,7 +213,7 @@ Pages live in `src/pages/`, dialogs in `src/dialogs/`, reusable widgets in `src/
 - `text.rs`: the texts (`export_file_name`, `exported_text` (with the media files left out, if any), `refused_text`, `check_failed_text` and `import_failed_text` (a stale plan, a file changed since it was checked), `plan_view`, `conflicts_text`, `imported_text`, `short_front`), including new tags, card tags, settings applied or kept, and the tag and undo conflicts. Pure and unit-tested.
 - `names.rs`: `Names`, the user's own deck names and card fronts (their plain summary) that conflicts refer to, never the file's text.
 
-**Tests only**: `src/testing.rs` (the GTK test harness, see Quality gate), `src/ui_files.rs` (every `data/*.blp` file built or loaded, see UI build pipeline), `src/desktop_files.rs` and `src/snap_install.rs` (see Desktop integration and Packaging) and `src/icon_names.rs` with `data/gnome-core26-icons.txt` (every `*-symbolic` name is bundled or on the snap's list, ADR 0086).
+**Tests only**: `src/testing.rs` (the GTK test harness, see Quality gate), `src/ui_files.rs` (every `data/*.blp` file built or loaded, see UI build pipeline), `src/desktop_files.rs` and `src/snap_install.rs` (see Desktop integration and Packaging) and `src/icon_names.rs` (every `*-symbolic` name in `data/*.blp` and `src/**/*.rs` is bundled under the app id's prefix, the folder and the manifest agree, and GTK finds every name with no theme at all, ADR 0089).
 
 ## UI build pipeline
 
@@ -226,6 +226,8 @@ data/*.blp ──blueprint-compiler──▶ $OUT_DIR/ui/*.ui ──glib-compile
 ```
 
 `crates/app/build.rs` drives both steps; `data/resources.gresource.xml` lists the files under the resource prefix `/io/github/rappelapp/Rappel/`. Widgets load their template with `#[template(resource = "/io/github/rappelapp/Rappel/<name>.ui")]`.
+
+The symbolic icons the app names are bundled there too (ADR 0089): `data/icons/scalable/actions/io.github.rappelapp.Rappel-<Adwaita name>.svg` (and `…-symbolic-rtl.svg` where Adwaita has a right-to-left variant), copied from adwaita-icon-theme 51 (LGPL v3; `data/icons/NOTICE`, `data/icons/LGPL-3.0.txt`), listed as `icons/scalable/actions/…`. `GtkApplication` adds `/io/github/rappelapp/Rappel/icons` to the icon theme, where GTK counts it as part of `hicolor`, so they are found whatever the user's theme is, even one the snap cannot see (ADR 0086, amendment). The Blueprint files and the code use only these prefixed names, never a theme icon's name.
 
 `build.rs` also compiles each language of `po/LINGUAS` (the repository's `po/` folder: `LINGUAS`, `POTFILES.in`, `rappel.pot`, `<lang>.po`) into `$OUT_DIR/locale/<lang>/LC_MESSAGES/rappel.mo` with `i18n/po.rs`, rerunning when `po/` changes; a debug build reads its translations from there (ADR 0059). It also merges every language into the top-level `data/*.desktop.in` and `data/*.metainfo.xml.in` (`i18n/extract.rs`'s `merge_desktop_languages` and `merge_metainfo_languages`, the code the tests validate with, included by `#[path]` like `po.rs`) and writes them without `.in` to `$OUT_DIR/data/`, for packaging (ADR 0085). Strings in `.blp` files are marked `_("…")` or `C_("context", "…")`; `GtkBuilder` looks them up in the default domain.
 

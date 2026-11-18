@@ -19,7 +19,7 @@ use crate::window::RappelWindow;
 
 /// The empty state's icon, as in its layout, given back after a short
 /// window took it off (`ui::breakpoint::compact_status_page`).
-const EMPTY_ICON: &str = "folder-symbolic";
+const EMPTY_ICON: &str = "io.github.rappelapp.Rappel-folder-symbolic";
 
 mod imp {
     use std::cell::{OnceCell, RefCell};

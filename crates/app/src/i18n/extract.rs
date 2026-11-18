@@ -83,7 +83,9 @@ pub fn is_prose(text: &str) -> bool {
     // A key or an accelerator ("<Control>z", "KP_Enter", "Return").
     let key = !bare.contains(' ')
         && (bare.starts_with('<') || bare.contains("KP_") || KEY_NAMES.contains(&bare.as_str()));
-    let path = path || key;
+    // An icon name ("io.github.rappelapp.Rappel-edit-undo-symbolic", ADR 0089).
+    let icon = !bare.contains(' ') && bare.ends_with("-symbolic");
+    let path = path || key || icon;
     word && !path && (bare.contains(' ') || capital || bare.ends_with('…'))
 }
 

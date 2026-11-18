@@ -58,31 +58,31 @@
        the maintainer has tagged the release named in the URLs. -->
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.2/data/screenshots/review.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.3/data/screenshots/review.png</image>
       <caption>Study a card, then say whether you knew it</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.2/data/screenshots/decks.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.3/data/screenshots/decks.png</image>
       <caption>Your decks with the cards due today</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.2/data/screenshots/deck.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.3/data/screenshots/deck.png</image>
       <caption>A deck's cards, grouped by their tags</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.2/data/screenshots/all-cards.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.3/data/screenshots/all-cards.png</image>
       <caption>Find any card by words, tags or state</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.2/data/screenshots/statistics.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.3/data/screenshots/statistics.png</image>
       <caption>See how much you studied, a month at a time</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.2/data/screenshots/editor.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.3/data/screenshots/editor.png</image>
       <caption>Write cards in Markdown with a live preview</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.2/data/screenshots/phone.png</image>
+      <image>https://raw.githubusercontent.com/rappelapp/rappel/v0.4.3/data/screenshots/phone.png</image>
       <caption>Pictures on cards, on a phone</caption>
     </screenshot>
   </screenshots>
@@ -91,6 +91,11 @@
        A pre-release is written with "~" (0.2.0~beta.1), which AppStream
        sorts before 0.2.0; the notes are not translated (ADR 0060). -->
   <releases>
+    <release version="0.4.3" date="2026-11-18">
+      <description translate="no">
+        <p>Fixes icons that showed as "image missing" in the snap: Rappel now carries all its own icons. When the folder for automatic backups is gone, Rappel says so, names the folder, and lets you choose it again.</p>
+      </description>
+    </release>
     <release version="0.4.2" date="2026-11-16">
       <description translate="no">
         <p>Practice This Card in each card's menu: go over one card without changing its schedule. In the card editor, Ctrl+M makes a formula, formulas are no longer styled by the Markdown inside them, and the line between the fields and the preview is gone. French wording closer to Anki's: "À réviser" for cards due, "Temps passé", "Probabilité de rappel", "Révisions à venir" and others. A new test guards the icon names the app uses.</p>

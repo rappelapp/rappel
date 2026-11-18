@@ -1031,10 +1031,6 @@ msgid "Folder not allowed: a backup inside Rappel’s data folder would be lost 
 msgstr ""
 
 #: crates/app/src/auto_backup.rs
-msgid "the backup folder was not found; is its disk connected?"
-msgstr ""
-
-#: crates/app/src/auto_backup.rs
 msgid "the backup folder is not a folder any more; choose it again in Preferences"
 msgstr ""
 
@@ -1078,9 +1074,38 @@ msgstr ""
 msgid "Rappel was stopped before it finished"
 msgstr ""
 
+#. Translators: why a backup failed, after "Automatic backup failed: ". {folder} is the folder's full path.
+#: crates/app/src/auto_backup.rs
+msgid "the folder “{folder}” was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "the backup folder was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected"
+msgstr ""
+
+#. Translators: the text of an alert at the start. {why} is why, ending without a full stop (for example "the folder “/home/me/Backups” was not found; it may have been renamed, moved or deleted, or be on a disk that is not connected").
+#: crates/app/src/auto_backup.rs
+msgid "Rappel could not make its automatic backup: {why}.\n\nRappel does not create the folder by itself, and has not moved or deleted any backup or data. If the folder is on a disk, connect it; otherwise choose the folder again to keep making backups."
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "Backup Folder Not Found"
+msgstr ""
+
 #. Translators: a toast at the start: what is before ":" is its title, the rest is behind Details. {reason} is why.
 #: crates/app/src/auto_backup.rs
 msgid "Automatic backup failed: {reason}"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+#: crates/app/src/transfer/anki.rs
+#: crates/app/src/transfer/mod.rs
+#: crates/app/src/ui/toast.rs
+msgid "_Close"
+msgstr ""
+
+#: crates/app/src/auto_backup.rs
+msgid "_Choose Folder…"
 msgstr ""
 
 #: crates/app/src/dialogs/about.rs
@@ -2336,12 +2361,6 @@ msgstr ""
 #: crates/app/src/transfer/anki.rs
 #: crates/app/src/transfer/mod.rs
 msgid "Checking the file stopped unexpectedly"
-msgstr ""
-
-#: crates/app/src/transfer/anki.rs
-#: crates/app/src/transfer/mod.rs
-#: crates/app/src/ui/toast.rs
-msgid "_Close"
 msgstr ""
 
 #: crates/app/src/transfer/anki.rs

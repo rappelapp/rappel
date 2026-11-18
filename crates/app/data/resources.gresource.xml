@@ -44,5 +44,43 @@
     <!-- The card editor's highlighting (Markdown with math, ADR 0087),
          found by its own GtkSourceLanguageManager in this directory. -->
     <file>language-specs/rappel-markdown.lang</file>
+    <!-- Every symbolic icon the app names, under app-specific names so no
+         icon theme can hide or replace them (ADR 0089). From
+         adwaita-icon-theme 51; licence in data/icons/NOTICE. GtkApplication
+         adds this prefix's icons/ folder to the icon theme by itself. -->
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-accessories-dictionary-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-audio-x-generic-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-bookmark-new-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-dialog-error-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-dialog-warning-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-document-edit-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-document-new-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-document-open-recent-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-edit-clear-symbolic-rtl.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-edit-clear-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-edit-find-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-edit-select-all-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-edit-undo-symbolic-rtl.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-edit-undo-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-folder-open-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-folder-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-go-next-symbolic-rtl.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-go-next-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-go-previous-symbolic-rtl.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-go-previous-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-image-missing-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-insert-image-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-list-add-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-media-playback-pause-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-media-playback-start-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-object-select-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-open-menu-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-selection-mode-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-software-update-available-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-system-search-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-user-trash-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-view-more-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-view-refresh-symbolic.svg</file>
+    <file>icons/scalable/actions/io.github.rappelapp.Rappel-window-close-symbolic.svg</file>
   </gresource>
 </gresources>

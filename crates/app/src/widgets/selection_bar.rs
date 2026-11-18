@@ -141,8 +141,8 @@ impl SelectionBar {
         imp.suspend_button
             .update_property(&[gtk::accessible::Property::Label(&accessible)]);
         imp.suspend_content.set_icon_name(match choice {
-            SuspendChoice::Suspend => "media-playback-pause-symbolic",
-            SuspendChoice::Unsuspend => "media-playback-start-symbolic",
+            SuspendChoice::Suspend => "io.github.rappelapp.Rappel-media-playback-pause-symbolic",
+            SuspendChoice::Unsuspend => "io.github.rappelapp.Rappel-media-playback-start-symbolic",
         });
         imp.suspend_word.replace(label);
         self.show_words();
@@ -211,7 +211,7 @@ mod tests {
             assert_eq!(imp.suspend_content.label(), "Unsuspend");
             assert_eq!(
                 imp.suspend_content.icon_name(),
-                "media-playback-start-symbolic"
+                "io.github.rappelapp.Rappel-media-playback-start-symbolic"
             );
             bar.set_compact(true);
             for content in [

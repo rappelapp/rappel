@@ -146,9 +146,13 @@ mod tests {
             let breakpoint =
                 adw::Breakpoint::new(adw::BreakpointCondition::parse("max-height: 450sp").unwrap());
             let status = adw::StatusPage::builder()
-                .icon_name("dialog-warning-symbolic")
+                .icon_name("io.github.rappelapp.Rappel-dialog-warning-symbolic")
                 .build();
-            compact_status_page(&breakpoint, &status, "dialog-warning-symbolic");
+            compact_status_page(
+                &breakpoint,
+                &status,
+                "io.github.rappelapp.Rappel-dialog-warning-symbolic",
+            );
             breakpoint.emit_by_name::<()>("apply", &[]);
             assert!(status.has_css_class("compact"));
             assert_eq!(status.icon_name(), None);
@@ -156,7 +160,7 @@ mod tests {
             assert!(!status.has_css_class("compact"));
             assert_eq!(
                 status.icon_name().as_deref(),
-                Some("dialog-warning-symbolic")
+                Some("io.github.rappelapp.Rappel-dialog-warning-symbolic")
             );
         });
     }

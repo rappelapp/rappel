@@ -2019,7 +2019,7 @@ fn answer_scroll(back_top: f64, page: f64) -> f64 {
 
 /// The summary's icon, a check mark. Keep it equal to `summary_page` in
 /// `review_page.blp`.
-const SUMMARY_ICON: &str = "object-select-symbolic";
+const SUMMARY_ICON: &str = "io.github.rappelapp.Rappel-object-select-symbolic";
 
 /// The summary page's text when no card was answered (all of them were
 /// suspended or deleted during the session).

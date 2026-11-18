@@ -6,6 +6,17 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-11-18
+
+Icons that no theme can hide, and a clear message when the automatic backup folder is gone.
+
+### Fixed
+- **Missing icons in the snap.** In the snap, the decks page's empty state and the review header's Undo and Edit Card buttons showed "image missing" when your desktop's icon theme lives in your home folder (for example `~/.local/share/icons`): the snap cannot see it, and GTK then searches only `hicolor`, which lacks nine of Rappel's icons. Rappel now carries every symbolic icon it uses (34 files, from Adwaita) under names of its own (`io.github.rappelapp.Rappel-…`), which no theme can hide. Because of that, Rappel's own icons look like Adwaita's even under another theme such as Yaru; icons drawn by GTK and libadwaita themselves still follow your theme (ADR 0086, amendment, and ADR 0089).
+- **A missing automatic backup folder is said plainly.** When the folder chosen for automatic backups no longer exists (renamed, moved or deleted), Rappel used to say only that the folder was not found and asked whether its disk was connected. It now opens an alert at start-up that names the folder, says Rappel does not create it by itself and that nothing was moved or deleted, and has a Choose Folder… button that opens Preferences on the folder chooser. French included.
+
+### Changed
+- The test for icon names now fails unless every icon name Rappel uses is one of its own bundled icons; `crates/app/data/gnome-core26-icons.txt` is gone.
+
 ## [0.4.2] — 2026-11-16
 
 Formulas in the card editor (Ctrl+M, and no Markdown styling inside them), Practice This Card, a calmer editor, French wording closer to Anki's, and a test that guards the icon names.

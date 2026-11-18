@@ -1,6 +1,6 @@
 # 86. Icon names in the snap
 
-- Status: Accepted
+- Status: Accepted; amended 2026-11-18 (the cause, below); its allow-list is superseded by ADR 0089
 - Date: 2026-11-10
 - Refers to: ADR 0085 (the snap), ADR 0082 (feasibility); the 0.4.2 request "icons missing in the snap"
 
@@ -21,3 +21,36 @@ In the snap, GTK draws icons from `gnome-core26`'s Adwaita, not the host's theme
 ## Consequences
 
 A name the snap's Adwaita lacks can no longer be added unnoticed. The icon problem seen in the snap is not fixed by this change.
+
+## Amendment (2026-11-18): the cause
+
+Checked in the installed snap (`rappel` 0.4.1, revision `x1`, local install; `gnome-core26` revision 33, `gtk-common-themes` revision 1535; all content plugs connected). The diagnostic runs used a scratch data folder (`RAPPEL_DATA_DIR=$SNAP_USER_DATA/icon-diag-scratch`), never the real one.
+
+**Cause (proven): the user's icon theme does not exist inside the snap, and GTK 4.24 then searches `hicolor` alone, without Adwaita.**
+
+1. The host's icon theme is a theme installed in the user's home, invisible to the snap:
+   ```
+   $ gsettings get org.gnome.desktop.interface icon-theme
+   'Haru'
+   $ grep -E '^(Inherits)' ~/.local/share/icons/Haru/index.theme
+   Inherits=Yaru-blue-dark,hicolor
+   ```
+   Inside the snap, `$HOME` is `~/snap/rappel/x1` and `XDG_DATA_DIRS` is `~/snap/rappel/x1/.local/share:~/snap/rappel/x1:$SNAP/data-dir:$SNAP/usr/share:$SNAP/gnome-platform/usr/share:…:/usr/share/:…` (the base's `/usr/share`, not the host's); `~/snap/rappel/x1/.local/share/icons` is empty. No `Haru` folder is on that path.
+2. On Wayland GTK takes the theme name from the desktop's settings, and with no folder for it the theme chain is `hicolor` only. `GTK_DEBUG=icontheme` on the user's session (`snap run --shell rappel -c 'GTK_DEBUG=icontheme $SNAP/usr/bin/rappel'`):
+   ```
+   Current icon themes hicolor
+   change to icon theme "Haru"
+   looking up icon accessories-dictionary-symbolic for scale 1
+   	lookup name: accessories-dictionary-symbolic-ltr
+   	lookup name: accessories-dictionary-symbolic
+   	lookup name: accessories-dictionary-ltr
+   	lookup name: accessories-dictionary
+   	lookup name: image-missing
+   ```
+   The same native build (`target/debug/rappel`, scratch `RAPPEL_DATA_DIR`) on the same session finds the host's themes: `Current icon themes Haru Yaru-blue-dark Yaru-blue Yaru hicolor Yaru-dark`.
+3. What `hicolor` alone still shows is what GTK and libadwaita bundle in their own resources, which GTK treats as part of `hicolor`. `gresource list` on the snap's `libgtk-4.so.1` and `libadwaita-1.so.0` (`/snap/gnome-core26/current/usr/lib/x86_64-linux-gnu/`) has 21 of Rappel's 30 names (`view-more-symbolic`, `list-add-symbolic`, `go-next-symbolic`, …) and not these 9: `accessories-dictionary-symbolic`, `audio-x-generic-symbolic`, `document-edit-symbolic`, `document-new-symbolic`, `edit-undo-symbolic`, `folder-open-symbolic`, `image-missing-symbolic`, `selection-mode-symbolic`, `software-update-available-symbolic`. That matches the report exactly: the decks page's empty state (`accessories-dictionary-symbolic`) and, of the review header's three buttons, Undo and Edit Card (`edit-undo-symbolic`, `document-edit-symbolic`) are missing while the Card Menu's `view-more-symbolic` shows.
+4. Counter-check under Xvfb (no desktop settings, so the theme name is GTK's default `Adwaita`): `Current icon themes Adwaita hicolor`, and a screenshot of the snap's decks page shows the dictionary icon. So the snap's files are fine; only a theme name the snap cannot see breaks the lookup.
+
+**Also found (not the cause here):** two `Adwaita` folders are on the snap's path, and `$SNAP/data-dir/icons/Adwaita` (the old one from `gtk-common-themes`, 2022, `scalable/*` folders) comes before `$SNAP/gnome-platform/usr/share/icons/Adwaita` (`gnome-core26`, `symbolic/*` folders). GTK reads the theme's `index.theme` from the first, so with the theme `Adwaita` the `symbolic/*` folders of `gnome-core26` are not searched at all and the names come from the old copy (the debug log scans only `data-dir/icons/Adwaita/…` folders). The names Rappel used happen to be in the old copy too, so this hid nothing; but it shows that which theme files the snap sees depends on the host and on `gtk-common-themes`, not only on `gnome-core26`.
+
+**Not proven:** which other host themes (a theme from a deb in `/usr/share/icons` that `gtk-common-themes` lacks, a theme in `~/.icons`) fail the same way; by the mechanism above, any theme name the snap cannot see does. No change to `snap/snapcraft.yaml` makes a theme in the host's home visible to a strictly confined snap, so the fix is in the app (ADR 0089): every icon is bundled under an app-specific name, found through `hicolor`, which every chain has.

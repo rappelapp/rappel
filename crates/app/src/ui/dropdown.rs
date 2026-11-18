@@ -148,7 +148,7 @@ fn popup_factory(dropdown: &gtk::DropDown) -> gtk::SignalListItemFactory {
         let label = popup_label();
         row.append(&label);
         let check = gtk::Image::builder()
-            .icon_name("object-select-symbolic")
+            .icon_name("io.github.rappelapp.Rappel-object-select-symbolic")
             .accessible_role(gtk::AccessibleRole::Presentation)
             .opacity(0.0)
             .build();
