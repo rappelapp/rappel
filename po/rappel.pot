@@ -1109,6 +1109,10 @@ msgid "_Choose Folder…"
 msgstr ""
 
 #: crates/app/src/dialogs/about.rs
+msgid "Adwaita Icons"
+msgstr ""
+
+#: crates/app/src/dialogs/about.rs
 msgid "KaTeX Fonts"
 msgstr ""
 

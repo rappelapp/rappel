@@ -163,6 +163,11 @@ const NOT_TRANSLATED: &[(&str, &str, &str)] = &[
         "a copyright line, kept as the fonts have it",
     ),
     (
+        "crates/app/src/dialogs/about.rs",
+        "© GNOME Project",
+        "a copyright line, as the icons' notice words it",
+    ),
+    (
         "crates/app/src/dialogs/card_editor/insert.rs",
         "the picture took too long to read",
         "an IO error's message, only logged (the user sees \"The file could not be read\")",

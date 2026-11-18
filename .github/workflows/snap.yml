@@ -18,6 +18,7 @@ on:
     paths:
       - 'snap/**'
       - 'scripts/snap-install.sh'
+      - 'scripts/cargo-outputs.sh'
       - '.github/workflows/snap.yml'
 
 permissions:

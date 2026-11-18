@@ -47,17 +47,18 @@ if [ -n "${RAPPEL_BINARY:-}" ] || [ -n "${RAPPEL_OUT_DIR:-}" ]; then
     out_dir=$RAPPEL_OUT_DIR
 else
     # Cargo's JSON messages name the binary it built and the build script's
-    # output folder, whose hash cannot be guessed: `.../build/rappel-<hex>/out`
-    # (rappel-core's folder is `rappel-core-<hex>`, which `[0-9a-f]` refuses).
+    # output folder, whose path cannot be guessed (its hash, and a layout
+    # that changed in cargo 1.100). cargo-outputs.sh finds both by the
+    # package's id, which `cargo pkgid` prints as the messages give it.
+    cargo --version
+    package_id=$(cargo pkgid --locked -p "$name")
     messages=$(cargo build --release --locked -p "$name" --message-format=json-render-diagnostics)
-    binary=$(grep '"reason":"compiler-artifact"' <<<"$messages" \
-        | sed -n "s|.*\"executable\":\"\([^\"]*/$name\)\".*|\1|p" | tail -n 1)
-    out_dir=$(grep '"reason":"build-script-executed"' <<<"$messages" \
-        | sed -n "s|.*\"out_dir\":\"\([^\"]*/build/$name-[0-9a-f]*/out\)\".*|\1|p" | tail -n 1)
-    if [ -z "$binary" ] || [ -z "$out_dir" ]; then
+    if ! outputs=$(scripts/cargo-outputs.sh "$package_id" <<<"$messages"); then
         echo "$0: cargo did not report the binary or the build script's folder" >&2
         exit 1
     fi
+    binary=${outputs%%$'\n'*}
+    out_dir=${outputs#*$'\n'}
 fi
 
 [ -f "$binary" ] || { echo "$0: no binary at $binary" >&2; exit 1; }

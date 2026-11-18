@@ -32,8 +32,23 @@ const LIBRARIES: [&str; 9] = [
 struct Legal {
     title: String,
     copyright: &'static str,
-    /// Pango markup (`AdwAboutDialog` shows a custom licence as markup).
-    license: String,
+    /// The licence's kind; a known one needs no text of its own.
+    kind: gtk::License,
+    /// Pango markup (`AdwAboutDialog` shows a custom licence as markup);
+    /// `None` for a known kind.
+    license: Option<String>,
+}
+
+/// The symbolic icons bundled in the app (ADR 0089): adwaita-icon-theme,
+/// by the GNOME Project, used under the GNU LGPL v3 (the upstream notice
+/// offers it or CC BY-SA 3.0, and names no later LGPL version).
+fn adwaita_icons() -> Legal {
+    Legal {
+        title: gettext("Adwaita Icons"),
+        copyright: "© GNOME Project",
+        kind: gtk::License::Lgpl30Only,
+        license: None,
+    }
 }
 
 /// The `KaTeX` fonts drawn by the math renderer (ADR 0021, 0023). The
@@ -45,13 +60,14 @@ fn katex_fonts() -> Legal {
     Legal {
         title: gettext("KaTeX Fonts"),
         copyright: "© 2009–2010 Design Science, Inc.\n© 2014–2018 Khan Academy",
-        license: gettext(
+        kind: gtk::License::Custom,
+        license: Some(gettext(
             // Translators: Pango markup: keep the <a href="…"> link and
             // the licence's name as they are, and write & as &amp;.
             "These fonts are licensed under the \
              <a href=\"https://openfontlicense.org\">SIL Open Font License, Version 1.1</a>. \
              They are data shipped with Rappel, not part of its code.",
-        ),
+        )),
     }
 }
 
@@ -89,13 +105,14 @@ pub fn show(parent: &impl IsA<gtk::Widget>) {
         dialog.set_translator_credits(&credits);
     }
     dialog.add_credit_section(Some(&gettext("Built With")), &LIBRARIES);
-    let fonts = katex_fonts();
-    dialog.add_legal_section(
-        &fonts.title,
-        Some(fonts.copyright),
-        gtk::License::Custom,
-        Some(&fonts.license),
-    );
+    for legal in [katex_fonts(), adwaita_icons()] {
+        dialog.add_legal_section(
+            &legal.title,
+            Some(legal.copyright),
+            legal.kind,
+            legal.license.as_deref(),
+        );
+    }
     dialog.present(Some(parent));
 }
 
@@ -131,26 +148,50 @@ mod tests {
         let fonts = katex_fonts();
         assert!(fonts.copyright.contains("Design Science"));
         assert!(fonts.copyright.contains("Khan Academy"));
-        assert!(fonts.license.contains("SIL Open Font License, Version 1.1"));
+        assert!(
+            fonts
+                .license
+                .as_deref()
+                .unwrap_or_default()
+                .contains("SIL Open Font License, Version 1.1")
+        );
         let french = crate::i18n::tests::in_french(katex_fonts);
         assert!(
             french
                 .license
+                .as_deref()
+                .unwrap_or_default()
                 .contains("SIL Open Font License, Version 1.1")
         );
         assert!(
             french
                 .license
+                .as_deref()
+                .unwrap_or_default()
                 .contains("<a href=\"https://openfontlicense.org\">")
         );
+    }
+
+    #[test]
+    fn the_icons_are_credited_to_the_gnome_project_under_the_lgpl() {
+        let icons = adwaita_icons();
+        assert_eq!(icons.title, "Adwaita Icons");
+        assert!(icons.copyright.contains("GNOME Project"));
+        assert_eq!(icons.kind, gtk::License::Lgpl30Only);
+        assert_eq!(icons.license, None);
+        let french = crate::i18n::tests::in_french(adwaita_icons);
+        assert_eq!(french.title, "Icônes Adwaita");
+        // The copyright line is kept as the notice words it (NOT_TRANSLATED).
+        assert_eq!(french.copyright, icons.copyright);
+        assert_eq!(french.kind, gtk::License::Lgpl30Only);
     }
 
     #[test]
     fn the_font_licence_is_label_markup() {
         // AdwAboutDialog shows a custom licence in a GtkLabel with markup,
         // which adds `<a href>` to Pango's tags (GtkLabel docs, "Links").
-        let english = katex_fonts().license;
-        let french = crate::i18n::tests::in_french(|| katex_fonts().license);
+        let english = katex_fonts().license.unwrap_or_default();
+        let french = crate::i18n::tests::in_french(|| katex_fonts().license.unwrap_or_default());
         crate::testing::with_gtk(move || {
             let label = gtk::Label::new(None);
             label.set_markup(&english);
